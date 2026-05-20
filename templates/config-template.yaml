@@ -1,0 +1,33 @@
+# QQBot 配置文件
+persona:
+  name: "QQBot"
+  soul_file: "SOUL.md"
+
+model:
+  provider: "deepseek"
+  model: "deepseek-v4-flash"
+  api_key: "{{YOUR_API_KEY}}"
+  temperature: 0.8
+  max_tokens: 4096
+
+vision:
+  enabled: true
+  provider: "siliconflow"
+  model: "Qwen/Qwen3-VL-32B-Instruct"
+
+memory:
+  enabled: true
+  ltm_max_facts: 50
+
+platforms:
+  onebot:
+    enabled: true
+    ws_url: "ws://127.0.0.1:3001/"
+    http_url: "http://127.0.0.1:3000"
+    access_token: "{{AUTO_TOKEN}}"
+    home_channel: "{{HOME_CHANNEL}}"
+
+tts:
+  enabled: false
+live2d:
+  enabled: false

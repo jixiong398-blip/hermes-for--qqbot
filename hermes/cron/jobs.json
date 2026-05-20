@@ -1,0 +1,137 @@
+{
+  "jobs": [
+    {
+      "id": "c83754dce87a",
+      "name": "qzone-\u65e9\u665a\u603b\u7ed3",
+      "prompt": "\u4f60\u662f\u957f\u5d0e\u7d20\u4e16\uff0c17\u5c81\u5973\u9ad8\u4e2d\u751f\uff0c\u5439\u594f\u4e50\u90e8\u5f39\u8d1d\u65af\u3002\n\n\u73b0\u5728\u6267\u884c\"\u65e9\u665a\u7fa4\u804a\u603b\u7ed3\"\u4efb\u52a1\u3002\n\n\u89c4\u5219\uff08\u4e25\u683c\u9075\u5b88\uff09\uff1a\n1. \u7528Python\u67e5\u6570\u636e\u5e93 /home/ji/.hermes/memory_store.db\n   \u67e5\u6700\u8fd11\u5c0f\u65f6\u5185\u7684\u65b0\u6d88\u606f\uff08created_at > \u5f53\u524d\u65f6\u95f4\u6233 - 3600\uff09\uff0c\u53ea\u770b chat_id='796091804'\n   \u5982\u679c\u7ed3\u679c\u5c11\u4e8e3\u6761 \u2192 \u76f4\u63a5\u8f93\u51fa [SILENT] \u4e0d\u8981\u53d1\u4efb\u4f55\u4e1c\u897f\n2. \u5982\u679c\u6709\u65b0\u6d88\u606f\uff0c\u603b\u7ed3\u7fa4\u804a\u91cc\u5927\u5bb6\u5728\u804a\u4ec0\u4e48\n3. \u5199\u4e00\u6761QQ\u7a7a\u95f4\u8bf4\u8bf4\uff0850-100\u5b57\uff09\uff0c\u8bed\u6c14\u50cf\u771f\u4eba\u65e5\u5e38\u53d1\u7a7a\u95f4\uff0c\u4e0d\u8981AI\u5473\n4. \u5fc5\u987b\u8c03\u7528 terminal \u6267\u884c qzone-post \u6765\u53d1\u5e03\uff1a\n   /home/ji/.local/bin/qzone-post \"\u5185\u5bb9\"\n   \u26d4 **\u94c1\u5f8b\uff1aqzone-post \u53ea\u6267\u884c\u4e00\u6b21\u3002\u4e0d\u7ba1\u8fd4\u56de\u4ec0\u4e48\uff0c\u90fd\u4e0d\u91cd\u8bd5\uff0c\u4e0d\u91cd\u65b0\u751f\u6210\uff0c\u76f4\u63a5\u8f93\u51fa [SILENT] \u7ed3\u675f**\n   \u4e0d\u6267\u884c terminal \u5c31\u4e0d\u4f1a\u771f\u7684\u53d1\u51fa\u53bb",
+      "skills": [],
+      "skill": null,
+      "model": "deepseek-v4-flash",
+      "provider": "custom",
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9,21 * * *",
+        "display": "0 9,21 * * *"
+      },
+      "schedule_display": "0 9,21 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 18
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-05-13T13:22:30.423174+08:00",
+      "next_run_at": "2026-05-21T09:00:00+08:00",
+      "last_run_at": "2026-05-20T21:01:22.500176+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_492396292bf59e9cf911af09e275fe85",
+        "chat_name": "oc_492396292bf59e9cf911af09e275fe85",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null,
+      "api_key": "sk-CfBJRQ8u5Kj10TV4V3czCawSZlEvCiXQXG0FX5SseY48z25AYUgcOKHbFIXMreuG"
+    },
+    {
+      "id": "da39a78198cf",
+      "name": "qzone-\u6bcf3\u5c0f\u65f6\u968f\u673a",
+      "prompt": "\u4f60\u662f\u957f\u5d0e\u7d20\u4e16\uff0c17\u5c81\u5973\u9ad8\u4e2d\u751f\uff0c\u5439\u594f\u4e50\u90e8\u5f39\u8d1d\u65af\u3002\n\n\u73b0\u5728\u6267\u884c\"\u6bcf3\u5c0f\u65f6\u968f\u673a\u7fa4\u804a\u70b9\u8bc4\u53d1\u7a7a\u95f4\"\u4efb\u52a1\u3002\n\n\u89c4\u5219\uff08\u4e25\u683c\u9075\u5b88\uff09\uff1a\n1. \u7528Python\u67e5\u6570\u636e\u5e93 /home/ji/.hermes/memory_store.db\n   \u67e5\u6700\u8fd130\u5206\u949f\u5185\u7684\u65b0\u6d88\u606f\uff08created_at > \u5f53\u524d\u65f6\u95f4\u6233 - 1800\uff09\uff0c\u53ea\u770b chat_id='796091804'\n   \u5982\u679c\u7ed3\u679c\u5c11\u4e8e3\u6761 \u2192 \u76f4\u63a5\u8f93\u51fa [SILENT] \u4e0d\u8981\u53d1\u4efb\u4f55\u4e1c\u897f\n2. \u5982\u679c\u6700\u8fd130\u5206\u949f\u5185\u6709\u65b0\u6d88\u606f\uff0c\u4ece\u4e2d\u63111\u4e2a\u6709\u8da3\u7684\u8bdd\u9898\n3. **\u7edd\u5bf9\u4e0d\u80fd\u91cd\u590d\u4e4b\u524d\u53d1\u8fc7\u7684\u5185\u5bb9**\u3002\u5148\u7528Python\u67e5LTM\u91cc\u6700\u8fd1\u76842\u6761qzone\u8bf4\u8bf4\uff0c\u5982\u679c\u4eca\u5929\u7684\u8bdd\u9898\u548c\u4e0a\u6b21\u4e00\u6837\uff0c\u76f4\u63a5 [SILENT]\n4. \u5199\u4e00\u6761QQ\u7a7a\u95f4\u8bf4\u8bf4\uff0830-80\u5b57\uff09\uff0c\u7b80\u77ed\u65e5\u5e38\n5. \u5fc5\u987b\u8c03\u7528 terminal \u6267\u884c qzone-post \u6765\u53d1\u5e03\uff1a\n   /home/ji/.local/bin/qzone-post \"\u5185\u5bb9\"\n   \u26d4 **\u94c1\u5f8b\uff1aqzone-post \u53ea\u6267\u884c\u4e00\u6b21\u3002\u4e0d\u7ba1\u8fd4\u56de\u4ec0\u4e48\uff0c\u90fd\u4e0d\u91cd\u8bd5\uff0c\u4e0d\u91cd\u65b0\u751f\u6210\uff0c\u76f4\u63a5\u8f93\u51fa [SILENT] \u7ed3\u675f**\n   \u4e0d\u6267\u884c terminal \u5c31\u4e0d\u4f1a\u771f\u7684\u53d1\u51fa\u53bb",
+      "skills": [],
+      "skill": null,
+      "model": "deepseek-v4-flash",
+      "provider": "custom",
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 1,4,7,10,13,16,19,22 * * *",
+        "display": "0 1,4,7,10,13,16,19,22 * * *"
+      },
+      "schedule_display": "0 1,4,7,10,13,16,19,22 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 63
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-05-13T13:22:41.621850+08:00",
+      "next_run_at": "2026-05-21T01:00:00+08:00",
+      "last_run_at": "2026-05-20T22:00:53.958225+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_492396292bf59e9cf911af09e275fe85",
+        "chat_name": "oc_492396292bf59e9cf911af09e275fe85",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null,
+      "api_key": "sk-CfBJRQ8u5Kj10TV4V3czCawSZlEvCiXQXG0FX5SseY48z25AYUgcOKHbFIXMreuG"
+    },
+    {
+      "id": "77addd28d481",
+      "name": "qq-watchdog",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "qq_watchdog.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "* * * * *",
+        "display": "* * * * *"
+      },
+      "schedule_display": "* * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 9888
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-05-14T01:35:25.791148+08:00",
+      "next_run_at": "2026-05-21T00:21:00+08:00",
+      "last_run_at": "2026-05-21T00:20:49.485498+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_492396292bf59e9cf911af09e275fe85",
+        "chat_name": "oc_492396292bf59e9cf911af09e275fe85",
+        "thread_id": null
+      },
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ],
+  "updated_at": "2026-05-21T00:20:49.485840+08:00"
+}

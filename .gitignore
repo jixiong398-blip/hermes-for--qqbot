@@ -1,0 +1,14 @@
+﻿__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+config.yaml
+SOUL.md
+*.log
+*.db
+*.db-shm
+*.db-wal
+gateway.lock
+gateway.pid
+*.zip

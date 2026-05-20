@@ -1,0 +1,4284 @@
+{
+    "version": "Sample 1.0.0",
+    "layout": {
+        "center_x": 0,
+        "center_y": 0,
+        "width": 2
+    },
+    "hit_areas_custom": {
+        "head_x": [
+            -0.25,
+            1
+        ],
+        "head_y": [
+            0.25,
+            0.2
+        ],
+        "body_x": [
+            -0.3,
+            0.2
+        ],
+        "body_y": [
+            0.3,
+            -1.9
+        ]
+    },
+    "model": ".chara/model.moc",
+    "physics": ".chara/physics.json",
+    "textures": [
+        ".chara/texture_00.png",
+        ".chara/texture_01.png"
+    ],
+    "motions": {
+        "anon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/angry01.mtn"
+            }
+        ],
+        "anon/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/angry02.mtn"
+            }
+        ],
+        "anon/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/angry03.mtn"
+            }
+        ],
+        "anon/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/angry04.mtn"
+            }
+        ],
+        "anon/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/bye01.mtn"
+            }
+        ],
+        "anon/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/cry01.mtn"
+            }
+        ],
+        "anon/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/cry02.mtn"
+            }
+        ],
+        "anon/gacha_b2024_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/gacha_b2024_01.mtn"
+            }
+        ],
+        "anon/gacha_c_a_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/gacha_c_a_01.mtn"
+            }
+        ],
+        "anon/gacha_df3_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/gacha_df3_01.mtn"
+            }
+        ],
+        "anon/gacha_e235_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/gacha_e235_01.mtn"
+            }
+        ],
+        "anon/gacha_e253_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/gacha_e253_01.mtn"
+            }
+        ],
+        "anon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/idle01.mtn"
+            }
+        ],
+        "anon/kandou01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/kandou01.mtn"
+            }
+        ],
+        "anon/kandou02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/kandou02.mtn"
+            }
+        ],
+        "anon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/kime01.mtn"
+            }
+        ],
+        "anon/kime02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/kime02.mtn"
+            }
+        ],
+        "anon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf01.mtn"
+            }
+        ],
+        "anon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf02.mtn"
+            }
+        ],
+        "anon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf03.mtn"
+            }
+        ],
+        "anon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf04.mtn"
+            }
+        ],
+        "anon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf05.mtn"
+            }
+        ],
+        "anon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf_left01.mtn"
+            }
+        ],
+        "anon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nf_right01.mtn"
+            }
+        ],
+        "anon/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nnf03.mtn"
+            }
+        ],
+        "anon/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nnf04.mtn"
+            }
+        ],
+        "anon/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/nnf05.mtn"
+            }
+        ],
+        "anon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/sad01.mtn"
+            }
+        ],
+        "anon/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/sad02.mtn"
+            }
+        ],
+        "anon/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/serious01.mtn"
+            }
+        ],
+        "anon/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/serious02.mtn"
+            }
+        ],
+        "anon/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/shame01.mtn"
+            }
+        ],
+        "anon/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/shame02.mtn"
+            }
+        ],
+        "anon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile01.mtn"
+            }
+        ],
+        "anon/smile01_ingameV2_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile01_ingameV2_01.mtn"
+            }
+        ],
+        "anon/smile01_ingameV2_02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile01_ingameV2_02.mtn"
+            }
+        ],
+        "anon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile02.mtn"
+            }
+        ],
+        "anon/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile03.mtn"
+            }
+        ],
+        "anon/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/smile04.mtn"
+            }
+        ],
+        "anon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/surprised01.mtn"
+            }
+        ],
+        "anon/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/thinking01.mtn"
+            }
+        ],
+        "anon/thinking02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/thinking02.mtn"
+            }
+        ],
+        "anon/thinking03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/thinking03.mtn"
+            }
+        ],
+        "anon/wink01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/anon/wink01.mtn"
+            }
+        ],
+        "mana/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/angry01.mtn"
+            }
+        ],
+        "mana/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/bye01.mtn"
+            }
+        ],
+        "mana/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/cry01.mtn"
+            }
+        ],
+        "mana/eeto01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/eeto01.mtn"
+            }
+        ],
+        "mana/gattsu01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/gattsu01.mtn"
+            }
+        ],
+        "mana/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/idle01.mtn"
+            }
+        ],
+        "mana/jaan01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/jaan01.mtn"
+            }
+        ],
+        "mana/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf01.mtn"
+            }
+        ],
+        "mana/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf02.mtn"
+            }
+        ],
+        "mana/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf03.mtn"
+            }
+        ],
+        "mana/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf04.mtn"
+            }
+        ],
+        "mana/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf05.mtn"
+            }
+        ],
+        "mana/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf_left01.mtn"
+            }
+        ],
+        "mana/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nf_right01.mtn"
+            }
+        ],
+        "mana/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf01.mtn"
+            }
+        ],
+        "mana/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf02.mtn"
+            }
+        ],
+        "mana/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf03.mtn"
+            }
+        ],
+        "mana/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf04.mtn"
+            }
+        ],
+        "mana/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf05.mtn"
+            }
+        ],
+        "mana/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf_left01.mtn"
+            }
+        ],
+        "mana/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/nnf_right01.mtn"
+            }
+        ],
+        "mana/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/sad01.mtn"
+            }
+        ],
+        "mana/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/shame01.mtn"
+            }
+        ],
+        "mana/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/smile01.mtn"
+            }
+        ],
+        "mana/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/smile02.mtn"
+            }
+        ],
+        "mana/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/smile03.mtn"
+            }
+        ],
+        "mana/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mana/surprised01.mtn"
+            }
+        ],
+        "mutsumi/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/angry01.mtn"
+            }
+        ],
+        "mutsumi/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/bow.mtn"
+            }
+        ],
+        "mutsumi/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/bye01.mtn"
+            }
+        ],
+        "mutsumi/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/idle01.mtn"
+            }
+        ],
+        "mutsumi/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/kime01.mtn"
+            }
+        ],
+        "mutsumi/maskon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_angry01.mtn"
+            }
+        ],
+        "mutsumi/maskon/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_bow.mtn"
+            }
+        ],
+        "mutsumi/maskon/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_bye01.mtn"
+            }
+        ],
+        "mutsumi/maskon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_idle01.mtn"
+            }
+        ],
+        "mutsumi/maskon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_kime01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf02.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf03.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf04.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf05.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf_left01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nf_right01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf02.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf03.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf04.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf05.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf_left01.mtn"
+            }
+        ],
+        "mutsumi/maskon/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_nnf_right01.mtn"
+            }
+        ],
+        "mutsumi/maskon/odoodo01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_odoodo01.mtn"
+            }
+        ],
+        "mutsumi/maskon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_sad01.mtn"
+            }
+        ],
+        "mutsumi/maskon/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_sad02.mtn"
+            }
+        ],
+        "mutsumi/maskon/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_sad03.mtn"
+            }
+        ],
+        "mutsumi/maskon/sad04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_sad04.mtn"
+            }
+        ],
+        "mutsumi/maskon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_smile01.mtn"
+            }
+        ],
+        "mutsumi/maskon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_smile02.mtn"
+            }
+        ],
+        "mutsumi/maskon/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_smile04.mtn"
+            }
+        ],
+        "mutsumi/maskon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_surprised01.mtn"
+            }
+        ],
+        "mutsumi/maskon/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/maskon_thinking01.mtn"
+            }
+        ],
+        "mutsumi/mts/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_angry01.mtn"
+            }
+        ],
+        "mutsumi/mts/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_angry02.mtn"
+            }
+        ],
+        "mutsumi/mts/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_angry03.mtn"
+            }
+        ],
+        "mutsumi/mts/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_angry04.mtn"
+            }
+        ],
+        "mutsumi/mts/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_cry01.mtn"
+            }
+        ],
+        "mutsumi/mts/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_idle01.mtn"
+            }
+        ],
+        "mutsumi/mts/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf01.mtn"
+            }
+        ],
+        "mutsumi/mts/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf02.mtn"
+            }
+        ],
+        "mutsumi/mts/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf03.mtn"
+            }
+        ],
+        "mutsumi/mts/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf04.mtn"
+            }
+        ],
+        "mutsumi/mts/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf05.mtn"
+            }
+        ],
+        "mutsumi/mts/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf_left01.mtn"
+            }
+        ],
+        "mutsumi/mts/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nf_right01.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf01.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf02.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf03.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf04.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf05.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf_left01.mtn"
+            }
+        ],
+        "mutsumi/mts/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_nnf_right01.mtn"
+            }
+        ],
+        "mutsumi/mts/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_sad01.mtn"
+            }
+        ],
+        "mutsumi/mts/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_sad02.mtn"
+            }
+        ],
+        "mutsumi/mts/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_sad03.mtn"
+            }
+        ],
+        "mutsumi/mts/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_smile01.mtn"
+            }
+        ],
+        "mutsumi/mts/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_smile02.mtn"
+            }
+        ],
+        "mutsumi/mts/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/mts_smile03.mtn"
+            }
+        ],
+        "mutsumi/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf01.mtn"
+            }
+        ],
+        "mutsumi/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf02.mtn"
+            }
+        ],
+        "mutsumi/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf03.mtn"
+            }
+        ],
+        "mutsumi/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf04.mtn"
+            }
+        ],
+        "mutsumi/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf05.mtn"
+            }
+        ],
+        "mutsumi/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf_left01.mtn"
+            }
+        ],
+        "mutsumi/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nf_right01.mtn"
+            }
+        ],
+        "mutsumi/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf01.mtn"
+            }
+        ],
+        "mutsumi/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf02.mtn"
+            }
+        ],
+        "mutsumi/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf03.mtn"
+            }
+        ],
+        "mutsumi/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf04.mtn"
+            }
+        ],
+        "mutsumi/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf05.mtn"
+            }
+        ],
+        "mutsumi/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf_left01.mtn"
+            }
+        ],
+        "mutsumi/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/nnf_right01.mtn"
+            }
+        ],
+        "mutsumi/odoodo01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/odoodo01.mtn"
+            }
+        ],
+        "mutsumi/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/sad01.mtn"
+            }
+        ],
+        "mutsumi/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/sad02.mtn"
+            }
+        ],
+        "mutsumi/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/sad03.mtn"
+            }
+        ],
+        "mutsumi/sad04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/sad04.mtn"
+            }
+        ],
+        "mutsumi/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/smile01.mtn"
+            }
+        ],
+        "mutsumi/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/smile02.mtn"
+            }
+        ],
+        "mutsumi/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/smile04.mtn"
+            }
+        ],
+        "mutsumi/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/surprised01.mtn"
+            }
+        ],
+        "mutsumi/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/surprised02.mtn"
+            }
+        ],
+        "mutsumi/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/mutsumi/thinking01.mtn"
+            }
+        ],
+        "nyamu/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/angry01.mtn"
+            }
+        ],
+        "nyamu/bored": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/bored.mtn"
+            }
+        ],
+        "nyamu/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/bow.mtn"
+            }
+        ],
+        "nyamu/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/bye01.mtn"
+            }
+        ],
+        "nyamu/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/cry01.mtn"
+            }
+        ],
+        "nyamu/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/idle01.mtn"
+            }
+        ],
+        "nyamu/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/kime01.mtn"
+            }
+        ],
+        "nyamu/kime02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/kime02.mtn"
+            }
+        ],
+        "nyamu/maskoff": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskoff.mtn"
+            }
+        ],
+        "nyamu/maskon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_angry01.mtn"
+            }
+        ],
+        "nyamu/maskon/bored": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_bored.mtn"
+            }
+        ],
+        "nyamu/maskon/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_bow.mtn"
+            }
+        ],
+        "nyamu/maskon/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_bye01.mtn"
+            }
+        ],
+        "nyamu/maskon/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_cry01.mtn"
+            }
+        ],
+        "nyamu/maskon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_idle01.mtn"
+            }
+        ],
+        "nyamu/maskon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_kime01.mtn"
+            }
+        ],
+        "nyamu/maskon/kime02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_kime02.mtn"
+            }
+        ],
+        "nyamu/maskon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf01.mtn"
+            }
+        ],
+        "nyamu/maskon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf02.mtn"
+            }
+        ],
+        "nyamu/maskon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf03.mtn"
+            }
+        ],
+        "nyamu/maskon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf04.mtn"
+            }
+        ],
+        "nyamu/maskon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf05.mtn"
+            }
+        ],
+        "nyamu/maskon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf_left01.mtn"
+            }
+        ],
+        "nyamu/maskon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nf_right01.mtn"
+            }
+        ],
+        "nyamu/maskon/niyake": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_niyake.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf01.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf02.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf03.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf04.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf05.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf_left01.mtn"
+            }
+        ],
+        "nyamu/maskon/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_nnf_right01.mtn"
+            }
+        ],
+        "nyamu/maskon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_sad01.mtn"
+            }
+        ],
+        "nyamu/maskon/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_serious01.mtn"
+            }
+        ],
+        "nyamu/maskon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_smile01.mtn"
+            }
+        ],
+        "nyamu/maskon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_smile02.mtn"
+            }
+        ],
+        "nyamu/maskon/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_smile03.mtn"
+            }
+        ],
+        "nyamu/maskon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_surprised01.mtn"
+            }
+        ],
+        "nyamu/maskon/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/maskon_surprised02.mtn"
+            }
+        ],
+        "nyamu/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf01.mtn"
+            }
+        ],
+        "nyamu/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf02.mtn"
+            }
+        ],
+        "nyamu/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf03.mtn"
+            }
+        ],
+        "nyamu/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf04.mtn"
+            }
+        ],
+        "nyamu/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf05.mtn"
+            }
+        ],
+        "nyamu/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf_left01.mtn"
+            }
+        ],
+        "nyamu/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nf_right01.mtn"
+            }
+        ],
+        "nyamu/niyake": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/niyake.mtn"
+            }
+        ],
+        "nyamu/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf01.mtn"
+            }
+        ],
+        "nyamu/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf02.mtn"
+            }
+        ],
+        "nyamu/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf03.mtn"
+            }
+        ],
+        "nyamu/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf04.mtn"
+            }
+        ],
+        "nyamu/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf05.mtn"
+            }
+        ],
+        "nyamu/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf_left01.mtn"
+            }
+        ],
+        "nyamu/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/nnf_right01.mtn"
+            }
+        ],
+        "nyamu/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/sad01.mtn"
+            }
+        ],
+        "nyamu/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/serious01.mtn"
+            }
+        ],
+        "nyamu/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/smile01.mtn"
+            }
+        ],
+        "nyamu/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/smile02.mtn"
+            }
+        ],
+        "nyamu/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/smile03.mtn"
+            }
+        ],
+        "nyamu/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/surprised01.mtn"
+            }
+        ],
+        "nyamu/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/nyamu/surprised02.mtn"
+            }
+        ],
+        "rana/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/angry01.mtn"
+            }
+        ],
+        "rana/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/angry02.mtn"
+            }
+        ],
+        "rana/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/angry03.mtn"
+            }
+        ],
+        "rana/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/bye01.mtn"
+            }
+        ],
+        "rana/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/cry01.mtn"
+            }
+        ],
+        "rana/gacha_b2024_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_b2024_01.mtn"
+            }
+        ],
+        "rana/gacha_c_a_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_c_a_01.mtn"
+            }
+        ],
+        "rana/gacha_df3_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_df3_01.mtn"
+            }
+        ],
+        "rana/gacha_e240_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_e240_01.mtn"
+            }
+        ],
+        "rana/gacha_e286_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_e286_01.mtn"
+            }
+        ],
+        "rana/gacha_e287_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/gacha_e287_01.mtn"
+            }
+        ],
+        "rana/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/idle01.mtn"
+            }
+        ],
+        "rana/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/kime01.mtn"
+            }
+        ],
+        "rana/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf01.mtn"
+            }
+        ],
+        "rana/nf01_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf01_ingameV2.mtn"
+            }
+        ],
+        "rana/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf02.mtn"
+            }
+        ],
+        "rana/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf03.mtn"
+            }
+        ],
+        "rana/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf04.mtn"
+            }
+        ],
+        "rana/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf05.mtn"
+            }
+        ],
+        "rana/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf_left01.mtn"
+            }
+        ],
+        "rana/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nf_right01.mtn"
+            }
+        ],
+        "rana/niya01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/niya01.mtn"
+            }
+        ],
+        "rana/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nnf01.mtn"
+            }
+        ],
+        "rana/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nnf04.mtn"
+            }
+        ],
+        "rana/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/nnf05.mtn"
+            }
+        ],
+        "rana/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/sad01.mtn"
+            }
+        ],
+        "rana/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/serious01.mtn"
+            }
+        ],
+        "rana/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/serious02.mtn"
+            }
+        ],
+        "rana/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/shame01.mtn"
+            }
+        ],
+        "rana/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/sigh01.mtn"
+            }
+        ],
+        "rana/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/smile01.mtn"
+            }
+        ],
+        "rana/smile01_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/smile01_ingameV2.mtn"
+            }
+        ],
+        "rana/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/smile02.mtn"
+            }
+        ],
+        "rana/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/smile04.mtn"
+            }
+        ],
+        "rana/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/surprised01.mtn"
+            }
+        ],
+        "rana/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/rana/thinking01.mtn"
+            }
+        ],
+        "sakiko/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry01.mtn"
+            }
+        ],
+        "sakiko/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry02.mtn"
+            }
+        ],
+        "sakiko/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry03.mtn"
+            }
+        ],
+        "sakiko/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry04.mtn"
+            }
+        ],
+        "sakiko/angry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry05.mtn"
+            }
+        ],
+        "sakiko/angry06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry06.mtn"
+            }
+        ],
+        "sakiko/angry07": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/angry07.mtn"
+            }
+        ],
+        "sakiko/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/bow.mtn"
+            }
+        ],
+        "sakiko/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/bye01.mtn"
+            }
+        ],
+        "sakiko/bye02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/bye02.mtn"
+            }
+        ],
+        "sakiko/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry01.mtn"
+            }
+        ],
+        "sakiko/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry02.mtn"
+            }
+        ],
+        "sakiko/cry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry03.mtn"
+            }
+        ],
+        "sakiko/cry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry04.mtn"
+            }
+        ],
+        "sakiko/cry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry05.mtn"
+            }
+        ],
+        "sakiko/cry06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/cry06.mtn"
+            }
+        ],
+        "sakiko/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/idle01.mtn"
+            }
+        ],
+        "sakiko/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/kime01.mtn"
+            }
+        ],
+        "sakiko/maskoff": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskoff.mtn"
+            }
+        ],
+        "sakiko/maskon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry01.mtn"
+            }
+        ],
+        "sakiko/maskon/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry02.mtn"
+            }
+        ],
+        "sakiko/maskon/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry03.mtn"
+            }
+        ],
+        "sakiko/maskon/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry04.mtn"
+            }
+        ],
+        "sakiko/maskon/angry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry05.mtn"
+            }
+        ],
+        "sakiko/maskon/angry06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry06.mtn"
+            }
+        ],
+        "sakiko/maskon/angry07": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_angry07.mtn"
+            }
+        ],
+        "sakiko/maskon/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_bow.mtn"
+            }
+        ],
+        "sakiko/maskon/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_bye01.mtn"
+            }
+        ],
+        "sakiko/maskon/bye02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_bye02.mtn"
+            }
+        ],
+        "sakiko/maskon/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry01.mtn"
+            }
+        ],
+        "sakiko/maskon/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry02.mtn"
+            }
+        ],
+        "sakiko/maskon/cry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry03.mtn"
+            }
+        ],
+        "sakiko/maskon/cry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry04.mtn"
+            }
+        ],
+        "sakiko/maskon/cry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry05.mtn"
+            }
+        ],
+        "sakiko/maskon/cry06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_cry06.mtn"
+            }
+        ],
+        "sakiko/maskon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_idle01.mtn"
+            }
+        ],
+        "sakiko/maskon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_kime01.mtn"
+            }
+        ],
+        "sakiko/maskon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf01.mtn"
+            }
+        ],
+        "sakiko/maskon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf02.mtn"
+            }
+        ],
+        "sakiko/maskon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf03.mtn"
+            }
+        ],
+        "sakiko/maskon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf04.mtn"
+            }
+        ],
+        "sakiko/maskon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf05.mtn"
+            }
+        ],
+        "sakiko/maskon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf_left01.mtn"
+            }
+        ],
+        "sakiko/maskon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nf_right01.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf01.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf02.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf03.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf04.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf05.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf_left01.mtn"
+            }
+        ],
+        "sakiko/maskon/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nnf_right01.mtn"
+            }
+        ],
+        "sakiko/maskon/nod01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_nod01.mtn"
+            }
+        ],
+        "sakiko/maskon/odoodo01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_odoodo01.mtn"
+            }
+        ],
+        "sakiko/maskon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_sad01.mtn"
+            }
+        ],
+        "sakiko/maskon/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_sad02.mtn"
+            }
+        ],
+        "sakiko/maskon/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_serious01.mtn"
+            }
+        ],
+        "sakiko/maskon/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_serious02.mtn"
+            }
+        ],
+        "sakiko/maskon/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_shame01.mtn"
+            }
+        ],
+        "sakiko/maskon/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_shame02.mtn"
+            }
+        ],
+        "sakiko/maskon/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_sigh01.mtn"
+            }
+        ],
+        "sakiko/maskon/sigh02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_sigh02.mtn"
+            }
+        ],
+        "sakiko/maskon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile01.mtn"
+            }
+        ],
+        "sakiko/maskon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile02.mtn"
+            }
+        ],
+        "sakiko/maskon/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile03.mtn"
+            }
+        ],
+        "sakiko/maskon/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile04.mtn"
+            }
+        ],
+        "sakiko/maskon/smile05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile05.mtn"
+            }
+        ],
+        "sakiko/maskon/smile06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile06.mtn"
+            }
+        ],
+        "sakiko/maskon/smile07": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_smile07.mtn"
+            }
+        ],
+        "sakiko/maskon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_surprised01.mtn"
+            }
+        ],
+        "sakiko/maskon/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_surprised02.mtn"
+            }
+        ],
+        "sakiko/maskon/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_thinking01.mtn"
+            }
+        ],
+        "sakiko/maskon/thinking02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/maskon_thinking02.mtn"
+            }
+        ],
+        "sakiko/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf01.mtn"
+            }
+        ],
+        "sakiko/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf02.mtn"
+            }
+        ],
+        "sakiko/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf03.mtn"
+            }
+        ],
+        "sakiko/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf04.mtn"
+            }
+        ],
+        "sakiko/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf05.mtn"
+            }
+        ],
+        "sakiko/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf_left01.mtn"
+            }
+        ],
+        "sakiko/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nf_right01.mtn"
+            }
+        ],
+        "sakiko/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf01.mtn"
+            }
+        ],
+        "sakiko/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf02.mtn"
+            }
+        ],
+        "sakiko/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf03.mtn"
+            }
+        ],
+        "sakiko/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf04.mtn"
+            }
+        ],
+        "sakiko/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf05.mtn"
+            }
+        ],
+        "sakiko/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf_left01.mtn"
+            }
+        ],
+        "sakiko/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nnf_right01.mtn"
+            }
+        ],
+        "sakiko/nod01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/nod01.mtn"
+            }
+        ],
+        "sakiko/odoodo01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/odoodo01.mtn"
+            }
+        ],
+        "sakiko/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/sad01.mtn"
+            }
+        ],
+        "sakiko/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/sad02.mtn"
+            }
+        ],
+        "sakiko/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/serious01.mtn"
+            }
+        ],
+        "sakiko/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/serious02.mtn"
+            }
+        ],
+        "sakiko/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/shame01.mtn"
+            }
+        ],
+        "sakiko/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/shame02.mtn"
+            }
+        ],
+        "sakiko/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/sigh01.mtn"
+            }
+        ],
+        "sakiko/sigh02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/sigh02.mtn"
+            }
+        ],
+        "sakiko/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile01.mtn"
+            }
+        ],
+        "sakiko/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile02.mtn"
+            }
+        ],
+        "sakiko/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile03.mtn"
+            }
+        ],
+        "sakiko/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile04.mtn"
+            }
+        ],
+        "sakiko/smile05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile05.mtn"
+            }
+        ],
+        "sakiko/smile06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile06.mtn"
+            }
+        ],
+        "sakiko/smile07": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/smile07.mtn"
+            }
+        ],
+        "sakiko/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/surprised01.mtn"
+            }
+        ],
+        "sakiko/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/surprised02.mtn"
+            }
+        ],
+        "sakiko/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/thinking01.mtn"
+            }
+        ],
+        "sakiko/thinking02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/sakiko/thinking02.mtn"
+            }
+        ],
+        "soyo/ando01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/ando01.mtn"
+            }
+        ],
+        "soyo/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry01.mtn"
+            }
+        ],
+        "soyo/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry02.mtn"
+            }
+        ],
+        "soyo/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry03.mtn"
+            }
+        ],
+        "soyo/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry04.mtn"
+            }
+        ],
+        "soyo/angry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry05.mtn"
+            }
+        ],
+        "soyo/angry06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/angry06.mtn"
+            }
+        ],
+        "soyo/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/bye01.mtn"
+            }
+        ],
+        "soyo/bye02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/bye02.mtn"
+            }
+        ],
+        "soyo/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/cry01.mtn"
+            }
+        ],
+        "soyo/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/cry02.mtn"
+            }
+        ],
+        "soyo/gacha_b2024_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_b2024_01.mtn"
+            }
+        ],
+        "soyo/gacha_c_a_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_c_a_01.mtn"
+            }
+        ],
+        "soyo/gacha_df3_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_df3_01.mtn"
+            }
+        ],
+        "soyo/gacha_e235_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_e235_01.mtn"
+            }
+        ],
+        "soyo/gacha_e250_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_e250_01.mtn"
+            }
+        ],
+        "soyo/gacha_e289_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_e289_01.mtn"
+            }
+        ],
+        "soyo/gacha_e297_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/gacha_e297_01.mtn"
+            }
+        ],
+        "soyo/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/idle01.mtn"
+            }
+        ],
+        "soyo/kandou01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/kandou01.mtn"
+            }
+        ],
+        "soyo/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/kime01.mtn"
+            }
+        ],
+        "soyo/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf01.mtn"
+            }
+        ],
+        "soyo/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf02.mtn"
+            }
+        ],
+        "soyo/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf03.mtn"
+            }
+        ],
+        "soyo/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf04.mtn"
+            }
+        ],
+        "soyo/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf05.mtn"
+            }
+        ],
+        "soyo/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf_left01.mtn"
+            }
+        ],
+        "soyo/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nf_right01.mtn"
+            }
+        ],
+        "soyo/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf01.mtn"
+            }
+        ],
+        "soyo/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf02.mtn"
+            }
+        ],
+        "soyo/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf03.mtn"
+            }
+        ],
+        "soyo/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf04.mtn"
+            }
+        ],
+        "soyo/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf05.mtn"
+            }
+        ],
+        "soyo/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf_left01.mtn"
+            }
+        ],
+        "soyo/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/nnf_right01.mtn"
+            }
+        ],
+        "soyo/odoodo01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/odoodo01.mtn"
+            }
+        ],
+        "soyo/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/sad01.mtn"
+            }
+        ],
+        "soyo/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/sad02.mtn"
+            }
+        ],
+        "soyo/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/sad03.mtn"
+            }
+        ],
+        "soyo/scared01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/scared01.mtn"
+            }
+        ],
+        "soyo/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/serious01.mtn"
+            }
+        ],
+        "soyo/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/serious02.mtn"
+            }
+        ],
+        "soyo/serious03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/serious03.mtn"
+            }
+        ],
+        "soyo/serious04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/serious04.mtn"
+            }
+        ],
+        "soyo/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/shame01.mtn"
+            }
+        ],
+        "soyo/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/shame02.mtn"
+            }
+        ],
+        "soyo/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile01.mtn"
+            }
+        ],
+        "soyo/smile01_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile01_ingameV2.mtn"
+            }
+        ],
+        "soyo/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile02.mtn"
+            }
+        ],
+        "soyo/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile03.mtn"
+            }
+        ],
+        "soyo/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile04.mtn"
+            }
+        ],
+        "soyo/smile05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile05.mtn"
+            }
+        ],
+        "soyo/smile06": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/smile06.mtn"
+            }
+        ],
+        "soyo/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/surprised01.mtn"
+            }
+        ],
+        "soyo/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/thinking01.mtn"
+            }
+        ],
+        "soyo/thinking02_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/thinking02_01.mtn"
+            }
+        ],
+        "soyo/thinking02_02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/thinking02_02.mtn"
+            }
+        ],
+        "soyo/thinking02_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/thinking02_ingameV2.mtn"
+            }
+        ],
+        "soyo/wink01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/soyo/wink01.mtn"
+            }
+        ],
+        "taki/ando01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/ando01.mtn"
+            }
+        ],
+        "taki/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/angry01.mtn"
+            }
+        ],
+        "taki/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/angry02.mtn"
+            }
+        ],
+        "taki/angry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/angry03.mtn"
+            }
+        ],
+        "taki/angry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/angry04.mtn"
+            }
+        ],
+        "taki/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/bye01.mtn"
+            }
+        ],
+        "taki/bye02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/bye02.mtn"
+            }
+        ],
+        "taki/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/cry01.mtn"
+            }
+        ],
+        "taki/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/cry02.mtn"
+            }
+        ],
+        "taki/gacha_b2024_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_b2024_01.mtn"
+            }
+        ],
+        "taki/gacha_c_a_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_c_a_01.mtn"
+            }
+        ],
+        "taki/gacha_df3_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_df3_01.mtn"
+            }
+        ],
+        "taki/gacha_e240_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_e240_01.mtn"
+            }
+        ],
+        "taki/gacha_e277_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_e277_01.mtn"
+            }
+        ],
+        "taki/gacha_e297_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/gacha_e297_01.mtn"
+            }
+        ],
+        "taki/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/idle01.mtn"
+            }
+        ],
+        "taki/kandou01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/kandou01.mtn"
+            }
+        ],
+        "taki/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/kime01.mtn"
+            }
+        ],
+        "taki/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf01.mtn"
+            }
+        ],
+        "taki/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf02.mtn"
+            }
+        ],
+        "taki/nf02_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf02_ingameV2.mtn"
+            }
+        ],
+        "taki/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf03.mtn"
+            }
+        ],
+        "taki/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf04.mtn"
+            }
+        ],
+        "taki/nf04_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf04_ingameV2.mtn"
+            }
+        ],
+        "taki/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf05.mtn"
+            }
+        ],
+        "taki/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf_left01.mtn"
+            }
+        ],
+        "taki/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/nf_right01.mtn"
+            }
+        ],
+        "taki/pui01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/pui01.mtn"
+            }
+        ],
+        "taki/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/sad01.mtn"
+            }
+        ],
+        "taki/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/sad02.mtn"
+            }
+        ],
+        "taki/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/sad03.mtn"
+            }
+        ],
+        "taki/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/serious01.mtn"
+            }
+        ],
+        "taki/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/serious02.mtn"
+            }
+        ],
+        "taki/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/shame01.mtn"
+            }
+        ],
+        "taki/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/shame02.mtn"
+            }
+        ],
+        "taki/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/sigh01.mtn"
+            }
+        ],
+        "taki/sigh02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/sigh02.mtn"
+            }
+        ],
+        "taki/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/smile01.mtn"
+            }
+        ],
+        "taki/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/smile02.mtn"
+            }
+        ],
+        "taki/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/smile03.mtn"
+            }
+        ],
+        "taki/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/smile04.mtn"
+            }
+        ],
+        "taki/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/surprised01.mtn"
+            }
+        ],
+        "taki/surprised02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/surprised02.mtn"
+            }
+        ],
+        "taki/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/taki/thinking01.mtn"
+            }
+        ],
+        "tomori/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/angry01.mtn"
+            }
+        ],
+        "tomori/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/angry02.mtn"
+            }
+        ],
+        "tomori/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/bye01.mtn"
+            }
+        ],
+        "tomori/c_d3/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/angry01.mtn"
+            }
+        ],
+        "tomori/c_d3/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/angry02.mtn"
+            }
+        ],
+        "tomori/c_d3/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/bye01.mtn"
+            }
+        ],
+        "tomori/c_d3/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/cry01.mtn"
+            }
+        ],
+        "tomori/c_d3/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/cry02.mtn"
+            }
+        ],
+        "tomori/c_d3/gacha01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/gacha01.mtn"
+            }
+        ],
+        "tomori/c_d3/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/idle01.mtn"
+            }
+        ],
+        "tomori/c_d3/kandou01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/kandou01.mtn"
+            }
+        ],
+        "tomori/c_d3/kandou02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/kandou02.mtn"
+            }
+        ],
+        "tomori/c_d3/kandou03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/kandou03.mtn"
+            }
+        ],
+        "tomori/c_d3/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/kime01.mtn"
+            }
+        ],
+        "tomori/c_d3/kime02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/kime02.mtn"
+            }
+        ],
+        "tomori/c_d3/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf01.mtn"
+            }
+        ],
+        "tomori/c_d3/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf02.mtn"
+            }
+        ],
+        "tomori/c_d3/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf03.mtn"
+            }
+        ],
+        "tomori/c_d3/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf04.mtn"
+            }
+        ],
+        "tomori/c_d3/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf05.mtn"
+            }
+        ],
+        "tomori/c_d3/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf_left01.mtn"
+            }
+        ],
+        "tomori/c_d3/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nf_right01.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf01.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf02.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf03.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf04.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf05.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf_left01.mtn"
+            }
+        ],
+        "tomori/c_d3/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/nnf_right01.mtn"
+            }
+        ],
+        "tomori/c_d3/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sad01.mtn"
+            }
+        ],
+        "tomori/c_d3/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sad02.mtn"
+            }
+        ],
+        "tomori/c_d3/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sad03.mtn"
+            }
+        ],
+        "tomori/c_d3/sad04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sad04.mtn"
+            }
+        ],
+        "tomori/c_d3/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/serious01.mtn"
+            }
+        ],
+        "tomori/c_d3/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/serious02.mtn"
+            }
+        ],
+        "tomori/c_d3/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/shame01.mtn"
+            }
+        ],
+        "tomori/c_d3/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/shame02.mtn"
+            }
+        ],
+        "tomori/c_d3/sing01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sing01.mtn"
+            }
+        ],
+        "tomori/c_d3/sing02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/sing02.mtn"
+            }
+        ],
+        "tomori/c_d3/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/smile01.mtn"
+            }
+        ],
+        "tomori/c_d3/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/smile02.mtn"
+            }
+        ],
+        "tomori/c_d3/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/smile03.mtn"
+            }
+        ],
+        "tomori/c_d3/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/smile04.mtn"
+            }
+        ],
+        "tomori/c_d3/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/surprised01.mtn"
+            }
+        ],
+        "tomori/c_d3/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/thinking01.mtn"
+            }
+        ],
+        "tomori/c_d3/thinking02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/collabo_d_3_ur/thinking02.mtn"
+            }
+        ],
+        "tomori/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/cry01.mtn"
+            }
+        ],
+        "tomori/cry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/cry02.mtn"
+            }
+        ],
+        "tomori/cry03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/cry03.mtn"
+            }
+        ],
+        "tomori/cry04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/cry04.mtn"
+            }
+        ],
+        "tomori/cry05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/cry05.mtn"
+            }
+        ],
+        "tomori/gacha_b2024_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_b2024_01.mtn"
+            }
+        ],
+        "tomori/gacha_c_a_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_c_a_01.mtn"
+            }
+        ],
+        "tomori/gacha_df3_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_df3_01.mtn"
+            }
+        ],
+        "tomori/gacha_e235_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_e235_01.mtn"
+            }
+        ],
+        "tomori/gacha_e250_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_e250_01.mtn"
+            }
+        ],
+        "tomori/gacha_e286_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_e286_01.mtn"
+            }
+        ],
+        "tomori/gacha_e289_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_e289_01.mtn"
+            }
+        ],
+        "tomori/gacha_e297_01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/gacha_e297_01.mtn"
+            }
+        ],
+        "tomori/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/idle01.mtn"
+            }
+        ],
+        "tomori/kandou01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/kandou01.mtn"
+            }
+        ],
+        "tomori/kandou02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/kandou02.mtn"
+            }
+        ],
+        "tomori/kandou03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/kandou03.mtn"
+            }
+        ],
+        "tomori/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/kime01.mtn"
+            }
+        ],
+        "tomori/kime02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/kime02.mtn"
+            }
+        ],
+        "tomori/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf01.mtn"
+            }
+        ],
+        "tomori/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf02.mtn"
+            }
+        ],
+        "tomori/nf02_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf02_ingameV2.mtn"
+            }
+        ],
+        "tomori/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf03.mtn"
+            }
+        ],
+        "tomori/nf03_ingameV2": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf03_ingameV2.mtn"
+            }
+        ],
+        "tomori/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf04.mtn"
+            }
+        ],
+        "tomori/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf05.mtn"
+            }
+        ],
+        "tomori/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf_left01.mtn"
+            }
+        ],
+        "tomori/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nf_right01.mtn"
+            }
+        ],
+        "tomori/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf01.mtn"
+            }
+        ],
+        "tomori/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf02.mtn"
+            }
+        ],
+        "tomori/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf03.mtn"
+            }
+        ],
+        "tomori/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf04.mtn"
+            }
+        ],
+        "tomori/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf05.mtn"
+            }
+        ],
+        "tomori/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf_left01.mtn"
+            }
+        ],
+        "tomori/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/nnf_right01.mtn"
+            }
+        ],
+        "tomori/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sad01.mtn"
+            }
+        ],
+        "tomori/sad02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sad02.mtn"
+            }
+        ],
+        "tomori/sad03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sad03.mtn"
+            }
+        ],
+        "tomori/sad04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sad04.mtn"
+            }
+        ],
+        "tomori/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/serious01.mtn"
+            }
+        ],
+        "tomori/serious02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/serious02.mtn"
+            }
+        ],
+        "tomori/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/shame01.mtn"
+            }
+        ],
+        "tomori/shame02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/shame02.mtn"
+            }
+        ],
+        "tomori/sing01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sing01.mtn"
+            }
+        ],
+        "tomori/sing02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/sing02.mtn"
+            }
+        ],
+        "tomori/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile01.mtn"
+            }
+        ],
+        "tomori/smile01_e289": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile01_e289.mtn"
+            }
+        ],
+        "tomori/smile01_e297": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile01_e297.mtn"
+            }
+        ],
+        "tomori/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile02.mtn"
+            }
+        ],
+        "tomori/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile03.mtn"
+            }
+        ],
+        "tomori/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/smile04.mtn"
+            }
+        ],
+        "tomori/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/surprised01.mtn"
+            }
+        ],
+        "tomori/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/thinking01.mtn"
+            }
+        ],
+        "tomori/thinking02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/tomori/thinking02.mtn"
+            }
+        ],
+        "uika/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/angry01.mtn"
+            }
+        ],
+        "uika/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/bow.mtn"
+            }
+        ],
+        "uika/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/cry01.mtn"
+            }
+        ],
+        "uika/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/idle01.mtn"
+            }
+        ],
+        "uika/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/kime01.mtn"
+            }
+        ],
+        "uika/maskoff": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskoff.mtn"
+            }
+        ],
+        "uika/maskon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_angry01.mtn"
+            }
+        ],
+        "uika/maskon/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_bow.mtn"
+            }
+        ],
+        "uika/maskon/cry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_cry01.mtn"
+            }
+        ],
+        "uika/maskon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_idle01.mtn"
+            }
+        ],
+        "uika/maskon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_kime01.mtn"
+            }
+        ],
+        "uika/maskon/mitore01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_mitore01.mtn"
+            }
+        ],
+        "uika/maskon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf01.mtn"
+            }
+        ],
+        "uika/maskon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf02.mtn"
+            }
+        ],
+        "uika/maskon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf03.mtn"
+            }
+        ],
+        "uika/maskon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf04.mtn"
+            }
+        ],
+        "uika/maskon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf05.mtn"
+            }
+        ],
+        "uika/maskon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf_left01.mtn"
+            }
+        ],
+        "uika/maskon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nf_right01.mtn"
+            }
+        ],
+        "uika/maskon/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf01.mtn"
+            }
+        ],
+        "uika/maskon/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf02.mtn"
+            }
+        ],
+        "uika/maskon/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf03.mtn"
+            }
+        ],
+        "uika/maskon/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf04.mtn"
+            }
+        ],
+        "uika/maskon/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf05.mtn"
+            }
+        ],
+        "uika/maskon/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf_left01.mtn"
+            }
+        ],
+        "uika/maskon/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_nnf_right01.mtn"
+            }
+        ],
+        "uika/maskon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_sad01.mtn"
+            }
+        ],
+        "uika/maskon/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_serious01.mtn"
+            }
+        ],
+        "uika/maskon/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_shame01.mtn"
+            }
+        ],
+        "uika/maskon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_smile01.mtn"
+            }
+        ],
+        "uika/maskon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_smile02.mtn"
+            }
+        ],
+        "uika/maskon/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_smile03.mtn"
+            }
+        ],
+        "uika/maskon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/maskon_surprised01.mtn"
+            }
+        ],
+        "uika/mitore01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/mitore01.mtn"
+            }
+        ],
+        "uika/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf01.mtn"
+            }
+        ],
+        "uika/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf02.mtn"
+            }
+        ],
+        "uika/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf03.mtn"
+            }
+        ],
+        "uika/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf04.mtn"
+            }
+        ],
+        "uika/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf05.mtn"
+            }
+        ],
+        "uika/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf_left01.mtn"
+            }
+        ],
+        "uika/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nf_right01.mtn"
+            }
+        ],
+        "uika/nnf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf01.mtn"
+            }
+        ],
+        "uika/nnf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf02.mtn"
+            }
+        ],
+        "uika/nnf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf03.mtn"
+            }
+        ],
+        "uika/nnf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf04.mtn"
+            }
+        ],
+        "uika/nnf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf05.mtn"
+            }
+        ],
+        "uika/nnf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf_left01.mtn"
+            }
+        ],
+        "uika/nnf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/nnf_right01.mtn"
+            }
+        ],
+        "uika/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/sad01.mtn"
+            }
+        ],
+        "uika/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/serious01.mtn"
+            }
+        ],
+        "uika/shame01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/shame01.mtn"
+            }
+        ],
+        "uika/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/smile01.mtn"
+            }
+        ],
+        "uika/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/smile02.mtn"
+            }
+        ],
+        "uika/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/smile03.mtn"
+            }
+        ],
+        "uika/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/uika/surprised01.mtn"
+            }
+        ],
+        "umiri/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/angry01.mtn"
+            }
+        ],
+        "umiri/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/angry02.mtn"
+            }
+        ],
+        "umiri/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/bow.mtn"
+            }
+        ],
+        "umiri/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/bye01.mtn"
+            }
+        ],
+        "umiri/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/idle01.mtn"
+            }
+        ],
+        "umiri/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/kime01.mtn"
+            }
+        ],
+        "umiri/maskon/angry01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_angry01.mtn"
+            }
+        ],
+        "umiri/maskon/angry02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_angry02.mtn"
+            }
+        ],
+        "umiri/maskon/bow": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_bow.mtn"
+            }
+        ],
+        "umiri/maskon/bye01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_bye01.mtn"
+            }
+        ],
+        "umiri/maskon/idle01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_idle01.mtn"
+            }
+        ],
+        "umiri/maskon/kime01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_kime01.mtn"
+            }
+        ],
+        "umiri/maskon/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf01.mtn"
+            }
+        ],
+        "umiri/maskon/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf02.mtn"
+            }
+        ],
+        "umiri/maskon/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf03.mtn"
+            }
+        ],
+        "umiri/maskon/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf04.mtn"
+            }
+        ],
+        "umiri/maskon/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf05.mtn"
+            }
+        ],
+        "umiri/maskon/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf_left01.mtn"
+            }
+        ],
+        "umiri/maskon/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_nf_right01.mtn"
+            }
+        ],
+        "umiri/maskon/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_sad01.mtn"
+            }
+        ],
+        "umiri/maskon/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_serious01.mtn"
+            }
+        ],
+        "umiri/maskon/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_sigh01.mtn"
+            }
+        ],
+        "umiri/maskon/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_smile01.mtn"
+            }
+        ],
+        "umiri/maskon/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_smile02.mtn"
+            }
+        ],
+        "umiri/maskon/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_smile03.mtn"
+            }
+        ],
+        "umiri/maskon/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_smile04.mtn"
+            }
+        ],
+        "umiri/maskon/smile05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_smile05.mtn"
+            }
+        ],
+        "umiri/maskon/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_surprised01.mtn"
+            }
+        ],
+        "umiri/maskon/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/maskon_thinking01.mtn"
+            }
+        ],
+        "umiri/nf01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf01.mtn"
+            }
+        ],
+        "umiri/nf02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf02.mtn"
+            }
+        ],
+        "umiri/nf03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf03.mtn"
+            }
+        ],
+        "umiri/nf04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf04.mtn"
+            }
+        ],
+        "umiri/nf05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf05.mtn"
+            }
+        ],
+        "umiri/nf_left01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf_left01.mtn"
+            }
+        ],
+        "umiri/nf_right01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/nf_right01.mtn"
+            }
+        ],
+        "umiri/sad01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/sad01.mtn"
+            }
+        ],
+        "umiri/serious01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/serious01.mtn"
+            }
+        ],
+        "umiri/sigh01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/sigh01.mtn"
+            }
+        ],
+        "umiri/smile01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/smile01.mtn"
+            }
+        ],
+        "umiri/smile02": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/smile02.mtn"
+            }
+        ],
+        "umiri/smile03": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/smile03.mtn"
+            }
+        ],
+        "umiri/smile04": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/smile04.mtn"
+            }
+        ],
+        "umiri/smile05": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/smile05.mtn"
+            }
+        ],
+        "umiri/surprised01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/surprised01.mtn"
+            }
+        ],
+        "umiri/thinking01": [
+            {
+                "file": "../.mtn_exp/motions/PARAM_IMPORT__50/umiri/thinking01.mtn"
+            }
+        ]
+    },
+    "expressions": [
+        {
+            "name": "anon/angry01",
+            "file": "../.mtn_exp/expressions/__base__/anon/angry01.exp.json"
+        },
+        {
+            "name": "anon/angry02",
+            "file": "../.mtn_exp/expressions/__base__/anon/angry02.exp.json"
+        },
+        {
+            "name": "anon/angry03",
+            "file": "../.mtn_exp/expressions/__base__/anon/angry03.exp.json"
+        },
+        {
+            "name": "anon/angry04",
+            "file": "../.mtn_exp/expressions/__base__/anon/angry04.exp.json"
+        },
+        {
+            "name": "anon/bye01",
+            "file": "../.mtn_exp/expressions/__base__/anon/bye01.exp.json"
+        },
+        {
+            "name": "anon/cry01",
+            "file": "../.mtn_exp/expressions/__base__/anon/cry01.exp.json"
+        },
+        {
+            "name": "anon/cry02",
+            "file": "../.mtn_exp/expressions/__base__/anon/cry02.exp.json"
+        },
+        {
+            "name": "anon/default",
+            "file": "../.mtn_exp/expressions/__base__/anon/default.exp.json"
+        },
+        {
+            "name": "anon/idle01",
+            "file": "../.mtn_exp/expressions/__base__/anon/idle01.exp.json"
+        },
+        {
+            "name": "anon/kandou01",
+            "file": "../.mtn_exp/expressions/__base__/anon/kandou01.exp.json"
+        },
+        {
+            "name": "anon/kandou02",
+            "file": "../.mtn_exp/expressions/__base__/anon/kandou02.exp.json"
+        },
+        {
+            "name": "anon/kime01",
+            "file": "../.mtn_exp/expressions/__base__/anon/kime01.exp.json"
+        },
+        {
+            "name": "anon/kime02",
+            "file": "../.mtn_exp/expressions/__base__/anon/kime02.exp.json"
+        },
+        {
+            "name": "anon/sad01",
+            "file": "../.mtn_exp/expressions/__base__/anon/sad01.exp.json"
+        },
+        {
+            "name": "anon/sad02",
+            "file": "../.mtn_exp/expressions/__base__/anon/sad02.exp.json"
+        },
+        {
+            "name": "anon/serious01",
+            "file": "../.mtn_exp/expressions/__base__/anon/serious01.exp.json"
+        },
+        {
+            "name": "anon/serious02",
+            "file": "../.mtn_exp/expressions/__base__/anon/serious02.exp.json"
+        },
+        {
+            "name": "anon/shame01",
+            "file": "../.mtn_exp/expressions/__base__/anon/shame01.exp.json"
+        },
+        {
+            "name": "anon/shame02",
+            "file": "../.mtn_exp/expressions/__base__/anon/shame02.exp.json"
+        },
+        {
+            "name": "anon/smile01",
+            "file": "../.mtn_exp/expressions/__base__/anon/smile01.exp.json"
+        },
+        {
+            "name": "anon/smile02",
+            "file": "../.mtn_exp/expressions/__base__/anon/smile02.exp.json"
+        },
+        {
+            "name": "anon/smile03",
+            "file": "../.mtn_exp/expressions/__base__/anon/smile03.exp.json"
+        },
+        {
+            "name": "anon/smile04",
+            "file": "../.mtn_exp/expressions/__base__/anon/smile04.exp.json"
+        },
+        {
+            "name": "anon/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/anon/surprised01.exp.json"
+        },
+        {
+            "name": "anon/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/anon/thinking01.exp.json"
+        },
+        {
+            "name": "anon/thinking02",
+            "file": "../.mtn_exp/expressions/__base__/anon/thinking02.exp.json"
+        },
+        {
+            "name": "anon/thinking03",
+            "file": "../.mtn_exp/expressions/__base__/anon/thinking03.exp.json"
+        },
+        {
+            "name": "anon/wink01",
+            "file": "../.mtn_exp/expressions/__base__/anon/wink01.exp.json"
+        },
+        {
+            "name": "mana/angry01",
+            "file": "../.mtn_exp/expressions/__base__/mana/angry01.exp.json"
+        },
+        {
+            "name": "mana/cry01",
+            "file": "../.mtn_exp/expressions/__base__/mana/cry01.exp.json"
+        },
+        {
+            "name": "mana/default",
+            "file": "../.mtn_exp/expressions/__base__/mana/default.exp.json"
+        },
+        {
+            "name": "mana/idle01",
+            "file": "../.mtn_exp/expressions/__base__/mana/idle01.exp.json"
+        },
+        {
+            "name": "mana/sad01",
+            "file": "../.mtn_exp/expressions/__base__/mana/sad01.exp.json"
+        },
+        {
+            "name": "mana/smile01",
+            "file": "../.mtn_exp/expressions/__base__/mana/smile01.exp.json"
+        },
+        {
+            "name": "mana/smile02",
+            "file": "../.mtn_exp/expressions/__base__/mana/smile02.exp.json"
+        },
+        {
+            "name": "mana/smile03",
+            "file": "../.mtn_exp/expressions/__base__/mana/smile03.exp.json"
+        },
+        {
+            "name": "mana/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/mana/surprised01.exp.json"
+        },
+        {
+            "name": "mutsumi/angry01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/angry01.exp.json"
+        },
+        {
+            "name": "mutsumi/default",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/default.exp.json"
+        },
+        {
+            "name": "mutsumi/idle01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/idle01.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/angry01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_angry01.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/angry02",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_angry02.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/cry01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_cry01.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/default",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_default.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/sad01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_sad01.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/sad02",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_sad02.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/sad03",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_sad03.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/smile01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_smile01.exp.json"
+        },
+        {
+            "name": "mutsumi/mts/smile02",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/mts_smile02.exp.json"
+        },
+        {
+            "name": "mutsumi/sad01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/sad01.exp.json"
+        },
+        {
+            "name": "mutsumi/sad04",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/sad04.exp.json"
+        },
+        {
+            "name": "mutsumi/smile01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/smile01.exp.json"
+        },
+        {
+            "name": "mutsumi/smile02",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/smile02.exp.json"
+        },
+        {
+            "name": "mutsumi/smile04",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/smile04.exp.json"
+        },
+        {
+            "name": "mutsumi/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/mutsumi/surprised01.exp.json"
+        },
+        {
+            "name": "nyamu/angry01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/angry01.exp.json"
+        },
+        {
+            "name": "nyamu/bored",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/bored.exp.json"
+        },
+        {
+            "name": "nyamu/cry01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/cry01.exp.json"
+        },
+        {
+            "name": "nyamu/default",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/default.exp.json"
+        },
+        {
+            "name": "nyamu/idle01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/idle01.exp.json"
+        },
+        {
+            "name": "nyamu/niyake",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/niyake.exp.json"
+        },
+        {
+            "name": "nyamu/nyamu_bored",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/nyamu_bored.exp.json"
+        },
+        {
+            "name": "nyamu/sad01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/sad01.exp.json"
+        },
+        {
+            "name": "nyamu/serious01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/serious01.exp.json"
+        },
+        {
+            "name": "nyamu/smile01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/smile01.exp.json"
+        },
+        {
+            "name": "nyamu/smile02",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/smile02.exp.json"
+        },
+        {
+            "name": "nyamu/smile03",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/smile03.exp.json"
+        },
+        {
+            "name": "nyamu/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/nyamu/surprised01.exp.json"
+        },
+        {
+            "name": "rana/angry01",
+            "file": "../.mtn_exp/expressions/__base__/rana/angry01.exp.json"
+        },
+        {
+            "name": "rana/angry02",
+            "file": "../.mtn_exp/expressions/__base__/rana/angry02.exp.json"
+        },
+        {
+            "name": "rana/angry03",
+            "file": "../.mtn_exp/expressions/__base__/rana/angry03.exp.json"
+        },
+        {
+            "name": "rana/bye01",
+            "file": "../.mtn_exp/expressions/__base__/rana/bye01.exp.json"
+        },
+        {
+            "name": "rana/cry01",
+            "file": "../.mtn_exp/expressions/__base__/rana/cry01.exp.json"
+        },
+        {
+            "name": "rana/default",
+            "file": "../.mtn_exp/expressions/__base__/rana/default.exp.json"
+        },
+        {
+            "name": "rana/idle01",
+            "file": "../.mtn_exp/expressions/__base__/rana/idle01.exp.json"
+        },
+        {
+            "name": "rana/kime01",
+            "file": "../.mtn_exp/expressions/__base__/rana/kime01.exp.json"
+        },
+        {
+            "name": "rana/niya01",
+            "file": "../.mtn_exp/expressions/__base__/rana/niya01.exp.json"
+        },
+        {
+            "name": "rana/sad01",
+            "file": "../.mtn_exp/expressions/__base__/rana/sad01.exp.json"
+        },
+        {
+            "name": "rana/serious01",
+            "file": "../.mtn_exp/expressions/__base__/rana/serious01.exp.json"
+        },
+        {
+            "name": "rana/serious02",
+            "file": "../.mtn_exp/expressions/__base__/rana/serious02.exp.json"
+        },
+        {
+            "name": "rana/shame01",
+            "file": "../.mtn_exp/expressions/__base__/rana/shame01.exp.json"
+        },
+        {
+            "name": "rana/sigh01",
+            "file": "../.mtn_exp/expressions/__base__/rana/sigh01.exp.json"
+        },
+        {
+            "name": "rana/smile01",
+            "file": "../.mtn_exp/expressions/__base__/rana/smile01.exp.json"
+        },
+        {
+            "name": "rana/smile02",
+            "file": "../.mtn_exp/expressions/__base__/rana/smile02.exp.json"
+        },
+        {
+            "name": "rana/smile04",
+            "file": "../.mtn_exp/expressions/__base__/rana/smile04.exp.json"
+        },
+        {
+            "name": "rana/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/rana/surprised01.exp.json"
+        },
+        {
+            "name": "rana/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/rana/thinking01.exp.json"
+        },
+        {
+            "name": "sakiko/angry01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/angry01.exp.json"
+        },
+        {
+            "name": "sakiko/angry02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/angry02.exp.json"
+        },
+        {
+            "name": "sakiko/angry07",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/angry07.exp.json"
+        },
+        {
+            "name": "sakiko/cry01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/cry01.exp.json"
+        },
+        {
+            "name": "sakiko/cry02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/cry02.exp.json"
+        },
+        {
+            "name": "sakiko/cry03",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/cry03.exp.json"
+        },
+        {
+            "name": "sakiko/cry04",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/cry04.exp.json"
+        },
+        {
+            "name": "sakiko/default",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/default.exp.json"
+        },
+        {
+            "name": "sakiko/idle01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/idle01.exp.json"
+        },
+        {
+            "name": "sakiko/kime01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/kime01.exp.json"
+        },
+        {
+            "name": "sakiko/odoodo01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/odoodo01.exp.json"
+        },
+        {
+            "name": "sakiko/sad01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/sad01.exp.json"
+        },
+        {
+            "name": "sakiko/sad02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/sad02.exp.json"
+        },
+        {
+            "name": "sakiko/serious01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/serious01.exp.json"
+        },
+        {
+            "name": "sakiko/serious02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/serious02.exp.json"
+        },
+        {
+            "name": "sakiko/shame01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/shame01.exp.json"
+        },
+        {
+            "name": "sakiko/shame02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/shame02.exp.json"
+        },
+        {
+            "name": "sakiko/sigh01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/sigh01.exp.json"
+        },
+        {
+            "name": "sakiko/sigh02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/sigh02.exp.json"
+        },
+        {
+            "name": "sakiko/smile01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile01.exp.json"
+        },
+        {
+            "name": "sakiko/smile02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile02.exp.json"
+        },
+        {
+            "name": "sakiko/smile03",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile03.exp.json"
+        },
+        {
+            "name": "sakiko/smile04",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile04.exp.json"
+        },
+        {
+            "name": "sakiko/smile05",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile05.exp.json"
+        },
+        {
+            "name": "sakiko/smile06",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/smile06.exp.json"
+        },
+        {
+            "name": "sakiko/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/surprised01.exp.json"
+        },
+        {
+            "name": "sakiko/surprised02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/surprised02.exp.json"
+        },
+        {
+            "name": "sakiko/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/thinking01.exp.json"
+        },
+        {
+            "name": "sakiko/thinking02",
+            "file": "../.mtn_exp/expressions/__base__/sakiko/thinking02.exp.json"
+        },
+        {
+            "name": "soyo/ando01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/ando01.exp.json"
+        },
+        {
+            "name": "soyo/angry01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/angry01.exp.json"
+        },
+        {
+            "name": "soyo/angry02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/angry02.exp.json"
+        },
+        {
+            "name": "soyo/angry03",
+            "file": "../.mtn_exp/expressions/__base__/soyo/angry03.exp.json"
+        },
+        {
+            "name": "soyo/angry04",
+            "file": "../.mtn_exp/expressions/__base__/soyo/angry04.exp.json"
+        },
+        {
+            "name": "soyo/bye01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/bye01.exp.json"
+        },
+        {
+            "name": "soyo/bye02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/bye02.exp.json"
+        },
+        {
+            "name": "soyo/cry01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/cry01.exp.json"
+        },
+        {
+            "name": "soyo/cry02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/cry02.exp.json"
+        },
+        {
+            "name": "soyo/default",
+            "file": "../.mtn_exp/expressions/__base__/soyo/default.exp.json"
+        },
+        {
+            "name": "soyo/idle01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/idle01.exp.json"
+        },
+        {
+            "name": "soyo/kandou01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/kandou01.exp.json"
+        },
+        {
+            "name": "soyo/kime01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/kime01.exp.json"
+        },
+        {
+            "name": "soyo/odoodo01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/odoodo01.exp.json"
+        },
+        {
+            "name": "soyo/sad01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/sad01.exp.json"
+        },
+        {
+            "name": "soyo/sad02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/sad02.exp.json"
+        },
+        {
+            "name": "soyo/sad03",
+            "file": "../.mtn_exp/expressions/__base__/soyo/sad03.exp.json"
+        },
+        {
+            "name": "soyo/serious01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/serious01.exp.json"
+        },
+        {
+            "name": "soyo/serious02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/serious02.exp.json"
+        },
+        {
+            "name": "soyo/serious03",
+            "file": "../.mtn_exp/expressions/__base__/soyo/serious03.exp.json"
+        },
+        {
+            "name": "soyo/serious04",
+            "file": "../.mtn_exp/expressions/__base__/soyo/serious04.exp.json"
+        },
+        {
+            "name": "soyo/shame01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/shame01.exp.json"
+        },
+        {
+            "name": "soyo/shame02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/shame02.exp.json"
+        },
+        {
+            "name": "soyo/smile01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile01.exp.json"
+        },
+        {
+            "name": "soyo/smile02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile02.exp.json"
+        },
+        {
+            "name": "soyo/smile03",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile03.exp.json"
+        },
+        {
+            "name": "soyo/smile04",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile04.exp.json"
+        },
+        {
+            "name": "soyo/smile05",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile05.exp.json"
+        },
+        {
+            "name": "soyo/smile06",
+            "file": "../.mtn_exp/expressions/__base__/soyo/smile06.exp.json"
+        },
+        {
+            "name": "soyo/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/surprised01.exp.json"
+        },
+        {
+            "name": "soyo/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/thinking01.exp.json"
+        },
+        {
+            "name": "soyo/thinking02",
+            "file": "../.mtn_exp/expressions/__base__/soyo/thinking02.exp.json"
+        },
+        {
+            "name": "soyo/wink01",
+            "file": "../.mtn_exp/expressions/__base__/soyo/wink01.exp.json"
+        },
+        {
+            "name": "taki/ando01",
+            "file": "../.mtn_exp/expressions/__base__/taki/ando01.exp.json"
+        },
+        {
+            "name": "taki/angry01",
+            "file": "../.mtn_exp/expressions/__base__/taki/angry01.exp.json"
+        },
+        {
+            "name": "taki/angry02",
+            "file": "../.mtn_exp/expressions/__base__/taki/angry02.exp.json"
+        },
+        {
+            "name": "taki/angry03",
+            "file": "../.mtn_exp/expressions/__base__/taki/angry03.exp.json"
+        },
+        {
+            "name": "taki/angry04",
+            "file": "../.mtn_exp/expressions/__base__/taki/angry04.exp.json"
+        },
+        {
+            "name": "taki/bye01",
+            "file": "../.mtn_exp/expressions/__base__/taki/bye01.exp.json"
+        },
+        {
+            "name": "taki/bye02",
+            "file": "../.mtn_exp/expressions/__base__/taki/bye02.exp.json"
+        },
+        {
+            "name": "taki/cry01",
+            "file": "../.mtn_exp/expressions/__base__/taki/cry01.exp.json"
+        },
+        {
+            "name": "taki/cry02",
+            "file": "../.mtn_exp/expressions/__base__/taki/cry02.exp.json"
+        },
+        {
+            "name": "taki/default",
+            "file": "../.mtn_exp/expressions/__base__/taki/default.exp.json"
+        },
+        {
+            "name": "taki/idle01",
+            "file": "../.mtn_exp/expressions/__base__/taki/idle01.exp.json"
+        },
+        {
+            "name": "taki/kandou01",
+            "file": "../.mtn_exp/expressions/__base__/taki/kandou01.exp.json"
+        },
+        {
+            "name": "taki/kime01",
+            "file": "../.mtn_exp/expressions/__base__/taki/kime01.exp.json"
+        },
+        {
+            "name": "taki/pui01",
+            "file": "../.mtn_exp/expressions/__base__/taki/pui01.exp.json"
+        },
+        {
+            "name": "taki/sad01",
+            "file": "../.mtn_exp/expressions/__base__/taki/sad01.exp.json"
+        },
+        {
+            "name": "taki/sad02",
+            "file": "../.mtn_exp/expressions/__base__/taki/sad02.exp.json"
+        },
+        {
+            "name": "taki/sad03",
+            "file": "../.mtn_exp/expressions/__base__/taki/sad03.exp.json"
+        },
+        {
+            "name": "taki/serious01",
+            "file": "../.mtn_exp/expressions/__base__/taki/serious01.exp.json"
+        },
+        {
+            "name": "taki/serious02",
+            "file": "../.mtn_exp/expressions/__base__/taki/serious02.exp.json"
+        },
+        {
+            "name": "taki/shame01",
+            "file": "../.mtn_exp/expressions/__base__/taki/shame01.exp.json"
+        },
+        {
+            "name": "taki/shame02",
+            "file": "../.mtn_exp/expressions/__base__/taki/shame02.exp.json"
+        },
+        {
+            "name": "taki/sigh01",
+            "file": "../.mtn_exp/expressions/__base__/taki/sigh01.exp.json"
+        },
+        {
+            "name": "taki/sigh02",
+            "file": "../.mtn_exp/expressions/__base__/taki/sigh02.exp.json"
+        },
+        {
+            "name": "taki/smile01",
+            "file": "../.mtn_exp/expressions/__base__/taki/smile01.exp.json"
+        },
+        {
+            "name": "taki/smile02",
+            "file": "../.mtn_exp/expressions/__base__/taki/smile02.exp.json"
+        },
+        {
+            "name": "taki/smile03",
+            "file": "../.mtn_exp/expressions/__base__/taki/smile03.exp.json"
+        },
+        {
+            "name": "taki/smile04",
+            "file": "../.mtn_exp/expressions/__base__/taki/smile04.exp.json"
+        },
+        {
+            "name": "taki/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/taki/surprised01.exp.json"
+        },
+        {
+            "name": "taki/surprised02",
+            "file": "../.mtn_exp/expressions/__base__/taki/surprised02.exp.json"
+        },
+        {
+            "name": "taki/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/taki/thinking01.exp.json"
+        },
+        {
+            "name": "tomori/angry01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/angry01.exp.json"
+        },
+        {
+            "name": "tomori/angry02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/angry02.exp.json"
+        },
+        {
+            "name": "tomori/bye01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/bye01.exp.json"
+        },
+        {
+            "name": "tomori/cry01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/cry01.exp.json"
+        },
+        {
+            "name": "tomori/cry02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/cry02.exp.json"
+        },
+        {
+            "name": "tomori/cry04",
+            "file": "../.mtn_exp/expressions/__base__/tomori/cry04.exp.json"
+        },
+        {
+            "name": "tomori/default",
+            "file": "../.mtn_exp/expressions/__base__/tomori/default.exp.json"
+        },
+        {
+            "name": "tomori/idle",
+            "file": "../.mtn_exp/expressions/__base__/tomori/idle.exp.json"
+        },
+        {
+            "name": "tomori/kandou01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/kandou01.exp.json"
+        },
+        {
+            "name": "tomori/kandou02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/kandou02.exp.json"
+        },
+        {
+            "name": "tomori/kandou03",
+            "file": "../.mtn_exp/expressions/__base__/tomori/kandou03.exp.json"
+        },
+        {
+            "name": "tomori/kime01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/kime01.exp.json"
+        },
+        {
+            "name": "tomori/kime02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/kime02.exp.json"
+        },
+        {
+            "name": "tomori/sad01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sad01.exp.json"
+        },
+        {
+            "name": "tomori/sad02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sad02.exp.json"
+        },
+        {
+            "name": "tomori/sad03",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sad03.exp.json"
+        },
+        {
+            "name": "tomori/sad04",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sad04.exp.json"
+        },
+        {
+            "name": "tomori/serious01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/serious01.exp.json"
+        },
+        {
+            "name": "tomori/serious02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/serious02.exp.json"
+        },
+        {
+            "name": "tomori/shame01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/shame01.exp.json"
+        },
+        {
+            "name": "tomori/shame02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/shame02.exp.json"
+        },
+        {
+            "name": "tomori/sing01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sing01.exp.json"
+        },
+        {
+            "name": "tomori/sing02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/sing02.exp.json"
+        },
+        {
+            "name": "tomori/smile01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/smile01.exp.json"
+        },
+        {
+            "name": "tomori/smile02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/smile02.exp.json"
+        },
+        {
+            "name": "tomori/smile03",
+            "file": "../.mtn_exp/expressions/__base__/tomori/smile03.exp.json"
+        },
+        {
+            "name": "tomori/smile04",
+            "file": "../.mtn_exp/expressions/__base__/tomori/smile04.exp.json"
+        },
+        {
+            "name": "tomori/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/surprised01.exp.json"
+        },
+        {
+            "name": "tomori/thinking01",
+            "file": "../.mtn_exp/expressions/__base__/tomori/thinking01.exp.json"
+        },
+        {
+            "name": "tomori/thinking02",
+            "file": "../.mtn_exp/expressions/__base__/tomori/thinking02.exp.json"
+        },
+        {
+            "name": "uika/angry01",
+            "file": "../.mtn_exp/expressions/__base__/uika/angry01.exp.json"
+        },
+        {
+            "name": "uika/cry01",
+            "file": "../.mtn_exp/expressions/__base__/uika/cry01.exp.json"
+        },
+        {
+            "name": "uika/default",
+            "file": "../.mtn_exp/expressions/__base__/uika/default.exp.json"
+        },
+        {
+            "name": "uika/idle01",
+            "file": "../.mtn_exp/expressions/__base__/uika/idle01.exp.json"
+        },
+        {
+            "name": "uika/kime01",
+            "file": "../.mtn_exp/expressions/__base__/uika/kime01.exp.json"
+        },
+        {
+            "name": "uika/sad01",
+            "file": "../.mtn_exp/expressions/__base__/uika/sad01.exp.json"
+        },
+        {
+            "name": "uika/serious01",
+            "file": "../.mtn_exp/expressions/__base__/uika/serious01.exp.json"
+        },
+        {
+            "name": "uika/shame01",
+            "file": "../.mtn_exp/expressions/__base__/uika/shame01.exp.json"
+        },
+        {
+            "name": "uika/smile01",
+            "file": "../.mtn_exp/expressions/__base__/uika/smile01.exp.json"
+        },
+        {
+            "name": "uika/smile02",
+            "file": "../.mtn_exp/expressions/__base__/uika/smile02.exp.json"
+        },
+        {
+            "name": "uika/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/uika/surprised01.exp.json"
+        },
+        {
+            "name": "umiri/angry01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/angry01.exp.json"
+        },
+        {
+            "name": "umiri/default",
+            "file": "../.mtn_exp/expressions/__base__/umiri/default.exp.json"
+        },
+        {
+            "name": "umiri/idle01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/idle01.exp.json"
+        },
+        {
+            "name": "umiri/sad01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/sad01.exp.json"
+        },
+        {
+            "name": "umiri/serious01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/serious01.exp.json"
+        },
+        {
+            "name": "umiri/sigh01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/sigh01.exp.json"
+        },
+        {
+            "name": "umiri/smile01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/smile01.exp.json"
+        },
+        {
+            "name": "umiri/smile02",
+            "file": "../.mtn_exp/expressions/__base__/umiri/smile02.exp.json"
+        },
+        {
+            "name": "umiri/smile03",
+            "file": "../.mtn_exp/expressions/__base__/umiri/smile03.exp.json"
+        },
+        {
+            "name": "umiri/smile04",
+            "file": "../.mtn_exp/expressions/__base__/umiri/smile04.exp.json"
+        },
+        {
+            "name": "umiri/smile05",
+            "file": "../.mtn_exp/expressions/__base__/umiri/smile05.exp.json"
+        },
+        {
+            "name": "umiri/surprised01",
+            "file": "../.mtn_exp/expressions/__base__/umiri/surprised01.exp.json"
+        }
+    ]
+}
