@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+# soyo-cli — management tool for Soyo persona instances
+#
+# Usage:
+#   ./soyo-cli snapshot save [name]    — backup a persona
+#   ./soyo-cli snapshot restore <file>  — restore from a snapshot
+#   ./soyo-cli clone --from soyo --name <name>  — create new persona from template
+#   ./soyo-cli list                     — list all personas
+#   ./soyo-cli mirror status <name>     — check human mirror learning progress
+
+set -euo pipefail
+
+SOYO_HOME="${SOYO_HOME:-$HOME/soyo}"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+SNAPSHOTS_DIR="${SOYO_HOME}/personas/soyo/data/snapshots"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[soyo-cli]${NC} $*"; }
+err()  { echo -e "${RED}[soyo-cli]${NC} $*" >&2; }
+
+# ── snapshot save ──────────────────────────
+snapshot_save() {
+    local name="${1:-soyo_$(date +%Y-%m-%d_%H%M)}"
+    local dir="${SNAPSHOTS_DIR}"
+    mkdir -p "$dir"
+
+    local tgz="${dir}/${name}.tar.gz"
+    local tmp="${dir}/.tmp_${name}"
+
+    log "Saving snapshot: ${name}..."
+
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+
+    # Layer 0 event stream
+    if [ -f "${HERMES_HOME}/data/layer0.jsonl" ]; then
+        cp "${HERMES_HOME}/data/layer0.jsonl" "$tmp/layer0.jsonl"
+        log "  + layer0.jsonl ($(wc -l < "$tmp/layer0.jsonl") events)"
+    fi
+
+    # Memory store (LTM + WFM + wiki + consolidation_log)
+    if [ -f "${HERMES_HOME}/memory_store.db" ]; then
+        sqlite3 "${HERMES_HOME}/memory_store.db" "VACUUM INTO '$tmp/memory_store.db'" 2>/dev/null || \
+        cp "${HERMES_HOME}/memory_store.db" "$tmp/memory_store.db"
+        log "  + memory_store.db ($(du -h "$tmp/memory_store.db" | cut -f1))"
+    fi
+
+    # Chat message buffer
+    if [ -f "${HERMES_HOME}/memory_store.db" ]; then
+        sqlite3 "${HERMES_HOME}/memory_store.db" \
+            "SELECT count(*) FROM chat_message_buffer;" 2>/dev/null | {
+            read cnt
+            log "  + chat_message_buffer (${cnt:-0} messages in DB)"
+        } || true
+    fi
+
+    # Soul
+    if [ -f "${SOYO_HOME}/personas/soyo/SOUL.md" ]; then
+        cp "${SOYO_HOME}/personas/soyo/SOUL.md" "$tmp/SOUL.md"
+        log "  + SOUL.md"
+    fi
+
+    # Config (strip secrets)
+    if [ -f "${HERMES_HOME}/config-soyo.yaml" ]; then
+        sed -e 's/\(access_token:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(api_key:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(bot_id:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(password:\s*\).*/\1[REDACTED]/' \
+            "${HERMES_HOME}/config-soyo.yaml" > "$tmp/config-soyo.yaml"
+        log "  + config-soyo.yaml (redacted)"
+    elif [ -f "${HERMES_HOME}/config.yaml" ]; then
+        sed -e 's/\(access_token:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(api_key:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(bot_id:\s*\).*/\1[REDACTED]/' \
+            -e 's/\(password:\s*\).*/\1[REDACTED]/' \
+            "${HERMES_HOME}/config.yaml" > "$tmp/config.yaml"
+        log "  + config.yaml (redacted)"
+    fi
+
+    # Skills
+    if [ -d "${HERMES_HOME}/skills" ] && [ "$(ls -A ${HERMES_HOME}/skills 2>/dev/null)" ]; then
+        cp -r "${HERMES_HOME}/skills" "$tmp/skills"
+        log "  + skills/"
+    fi
+
+    # Hooks
+    if [ -d "${HERMES_HOME}/hooks" ] && [ "$(ls -A ${HERMES_HOME}/hooks 2>/dev/null)" ]; then
+        cp -r "${HERMES_HOME}/hooks" "$tmp/hooks"
+        log "  + hooks/"
+    fi
+
+    # Manifest
+    cat > "$tmp/MANIFEST" <<EOF
+snapshot: ${name}
+created: $(date -Iseconds)
+hermes_version: $(cd "${HERMES_HOME}" && git describe --tags 2>/dev/null || echo "unknown")
+EOF
+
+    # Pack
+    tar -czf "$tgz" -C "$tmp" .
+    rm -rf "$tmp"
+
+    local size=$(du -h "$tgz" | cut -f1)
+    log "Snapshot saved: ${tgz} (${size})"
+}
+
+# ── snapshot restore ───────────────────────
+snapshot_restore() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        err "Snapshot not found: ${file}"
+        return 1
+    fi
+
+    local tmp="${SNAPSHOTS_DIR}/.restore_tmp"
+    mkdir -p "$tmp"
+    tar -xzf "$file" -C "$tmp"
+
+    log "Restoring snapshot..."
+    [ -f "$tmp/MANIFEST" ] && log "  $(head -3 "$tmp/MANIFEST")"
+
+    # Restore layer0
+    if [ -f "$tmp/layer0.jsonl" ]; then
+        mkdir -p "${HERMES_HOME}/data"
+        cp "$tmp/layer0.jsonl" "${HERMES_HOME}/data/layer0.jsonl"
+        log "  ✓ layer0.jsonl"
+    fi
+
+    # Restore memory DB
+    if [ -f "$tmp/memory_store.db" ]; then
+        cp "$tmp/memory_store.db" "${HERMES_HOME}/memory_store.db"
+        log "  ✓ memory_store.db"
+    fi
+
+    # Restore soul
+    if [ -f "$tmp/SOUL.md" ]; then
+        mkdir -p "${SOYO_HOME}/personas/soyo"
+        cp "$tmp/SOUL.md" "${SOYO_HOME}/personas/soyo/SOUL.md"
+        log "  ✓ SOUL.md"
+    fi
+
+    # Restore skills
+    if [ -d "$tmp/skills" ]; then
+        rm -rf "${HERMES_HOME}/skills"
+        cp -r "$tmp/skills" "${HERMES_HOME}/skills"
+        log "  ✓ skills/"
+    fi
+
+    # Restore hooks
+    if [ -d "$tmp/hooks" ]; then
+        rm -rf "${HERMES_HOME}/hooks"
+        cp -r "$tmp/hooks" "${HERMES_HOME}/hooks"
+        log "  ✓ hooks/"
+    fi
+
+    rm -rf "$tmp"
+    log "Restore complete. Restart hermes to apply."
+}
+
+# ── clone ──────────────────────────────────
+clone_persona() {
+    local from_name=""
+    local to_name=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from_name="$2"; shift 2 ;;
+            --name) to_name="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    
+    if [ -z "$from_name" ] || [ -z "$to_name" ]; then
+        err "Usage: soyo-cli clone --from <source> --name <new_name>"
+        err "  source can be: template, soyo, anon, etc."
+        return 1
+    fi
+    
+    # Resolve source: "template" → treehouse template dir
+    local src
+    if [ "$from_name" = "template" ]; then
+        src="${SOYO_HOME}/template"
+    else
+        src="${SOYO_HOME}/personas/${from_name}"
+    fi
+    
+    local dst="${SOYO_HOME}/personas/${to_name}"
+    
+    if [ ! -d "$src" ]; then
+        err "Source not found: ${from_name} (${src})"
+        return 1
+    fi
+    if [ -d "$dst" ]; then
+        err "Target persona already exists: ${to_name}"
+        return 1
+    fi
+    
+    log "Cloning ${from_name} → ${to_name}..."
+    
+    cp -r "$src" "$dst"
+    
+    # If cloning from template: fresh everything
+    # If cloning from existing persona: keep architecture, clear data
+    if [ "$from_name" = "template" ]; then
+        # Template already has empty data — just mark as cloned
+        log "  Created from blank template"
+    else
+        # Clear data — new persona starts with empty memory
+        rm -f "${dst}/data/layer0.jsonl" 2>/dev/null || true
+        rm -f "${dst}/data/memory_store.db" 2>/dev/null || true
+        # Re-create empty DB from template if available
+        if [ -f "${SOYO_HOME}/template/data/memory_store.db" ]; then
+            cp "${SOYO_HOME}/template/data/memory_store.db" "${dst}/data/memory_store.db"
+            touch "${dst}/data/layer0.jsonl"
+        fi
+        log "  Data cleared (archived in ${from_name})"
+    fi
+    
+    # Mark SOUL.md as a clone
+    if [ -f "${dst}/SOUL.md" ]; then
+        cat >> "${dst}/SOUL.md" <<EOF
+
+---
+<!-- cloned from ${from_name} on $(date -Iseconds) -->
+<!-- edit above this line to define ${to_name}'s personality -->
+EOF
+    fi
+    
+    log ""
+    log "克隆完成: ${dst}"
+    log ""
+    log "下一步:"
+    log "  1. 编辑 ${dst}/SOUL.md — 填写角色设定"
+    log "  2. 编辑 ${dst}/config.yaml — 填写连接信息"
+    log "  3. cp ${dst}/.env.template ${dst}/.env — 填写 API key"
+    log "  4. hermes start --persona ${to_name}"
+}
+
+# ── list ───────────────────────────────────
+list_personas() {
+    log "Personas:"
+    if [ -d "${SOYO_HOME}/personas" ]; then
+        for d in "${SOYO_HOME}/personas"/*/; do
+            local name=$(basename "$d")
+            local soul=""
+            [ -f "${d}/SOUL.md" ] && soul="($(wc -l < "${d}/SOUL.md") lines)" || soul="(no SOUL.md)"
+            echo -e "  ${CYAN}${name}${NC} ${soul}"
+        done
+    fi
+}
+
+# ── mirror status ──────────────────────────
+mirror_status() {
+    local name="$1"
+    local dir="${SOYO_HOME}/personas/${name}"
+
+    if [ ! -d "$dir" ]; then
+        err "Persona not found: ${name}"
+        return 1
+    fi
+
+    log "Mirror status: ${name}"
+    if [ -f "${dir}/data/layer0.jsonl" ]; then
+        local events=$(wc -l < "${dir}/data/layer0.jsonl")
+        local size=$(du -h "${dir}/data/layer0.jsonl" | cut -f1)
+        log "  Events: ${events} (${size})"
+    else
+        log "  No events yet (layer0.jsonl not created)"
+    fi
+    if [ -f "${dir}/config.yaml" ]; then
+        local observe=$(grep 'observe_only' "${dir}/config.yaml" 2>/dev/null || echo "false")
+        log "  Observe only: ${observe}"
+    fi
+}
+
+# ── main ───────────────────────────────────
+main() {
+    local cmd="${1:-help}"
+    shift || true
+
+    case "$cmd" in
+        snapshot)
+            local sub="${1:-}"
+            shift || true
+            case "$sub" in
+                save)   snapshot_save "$@" ;;
+                restore) snapshot_restore "$@" ;;
+                *)      err "Usage: soyo-cli snapshot [save|restore]"; return 1 ;;
+            esac
+            ;;
+        clone)
+            clone_persona "$@"
+            ;;
+        list)
+            list_personas
+            ;;
+        mirror)
+            local sub="${1:-}"
+            shift || true
+            case "$sub" in
+                status) mirror_status "$@" ;;
+                *)      err "Usage: soyo-cli mirror [status]"; return 1 ;;
+            esac
+            ;;
+        help|--help|-h)
+            echo "soyo-cli — Soyo persona management"
+            echo ""
+            echo "Commands:"
+            echo "  snapshot save [name]        Backup persona data"
+            echo "  snapshot restore <file>     Restore from snapshot"
+            echo "  clone --from <src> --name <name>  Create new persona"
+            echo "  list                        List all personas"
+            echo "  mirror status <name>        Check human mirror status"
+            ;;
+        *)
+            err "Unknown command: ${cmd}"
+            err "Try: soyo-cli help"
+            return 1
+            ;;
+    esac
+}
+
+main "$@"

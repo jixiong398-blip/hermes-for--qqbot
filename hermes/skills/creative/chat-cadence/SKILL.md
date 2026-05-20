@@ -12,7 +12,7 @@ metadata:
 
 # Chat Cadence — Conversational Rhythm for Informal Roleplay
 
-This skill captures the preferred cadence, flow, and structure for informal roleplay/conversation with the user 清尘璃落 (長崎初華). It is about *how* responses are structured in turn, not *what* is said.
+This skill captures the preferred cadence, flow, and structure for informal roleplay/conversation with the user {{CHANNEL_NAME}} (長崎初華). It is about *how* responses are structured in turn, not *what* is said.
 
 ## Core Cadence Pattern
 

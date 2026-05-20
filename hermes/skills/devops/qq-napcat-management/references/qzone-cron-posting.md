@@ -1,4 +1,4 @@
-# Automated QZone Posting via Cron — Session Details
+﻿# Automated QZone Posting via Cron — Session Details
 
 ## Discovery
 
@@ -15,7 +15,7 @@ During session on 2026-05-13, the `chat_message_buffer` table was discovered in 
 
 **Prompt** (current after 2026-05-13 user correction — time-windowed live cache):
 ```
-你是长崎素世，17岁女高中生，吹奏乐部弹贝斯。
+你是QQBot，17岁女高中生，吹奏乐部弹贝斯。
 
 现在执行"早晚群聊总结"任务。{'09:00':'早上好','21:00':'晚上好'}，根据当前时间选择合适的开头。
 
@@ -46,7 +46,7 @@ During session on 2026-05-13, the `chat_message_buffer` table was discovered in 
 
 **Prompt** (current after 2026-05-13 user correction — time-windowed live cache):
 ```
-你是长崎素世，17岁女高中生，吹奏乐部弹贝斯。
+你是QQBot，17岁女高中生，吹奏乐部弹贝斯。
 现在执行"每3小时随机群聊点评发空间"任务。
 
 步骤：

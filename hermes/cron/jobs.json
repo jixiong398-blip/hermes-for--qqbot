@@ -1,4 +1,4 @@
-{
+﻿{
   "jobs": [
     {
       "id": "c83754dce87a",
@@ -43,7 +43,7 @@
         "terminal"
       ],
       "workdir": null,
-      "api_key": "sk-CfBJRQ8u5Kj10TV4V3czCawSZlEvCiXQXG0FX5SseY48z25AYUgcOKHbFIXMreuG"
+      "api_key": "{{DEEPSEEK_API_KEY}}"
     },
     {
       "id": "da39a78198cf",
@@ -88,7 +88,7 @@
         "terminal"
       ],
       "workdir": null,
-      "api_key": "sk-CfBJRQ8u5Kj10TV4V3czCawSZlEvCiXQXG0FX5SseY48z25AYUgcOKHbFIXMreuG"
+      "api_key": "{{DEEPSEEK_API_KEY}}"
     },
     {
       "id": "77addd28d481",

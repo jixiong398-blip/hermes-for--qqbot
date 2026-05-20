@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified Memory Gateway — single entry point for all memory operations.
 
 Coordinates all memory subsystems:
@@ -316,7 +316,7 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "{{PROJECT_ROOT}}knowledge"))
+            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
             if not vault_path.exists():
                 vault_path = Path.home() / "Documents" / "Obsidian"
 

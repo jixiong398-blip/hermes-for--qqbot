@@ -1,4 +1,4 @@
-﻿"""
+"""
 Obsidian Vault Adapter — local markdown knowledge base with graph-aware search.
 
 Key features:
@@ -123,7 +123,7 @@ class ObsidianVault:
     """Obsidian vault knowledge base with graph-aware search.
 
     Usage:
-        vault = ObsidianVault(Path("{{PROJECT_ROOT}}knowledge"))
+        vault = ObsidianVault(Path("E:/ai/knowledge"))
         vault.index()  # Initial indexing
         results = vault.search("transformer architecture", top_k=5)
         for note, score in results:
