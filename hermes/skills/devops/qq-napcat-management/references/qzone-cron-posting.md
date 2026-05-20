@@ -1,4 +1,4 @@
-﻿# Automated QZone Posting via Cron — Session Details
+# Automated QZone Posting via Cron — Session Details
 
 ## Discovery
 

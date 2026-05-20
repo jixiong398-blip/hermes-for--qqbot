@@ -1,4 +1,4 @@
-﻿---
+---
 name: qq-napcat-management
 description: Start, stop, restart, and manage NapCat QQ bot on Linux (xvfb-run + QR code login). Covers process control, config inspection, QR code capture, and image delivery via Feishu.
 category: devops

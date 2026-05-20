@@ -1,4 +1,4 @@
-﻿# 通过 OneBot HTTP API 发送图片
+# 通过 OneBot HTTP API 发送图片
 
 ## 背景
 

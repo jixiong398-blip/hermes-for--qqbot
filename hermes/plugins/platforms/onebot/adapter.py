@@ -1,4 +1,4 @@
-﻿"""
+"""
 OneBot v11 adapter for Hermes Agent.
 
 Connects to QQ via NapCat/Lagrange/go-cqhttp using the OneBot v11 protocol

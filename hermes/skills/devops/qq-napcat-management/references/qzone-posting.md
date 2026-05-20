@@ -1,4 +1,4 @@
-﻿# QZone (QQ空间) Posting — Session Details
+# QZone (QQ空间) Posting — Session Details
 
 ## Script Source
 

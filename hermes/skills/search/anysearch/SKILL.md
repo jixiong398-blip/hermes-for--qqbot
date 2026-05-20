@@ -1,4 +1,4 @@
-﻿---
+---
 name: anysearch
 description: AnySearch — unified real-time search engine. Supports general web search, vertical domain search (23 domains), and URL content extraction.
 version: 2.0.0

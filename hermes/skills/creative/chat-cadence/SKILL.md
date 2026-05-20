@@ -1,4 +1,4 @@
-﻿---
+---
 name: chat-cadence
 description: "Conversational rhythm and flow preferences for informal roleplay chat — meme-first cadence, response structure, and turn-taking patterns with this specific user."
 version: 1.0

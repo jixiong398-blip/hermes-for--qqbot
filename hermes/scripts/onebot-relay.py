@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """OneBot ↔ Hermes HTTP relay — bypasses the flaky adapter.
 
 Connects to NapCat WS, receives OneBot events, sends them to Hermes

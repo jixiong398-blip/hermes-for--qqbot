@@ -1,4 +1,4 @@
-﻿# QR Code Login Workflows
+# QR Code Login Workflows
 
 ## The Fundamental Constraint
 

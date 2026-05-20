@@ -1,4 +1,4 @@
-﻿# AnySearch Installation (2026-05-20)
+# AnySearch Installation (2026-05-20)
 
 ## Environment Summary
 

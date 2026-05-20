@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """QQ连接看门狗 - 检测断线 + 日志关键词报警"""
 import json, os, time, socket, re
 

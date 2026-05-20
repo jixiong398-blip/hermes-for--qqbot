@@ -1,4 +1,4 @@
-﻿# OneBot 11 Config (NapCat Linux)
+# OneBot 11 Config (NapCat Linux)
 
 **File**: `/home/ji/.napcat/config/onebot11_{{BOT_QQ_ID}}.json`
 

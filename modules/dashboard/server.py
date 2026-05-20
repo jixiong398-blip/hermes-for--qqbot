@@ -1,4 +1,4 @@
-﻿"""
+"""
 Hermes Dashboard — unified management backend.
 
 Endpoints:

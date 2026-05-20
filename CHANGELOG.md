@@ -1,4 +1,4 @@
-﻿# bot-template 更新日志
+# bot-template 更新日志
 ## v0.3.133 (2026-05-21)
 - QQ 适配器层最终防线过滤
 - 记忆维护系统 (STM consolidation + 缓冲裁剪)
