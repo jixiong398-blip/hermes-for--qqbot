@@ -11,4 +11,4 @@ SOUL.md
 *.db-wal
 gateway.lock
 gateway.pid
-*.zip
+*.zipnode_modules/
