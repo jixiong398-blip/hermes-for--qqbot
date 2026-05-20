@@ -1,26 +1,31 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-while true; do
-    clear
-    echo "  ╔══════════════════════════════════╗"
-    echo "  ║     QQBot Control Center         ║"
-    echo "  ╠══════════════════════════════════╣"
-    echo "  ║  1. Start All Services           ║"
-    echo "  ║  2. Start NapCat (QQ)            ║"
-    echo "  ║  3. Start Gateway+Dashboard      ║"
-    echo "  ║  4. Stop All Services            ║"
-    echo "  ║  5. Open Dashboard               ║"
-    echo "  ║  0. Exit                         ║"
-    echo "  ╚══════════════════════════════════╝"
-    echo ""
-    read -p "  Choice: " choice
-    case $choice in
-        1) [ -f "napcat/launcher.sh" ] && (cd napcat && bash launcher.sh &); source .venv/bin/activate 2>/dev/null; hermes gateway &; .venv/bin/python modules/dashboard/server.py &;;
-        2) [ -f "napcat/launcher.sh" ] && (cd napcat && bash launcher.sh &);;
-        3) source .venv/bin/activate 2>/dev/null; hermes gateway &; .venv/bin/python modules/dashboard/server.py &;;
-        4) pkill -f "hermes gateway"; pkill -f "server.py"; pkill -f "napcat";;
-        5) xdg-open http://127.0.0.1:8899 2>/dev/null || open http://127.0.0.1:8899 2>/dev/null;;
-        0) exit 0;;
-    esac
-    read -p "  Press Enter..."
-done
+
+if [ ! -f ".venv/bin/python" ]; then
+    echo "[ERROR] venv not found - run install.sh first"
+    exit 1
+fi
+
+echo "  ◆ QQBot"
+echo "  ========="
+
+echo "  [NapCat] Launching..."
+[ -f "napcat/launcher.sh" ] && (cd napcat && bash launcher.sh &)
+
+echo "  [Gateway] Launching..."
+.venv/bin/python -m hermes_cli.main gateway &
+
+echo "  [Dashboard] Launching..."
+.venv/bin/python modules/dashboard/server.py &
+
+sleep 3
+xdg-open http://127.0.0.1:8899 2>/dev/null || open http://127.0.0.1:8899 2>/dev/null
+
+echo "  Dashboard: http://127.0.0.1:8899"
+echo "  Press Enter to stop..."
+read
+
+pkill -f "hermes_cli.main gateway" 2>/dev/null
+pkill -f "dashboard/server.py" 2>/dev/null
+pkill -f "napcat" 2>/dev/null
+echo "  Stopped."
