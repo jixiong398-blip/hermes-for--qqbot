@@ -14,8 +14,16 @@ echo   ◆ QQBot
 echo   =========
 echo.
 
+:: ── Clean up old processes ──
+echo   [Clean] Stopping old services...
+taskkill /FI "WINDOWTITLE eq Hermes Gateway" /F 2>nul
+taskkill /FI "WINDOWTITLE eq Dashboard" /F 2>nul
+taskkill /FI "WINDOWTITLE eq NapCat" /F 2>nul
+timeout /t 2 >nul
+
 set "PY=.venv\Scripts\python.exe"
 
+:: ── Start services ──
 echo   [NapCat] Launching...
 if exist "napcat\launcher.bat" (
     start "NapCat" /D "napcat" launcher.bat
