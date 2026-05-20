@@ -7,15 +7,30 @@ echo   QQBot Installer
 echo   ================
 echo.
 
-echo   [1/4] Creating venv...
-python -m venv .venv 2>nul
+:: Check Python
+python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    python3 -m venv .venv 2>nul
+    python3 --version >nul 2>&1
     if %errorlevel% neq 0 (
-        echo   [ERROR] Python not found. Install from https://python.org
-        pause
-        exit /b 1
+        echo   [0/5] Installing Python 3.12 (silent)...
+        python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
+        if %errorlevel% neq 0 (
+            echo   [ERROR] Python install failed. Download from https://python.org
+            pause
+            exit /b 1
+        )
+        :: Refresh PATH
+        set "PATH=%PATH%;%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts"
+        echo   [0/5] Python installed.
     )
+)
+
+echo   [1/4] Creating venv...
+python -m venv .venv 2>nul || python3 -m venv .venv 2>nul
+if %errorlevel% neq 0 (
+    echo   [ERROR] Failed to create venv
+    pause
+    exit /b 1
 )
 
 echo   [2/4] Installing dependencies...
