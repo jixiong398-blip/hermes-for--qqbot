@@ -1,6 +1,6 @@
 # OneBot 11 Config (NapCat Linux)
 
-**File**: `/home/ji/.napcat/config/onebot11_{{BOT_QQ_ID}}.json`
+**File**: `/home/ji/.napcat/config/onebot11_3560998016.json`
 
 ```json
 {
@@ -49,7 +49,7 @@
 
 ## NapCat Core Config
 
-**File**: `/home/ji/.napcat/config/napcat_{{BOT_QQ_ID}}.json`
+**File**: `/home/ji/.napcat/config/napcat_3560998016.json`
 
 ```json
 {

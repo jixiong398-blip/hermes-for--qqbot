@@ -39,7 +39,7 @@ When using password login, QQ may require SMS/captcha verification. The flow:
 5. If you restart NapCat between verification attempts, the session SID changes and the user must verify again
 
 ## Log Indicators
-- `正在快速登录 {{BOT_QQ_ID}}` → attempting password login
+- `正在快速登录 3560998016` → attempting password login
 - `快速登录错误：登录态已失效` → session expired, need fresh login
 - `将使用二维码登录方式` → falling back to QR
 - `二维码已保存到 ... qrcode.png` → QR image is ready

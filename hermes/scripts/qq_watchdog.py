@@ -3,7 +3,7 @@
 import json, os, time, socket, re
 
 STATE_FILE = os.path.expanduser("~/.hermes/qq_watchdog_state.json")
-LOG_FILE = "/home/ji/Napcat/log/napcat_{{BOT_QQ_ID}}.log"
+LOG_FILE = "/home/ji/Napcat/log/napcat_3560998016.log"
 
 # 只检测两类：快速登录失败（重启后）和被踢下线（在线久了被踢）
 ALERT_PATTERNS = [

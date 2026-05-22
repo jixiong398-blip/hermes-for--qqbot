@@ -12,7 +12,7 @@ curl -X POST "http://127.0.0.1:3000/send_msg" \
   -H "Authorization: Bearer {{ONEBOT_TOKEN}}" \
   -d '{
     "message_type": "private",
-    "user_id": {{HOME_CHANNEL}},
+    "user_id": 2910137276,
     "message": [
       {
         "type": "image",
@@ -29,7 +29,7 @@ curl -X POST "http://127.0.0.1:3000/send_msg" \
 | 字段 | 说明 | 示例值 |
 |------|------|--------|
 | `message_type` | 消息类型 | `"private"` 私聊 / `"group"` 群聊 |
-| `user_id` | 用户 QQ 号（私聊用） | `{{HOME_CHANNEL}}` |
+| `user_id` | 用户 QQ 号（私聊用） | `2910137276` |
 | `group_id` | 群号（群聊用） | `796091804` |
 | `message[0].type` | 消息段类型 | `"image"` |
 | `message[0].data.file` | 图片路径 | `"file:///home/ji/Pictures/xxx.jpg"` |

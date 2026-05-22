@@ -1,33 +1,92 @@
-# QQBot 配置文件
-persona:
-  name: "QQBot"
-  soul_file: "SOUL.md"
-
-model:
-  provider: "deepseek"
-  model: "deepseek-v4-flash"
-  api_key: "{{YOUR_API_KEY}}"
-  temperature: 0.8
-  max_tokens: 4096
-
-vision:
+agent:
+  max_turns: 60
+  system_prompt: |
+    你是{{CHARACTER_NAME}}，17岁女高中生。只用中文，不解释技术细节。
+    
+    ⛔ 发表情包规则：想发图时直接在回复中写文件路径，系统自动替换成图片。
+    路径列表（使用前必须 os.path.isfile 确认存在）：
+    {{STICKER_PATH}}/soyo_chibi_tea.jpg       — 喝茶
+    {{STICKER_PATH}}/soyo_chibi_excited.gif    — 兴奋
+    {{STICKER_PATH}}/soyo_chibi_excited.jpg    — 兴奋
+    {{STICKER_PATH}}/soyo_chibi_sad.jpg        — 难过
+    {{STICKER_PATH}}/soyo_chibi_speechless.jpg — 无语
+    {{STICKER_PATH}}/soyo_chibi_clasp.jpg      — 拜托
+    例：别人说"发表情包"→ 回复中带 {{STICKER_PATH}}/soyo_chibi_tea.jpg
+approvals:
+  mode: 'off'
+auto_join:
+  deliver: onebot
+  enabled: false
+  schedule: '*/30 * * * *'
+  model: deepseek-v4-flash
+  provider: custom
+  api_key: {{DEEPSEEK_API_KEY}}
+  base_url: https://opencode.ai/zen/go/v1
+  task: 用 auto-join-check 脚本检查群聊是否需要插话。先检查最近30分钟内你是否已经在这个话题上回复过了——如果已经说过，就跳过。如果群友们聊到了你能自然参与的话题、而且你最近没说过话，就写一段20-50字的完整回复。必须是一句完整的话，绝对不能说到一半就停（禁止只输出几个字）。不要重复已经表达过的观点。如果不需要插话，就什么都不做。
+auxiliary:
+  vision:
+    api_key: {{MIMO_TOKEN}}
+    base_url: https://token-plan-cn.xiaomimimo.com/v1
+    model: mimo-v2.5
+    provider: custom
+    timeout: 30
+compression:
   enabled: true
-  provider: "siliconflow"
-  model: "Qwen/Qwen3-VL-32B-Instruct"
-
+  protect_last_n: 100
+display:
+  busy_input_mode: queue
+  streaming: true
+  tool_progress: 'off'
+gateway:
+  allow_all_users: true
+  auth_token: {{GATEWAY_AUTH_TOKEN}}
+  bind: loopback
+  port: 18789
+  reconnect_base_delay: 5
+  reconnect_max_attempts: 100
+image:
+  input_mode: text
 memory:
-  enabled: true
-  ltm_max_facts: 50
-
+  flush_min_turns: 6
+  memory_char_limit: 2200
+  memory_enabled: true
+  nudge_interval: 10
+  user_char_limit: 1375
+  user_profile_enabled: true
+model:
+  model: deepseek-v4-flash
+  provider: custom
+  api_key: {{DEEPSEEK_API_KEY}}
+  base_url: https://opencode.ai/zen/go/v1
+platform_toolsets:
+  onebot:
+  - hermes-onebot
 platforms:
+  feishu:
+    enabled: true
+    extra:
+      app_id: {{FEISHU_APP_ID}}
+      app_secret: {{FEISHU_SECRET}}
   onebot:
     enabled: true
-    ws_url: "ws://127.0.0.1:3001/"
-    http_url: "http://127.0.0.1:3000"
-    access_token: "{{AUTO_TOKEN}}"
-    home_channel: "{{HOME_CHANNEL}}"
-
-tts:
-  enabled: false
-live2d:
-  enabled: false
+    extra:
+      access_token: {{ONEBOT_ACCESS_TOKEN}}
+      http_url: http://127.0.0.1:3000
+      require_mention: false
+      ws_url: ws://127.0.0.1:3001/
+    gateway_restart_notification: false
+    home_channel:
+      chat_id: '{{HOME_CHANNEL}}'
+      name: {{CHANNEL_NAME}}
+      platform: onebot
+plugins:
+  enabled:
+  - platforms/onebot
+  - knowledge-base
+mcp_servers:
+  anysearch:
+    url: "https://api.anysearch.com/mcp"
+    headers:
+      Authorization: "Bearer {{ANYSEARCH_KEY}}"
+terminal:
+  cwd: {{TERMINAL_CWD}}
