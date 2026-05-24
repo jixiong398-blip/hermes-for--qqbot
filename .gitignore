@@ -21,3 +21,5 @@ napcat/napcat/config/webui.json
 napcat/napcat/cache/
 napcat/napcat/logs/
 napcat/beacon_report.log
+.curator_state
+.curator_backups/
