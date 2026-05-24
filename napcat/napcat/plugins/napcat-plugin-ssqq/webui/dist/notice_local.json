@@ -1,0 +1,17 @@
+[
+    {
+        "id": 20250926,
+        "version": 3,
+        "client": "classic",
+        "add_time": 1758876335000,
+        "show_date": [[1758816000000, 1760112000000]],
+        "pops": [
+            {
+                "title": "Stapxs QQ Lite 用户使用问卷",
+                "html": "<div style=\"display: flex;\" class=\"main-20250926\"><span style=\"font-size: 1rem;margin-right: 20px;width: 300px;\">感谢对 Stapxs QQ Lite 的支持！在 3.2.11 版本更新后，我们对功能性和轻量级的开发方向产生了更深入的思考。为了更好地了解使用情况，我们希望能花几分钟时间填写一下这份问卷。</span><img style=\"width: 150px;height: 150px;\" src=\"https://lib.stapxs.cn/download/stapxs-qq-lite/烧水.png\" /></div><span style=\"width: 100%;text-align: right;display: block;font-size: 0.8rem;color: var(--color-font-2);\">* 表情包：Copyright @ 鹰角网络</span><style>@media (max-width: 500px) {.main-20250926 { flex-direction: column;align-items: end;}}.main-20250926 img { margin-top: 10px;}</style>",
+                "link_url": "https://jsj.top/f/ubs5gs",
+                "button_text": "关闭"
+            }
+        ]
+    }
+]

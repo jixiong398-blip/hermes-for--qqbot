@@ -12,7 +12,7 @@ NAP_WS  = "ws://127.0.0.1:3001/"
 NAP_HTTP = "http://127.0.0.1:3000"
 HERMES_HTTP = "http://127.0.0.1:18789"  # gateway API server (may need enabling)
 TOKEN = os.getenv("ONEBOT_ACCESS_TOKEN", "{{ONEBOT_TOKEN}}")
-SELF_ID = "3560998016"
+SELF_ID = "{{BOT_QQ_ID}}"
 LOG_FILE = "/tmp/onebot-relay.log"
 
 def log(msg):

@@ -84,7 +84,7 @@ Available domains: code, tech, fashion, travel, home, ecommerce, gaming, film, m
 
 Configured in `~/.opencode/skills/anysearch/.env` via:
 ```
-ANYSEARCH_API_KEY={{ANYSEARCH_KEY}}
+ANYSEARCH_API_KEY=as_sk_fa89133f38499c61450b89a2a46fde4a
 ```
 
 ## Installation Reference

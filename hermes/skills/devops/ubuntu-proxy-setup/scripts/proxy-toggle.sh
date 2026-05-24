@@ -1,6 +1,6 @@
 #!/bin/bash
 # proxy management command for v2rayA
-# Source this file in .bashrc: source /home/ji/proxy.sh
+# Source this file in .bashrc: source /home/{{USERNAME}}/proxy.sh
 
 proxy() {
     case "$1" in

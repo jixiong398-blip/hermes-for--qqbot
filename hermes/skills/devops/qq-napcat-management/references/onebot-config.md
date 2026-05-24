@@ -1,6 +1,6 @@
 # OneBot 11 Config (NapCat Linux)
 
-**File**: `/home/ji/.napcat/config/onebot11_3560998016.json`
+**File**: `/home/{{USERNAME}}/.napcat/config/onebot11_{{BOT_QQ_ID}}.json`
 
 ```json
 {
@@ -49,7 +49,7 @@
 
 ## NapCat Core Config
 
-**File**: `/home/ji/.napcat/config/napcat_3560998016.json`
+**File**: `/home/{{USERNAME}}/.napcat/config/napcat_{{BOT_QQ_ID}}.json`
 
 ```json
 {
@@ -74,7 +74,7 @@
 
 ## WebUI Config
 
-**File**: `/home/ji/.napcat/config/webui.json`
+**File**: `/home/{{USERNAME}}/.napcat/config/webui.json`
 
 - URL: `http://127.0.0.1:6099/webui`
 - Token is printed in startup log

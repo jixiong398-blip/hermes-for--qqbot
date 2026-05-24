@@ -1,7 +1,7 @@
 # OpenCode Local Configuration (æ¸…å°˜'s Server)
 
 ## Version & Installation
-- **opencode**: 1.14.46 at `/home/ji/.local/bin/opencode`
+- **opencode**: 1.14.46 at `/home/{{USERNAME}}/.local/bin/opencode`
 - **oh-my-openagent**: 4.0.0 plugin
 
 ## Provider
@@ -21,10 +21,10 @@ Models available:
 | prometheus | deepseek-v4-pro | deepseek-v4-flash |
 | metis | deepseek-v4-pro | deepseek-v4-flash |
 | momus | deepseek-v4-pro | deepseek-v4-flash |
-| sisyphus-junior | deepseek-v4-flash | â€” |
-| explore | deepseek-v4-flash | â€” |
-| librarian | deepseek-v4-flash | â€” |
-| atlas | deepseek-v4-flash | â€” |
+| sisyphus-junior | deepseek-v4-flash | â€?|
+| explore | deepseek-v4-flash | â€?|
+| librarian | deepseek-v4-flash | â€?|
+| atlas | deepseek-v4-flash | â€?|
 
 ## Categories
 
@@ -41,5 +41,5 @@ Models available:
 OpenCode is a standard CLI/TUI tool. There is no separate custom UI/dashboard project for opencode on this server. The TUI is built with Ink (React for terminals).
 
 ## Config Paths
-- `/home/ji/.config/opencode/opencode.json` â€” main config (provider, plugins)
-- `/home/ji/.config/opencode/oh-my-openagent.json` â€” agent/category definitions
+- `/home/{{USERNAME}}/.config/opencode/opencode.json` â€?main config (provider, plugins)
+- `/home/{{USERNAME}}/.config/opencode/oh-my-openagent.json` â€?agent/category definitions

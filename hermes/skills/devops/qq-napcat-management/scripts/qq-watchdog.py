@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""QQ连接看门狗 - 检测断线 + 日志关键词报警"""
+"""QQ连接看门�?- 检测断�?+ 日志关键词报�?""
 import json, os, time, socket, re
 
 STATE_FILE = os.path.expanduser("~/.hermes/qq_watchdog_state.json")
-LOG_FILE = "/home/ji/Napcat/log/napcat_3560998016.log"
+LOG_FILE = "/home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log"
 
-# 只检测两类：快速登录失败（重启后）和被踢下线（在线久了被踢）
-ALERT_PATTERNS = [
-    "快速登录失败",
-    "快速登录错误",
+# 只检测两类：快速登录失败（重启后）和被踢下线（在线久了被踢�?ALERT_PATTERNS = [
+    "快速登录失�?,
+    "快速登录错�?,
     "KickedOffLine",
     "被踢下线",
 ]
 
 def check_connection():
-    """检查 QQ 是否在线（端口检测）"""
+    """检�?QQ 是否在线（端口检测）"""
     for port in [6099, 3001]:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -55,8 +54,8 @@ def check_log_errors():
                     if pattern in line:
                         ts_match = re.match(r'(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
                         ts = ts_match.group(1) if ts_match else time.strftime("%m-%d %H:%M:%S")
-                        if "快速登录" in pattern:
-                            alert_msg = f"⚠️ 重启后快速登录失败 ({ts})"
+                        if "快速登�? in pattern:
+                            alert_msg = f"⚠️ 重启后快速登录失�?({ts})"
                         else:
                             alert_msg = f"⚠️ QQ被踢下线 ({ts})"
                         if alert_msg not in new_alerts:
@@ -84,7 +83,7 @@ def main():
         state["online"] = False
         state["notified"] = True
         state["at"] = ts
-        print(f"⚠️ QQ Bot 端口断线了 ({ts})")
+        print(f"⚠️ QQ Bot 端口断线�?({ts})")
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f)
         return
@@ -92,7 +91,7 @@ def main():
     if not was_online and now_online:
         state["online"] = True
         state["notified"] = False
-        print(f"✅ QQ Bot 已恢复连接 ({ts})")
+        print(f"�?QQ Bot 已恢复连�?({ts})")
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f)
         return

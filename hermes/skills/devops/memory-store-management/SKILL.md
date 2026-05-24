@@ -1,6 +1,6 @@
 ---
 name: memory-store-management
-description: Inspect, categorize, and clean Hermes memory stores — USER.md, MEMORY.md, LTM, STM, and chat buffer — when the user asks about remembered data or wants cleanup.
+description: Inspect, categorize, and clean Hermes memory stores �?USER.md, MEMORY.md, LTM, STM, and chat buffer �?when the user asks about remembered data or wants cleanup.
 ---
 
 # Memory Store Management
@@ -12,42 +12,42 @@ description: Inspect, categorize, and clean Hermes memory stores — USER.md, ME
 - User sees an unexpected memory-related system message (`💾 Self-improvement review: ...`) and wants to investigate
 - User notices changes to their user profile or memory and wants to verify
 
-## Inspection checklist — check ALL stores
+## Inspection checklist �?check ALL stores
 
-### 1. USER.md (`/home/ji/.hermes/memories/USER.md`)
-User profile — identity, preferences, personal details. Read directly.
+### 1. USER.md (`/home/{{USERNAME}}/.hermes/memories/USER.md`)
+User profile �?identity, preferences, personal details. Read directly.
 
-### 2. MEMORY.md (`/home/ji/.hermes/memories/MEMORY.md`)
-Personal notes — environment facts, project conventions, tool quirks. Read directly.
+### 2. MEMORY.md (`/home/{{USERNAME}}/.hermes/memories/MEMORY.md`)
+Personal notes �?environment facts, project conventions, tool quirks. Read directly.
 
-### 3. LTM — long_term_entries (SQLite)
-Table in `/home/ji/.hermes/memory_store.db`:
+### 3. LTM �?long_term_entries (SQLite)
+Table in `/home/{{USERNAME}}/.hermes/memory_store.db`:
 ```python
 cursor.execute("SELECT id, category, key, value, confidence, created_at FROM long_term_entries ORDER BY id;")
 ```
 Key categories: `user_preferences`, `user_profile`, `qzone` (QQ空间 posts), `knowledge/topic_*` (auto-extracted topic fragments, usually garbage).
 
-### 4. STM — short_term_entries (SQLite)
+### 4. STM �?short_term_entries (SQLite)
 Session-level working memory. Can be purged freely.
 
 ### 5. chat_message_buffer (SQLite)
-Full chat history archive. **Context passed to model is NOT the full buffer** — only last 5 minutes (30 lines, 1500 char cap) from in-memory buffer. The SQLite store is permanent reference for reply chains.
+Full chat history archive. **Context passed to model is NOT the full buffer** �?only last 5 minutes (30 lines, 1500 char cap) from in-memory buffer. The SQLite store is permanent reference for reply chains.
 
 ## Presentation to user
 Categorize entries before showing:
-- **Useful/keep** — active preferences, important facts, explicit requests
-- **Maybe outdated** — old emotional moments, stale session summaries, roleplay artifacts from different interaction modes
-- **Garbage** — low-confidence auto-extracted fragments (`knowledge/topic_*` at 0.2 confidence), random noise, orphaned entries
+- **Useful/keep** �?active preferences, important facts, explicit requests
+- **Maybe outdated** �?old emotional moments, stale session summaries, roleplay artifacts from different interaction modes
+- **Garbage** �?low-confidence auto-extracted fragments (`knowledge/topic_*` at 0.2 confidence), random noise, orphaned entries
 
 Ask for confirmation before deleting. Let the user decide what to keep.
 
 ### User cleanup flow (preferred)
-1. User says "检查核心文件" → check MEMORY.md first, not USER.md
-2. User says "看长期记忆" → dump LTM → they want the full raw list (id, category, key, value preview, confidence, created_at), not a summary
+1. User says "检查核心文�? �?check MEMORY.md first, not USER.md
+2. User says "看长期记�? �?dump LTM �?they want the full raw list (id, category, key, value preview, confidence, created_at), not a summary
 3. Categories they've explicitly flagged as garbage: `knowledge/topic_*` at 0.2 confidence, `decisions/decision` noise, orphaned `user_profile/user_identity` single-word values
-4. User prefers to see raw data categorized → then say which IDs to delete → do not delete without confirmation
-5. When user says "清理干净了" or similar, VERIFY by re-checking each store and reporting the post-cleanup counts
-6. User may reference entries by meaning ("刚刚这个里面的1，18清理掉") rather than formal cleanup scope — interpret flexibly
+4. User prefers to see raw data categorized �?then say which IDs to delete �?do not delete without confirmation
+5. When user says "清理干净�? or similar, VERIFY by re-checking each store and reporting the post-cleanup counts
+6. User may reference entries by meaning ("刚刚这个里面�?�?8清理�?) rather than formal cleanup scope �?interpret flexibly
 7. After any deletion batch, confirm the result by re-querying and showing the new count
 
 ## Cleanup methods by store
@@ -58,7 +58,7 @@ Ask for confirmation before deleting. Let the user decide what to keep.
 | MEMORY.md | `patch(old_string=..., new_string="")` on the file |
 | LTM (long_term_entries) | `DELETE FROM long_term_entries WHERE id IN (...)` |
 | STM (short_term_entries) | `DELETE FROM short_term_entries` |
-| chat_message_buffer | `DELETE FROM chat_message_buffer WHERE created_at < now-300` (time-window cleanup — keep only last 5 min per user explicit preference) |
+| chat_message_buffer | `DELETE FROM chat_message_buffer WHERE created_at < now-300` (time-window cleanup �?keep only last 5 min per user explicit preference) |
 | USER.md bulk | `memory(action="remove", ...)` per entry |
 
 ## Known pitfalls
@@ -69,5 +69,5 @@ Ask for confirmation before deleting. Let the user decide what to keep.
 - **qnibus entries**: QQ空间 sayings (`qzone/*`) and cron logs (`cron/*`) occupy most of LTM. These are normal and can stay.
 
 ## Reference files
-- `references/hermes-memory-architecture.md` — detailed architecture notes (context window, memory stores, self-improvement review internals)
-- `references/feishu-cli-setup.md` — how to install and configure the Feishu CLI (lark-cli), bind to Hermes, and handle auth login flow
+- `references/hermes-memory-architecture.md` �?detailed architecture notes (context window, memory stores, self-improvement review internals)
+- `references/feishu-cli-setup.md` �?how to install and configure the Feishu CLI (lark-cli), bind to Hermes, and handle auth login flow

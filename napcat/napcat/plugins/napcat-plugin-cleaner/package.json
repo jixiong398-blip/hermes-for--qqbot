@@ -1,0 +1,12 @@
+{
+  "name": "napcat-plugin-cleaner",
+  "plugin": "缓存清理",
+  "version": "1.2.0",
+  "type": "module",
+  "main": "index.mjs",
+  "description": "NapCat 缓存清理插件 - 清理视频、语音、文件、日志等缓存",
+  "author": "NapNeko",
+  "dependencies": {
+    "napcat-types": "0.0.16"
+  }
+}

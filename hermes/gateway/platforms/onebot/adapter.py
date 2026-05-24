@@ -86,12 +86,12 @@ class OneBotAdapter(BasePlatformAdapter):
         self._pending_image_events: Dict[str, MessageEvent] = {}
         self._pending_image_tasks: Dict[str, asyncio.Task] = {}
         # Multi-@mention batching: merge nearby @mentions for one agent run
-        self._pending_mentions: Dict[str, list] = {}  # group_id → [{name, text, ts}]
+        self._pending_mentions: Dict[str, list] = {}  # group_id �?[{name, text, ts}]
         self._mention_flush_tasks: Dict[str, asyncio.Task] = {}
         self._mention_batch_delay = 3.0  # seconds to wait for more @mentions
 
         # Group message buffer: store recent messages per group for context
-        self._group_buffer: Dict[str, list] = {}  # group_id → [{name, text, ts}, ...]
+        self._group_buffer: Dict[str, list] = {}  # group_id �?[{name, text, ts}, ...]
         self._group_buffer_max = 50  # max messages per group
 
     def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False):
@@ -250,7 +250,7 @@ class OneBotAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     async def _ws_loop(self) -> None:
-        """Main WebSocket event loop — runs as background task after connect()."""
+        """Main WebSocket event loop �?runs as background task after connect()."""
         if not self._ws:
             return
 
@@ -609,7 +609,7 @@ class OneBotAdapter(BasePlatformAdapter):
     def _enqueue_image_event(self, event: MessageEvent) -> None:
         """Buffer an image event and start the flush timer.
 
-        When a user sends an image followed quickly by text (e.g., "这个是"),
+        When a user sends an image followed quickly by text (e.g., "这个�?),
         this waits for the quiet period so both can be processed together.
         """
         key = self._image_batch_key(event)
@@ -699,14 +699,14 @@ class OneBotAdapter(BasePlatformAdapter):
         # Use the last msg as template, replace text with merged content
         last = entries[-1]
         msg = dict(last["msg"])
-        msg["raw_message"] = f"[CQ:at,qq=3560998016] {merged_text}"
+        msg["raw_message"] = f"[CQ:at,qq={{BOT_QQ_ID}}] {merged_text}"
         msg["message"] = [
-            {"type": "at", "data": {"qq": "3560998016"}},
+            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
-        # Re-process without batching — include images in merged message
+        # Re-process without batching �?include images in merged message
         merged_msg_arr = [
-            {"type": "at", "data": {"qq": "3560998016"}},
+            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Attach original image/face/mface segments so _get_image_files can process them
@@ -776,7 +776,7 @@ class OneBotAdapter(BasePlatformAdapter):
                             "time": int(prev_ts + 60),
                             "user_id": 0,
                             "sender": {"nickname": "[系统]"},
-                            "raw_message": "⚠ 掉线期间消息丢失，上下文不完整",
+                            "raw_message": "�?掉线期间消息丢失，上下文不完�?,
                             "_is_placeholder": True,
                         })
                     filled.append(m)
@@ -808,7 +808,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     if m.get("_is_placeholder"):
                         continue
                     if self._is_mentioned(m, self._self_id or 0):
-                        # Check if conversation is still "alive" — look at last non-bot message
+                        # Check if conversation is still "alive" �?look at last non-bot message
                         last_other_ts = 0
                         for bm in reversed(buf[:-1]):  # skip current (just appended)
                             if bm.get("name") != "bot":
@@ -1012,10 +1012,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 if starts_with_hash and _preview_text.startswith("#"):
                     _preview_text = _preview_text[1:].strip()
             # Inject group chat context: identify WHO sent the message and WHAT they said
-            trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开头"
+            trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开�?
             channel_prompt = (
-                f"[群聊模式] 当前需要处理的消息来自用户「{sender_name}」（QQ: {user_id_str}），内容是：「{_preview_text[:100]}」。"
-                f"{trigger_reason}，你必须回复。"
+                f"[群聊模式] 当前需要处理的消息来自用户「{sender_name}」（QQ: {user_id_str}），内容是：「{_preview_text[:100]}」�?
+                f"{trigger_reason}，你必须回复�?
                 + (f"\n\n{group_context}" if group_context else "")
             )
             # Extract buffered image paths from group context so the AI can
@@ -1038,7 +1038,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 chat_type="dm",
             )
 
-        # Check for reply context (skip for recovered messages — historical data, API will fail)
+        # Check for reply context (skip for recovered messages �?historical data, API will fail)
         reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
         reply_to_text = None
         reply_media_urls = []
@@ -1052,7 +1052,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     gw = UnifiedMemoryGateway.get_instance()
                     db_row = gw._store.get_message_by_id(_recover_rid)
                     if db_row:
-                        reply_to_text = f"[引用 {db_row['sender']} 的消息: {db_row['text'][:200]}]"
+                        reply_to_text = f"[引用 {db_row['sender']} 的消�? {db_row['text'][:200]}]"
                         logger.info("[OneBot] Reply context from DB (recovery): %s", db_row["text"][:60])
                     else:
                         # Try matching by timestamp proximity in local buffer
@@ -1098,7 +1098,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 if reply_text:
                     reply_sender = reply_raw.get("sender", {})
                     reply_name = reply_sender.get("nickname", "Unknown")
-                    reply_to_text = f"[引用 {reply_name} 的消息: {reply_text}]"
+                    reply_to_text = f"[引用 {reply_name} 的消�? {reply_text}]"
                 else:
                     # Fallback for non-text replies (stickers, files, etc.)
                     segments = reply_raw.get("message", [])
@@ -1109,7 +1109,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的图片]"
                             elif t == "file":
                                 fname = self._get_seg_data(seg, "file", "文件")
-                                reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的文件: {fname}]"
+                                reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的文�? {fname}]"
                             elif t == "video":
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的视频]"
                 # Download replied images so the bot can see them
@@ -1221,7 +1221,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 parts.append(f"{name}: {fwd_text}")
                         if parts:
                             # Forwarded content goes into channel_prompt as context,
-                            # NOT into the main text — it must not override the live conversation.
+                            # NOT into the main text �?it must not override the live conversation.
                             _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
                             if len(_fwd_block) > 2000:
                                 _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
@@ -1307,7 +1307,7 @@ class OneBotAdapter(BasePlatformAdapter):
         )
 
         # Inject forwarded message content into channel_prompt as low-priority context.
-        # Forward content must NOT override the main text — it's supplementary.
+        # Forward content must NOT override the main text �?it's supplementary.
         _fwd_block = getattr(self, '_fwd_temp', {}).pop(forward_id, "") if forward_id else ""
         if _fwd_block and channel_prompt:
             channel_prompt += f"\n\n{_fwd_block}"
@@ -1539,7 +1539,7 @@ class OneBotAdapter(BasePlatformAdapter):
         *,
         finalize: bool = False,
     ) -> SendResult:
-        """QQ doesn't support message editing — send a new message instead."""
+        """QQ doesn't support message editing �?send a new message instead."""
         return await self.send(chat_id, content, metadata=None)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
