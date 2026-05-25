@@ -33,3 +33,6 @@ Pillow>=11.0,<12
 # ── Optional but recommended ──
 croniter>=6.0.0,<7
 debugpy>=1.8.0,<2
+psutil>=5.9.0,<8
+ruamel.yaml>=0.18.16,<0.19
+tzdata>=2023.3; sys_platform == 'win32'

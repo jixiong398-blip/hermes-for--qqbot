@@ -79,7 +79,8 @@ echo   [Step 3/4] Installing Hermes...
 echo   This may take a few minutes (downloading ~22 packages)...
 echo.
 call .venv\Scripts\activate.bat
-pip install -e hermes\ 2>&1
+pip install -e hermes\ --no-deps 2>&1
+pip install -r hermes\requirements.txt 2>&1
 if %errorlevel% neq 0 (
     echo.
     echo   [ERROR] Package installation failed.
