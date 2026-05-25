@@ -63,7 +63,7 @@ platform_toolsets:
   - hermes-onebot
 platforms:
   feishu:
-    enabled: true
+    enabled: false
     extra:
       app_id: {{FEISHU_APP_ID}}
       app_secret: {{FEISHU_SECRET}}

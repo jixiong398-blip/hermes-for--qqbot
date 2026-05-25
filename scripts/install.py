@@ -8,9 +8,14 @@ BOT_DIR = Path(__file__).resolve().parent.parent  # bot-template root
 HERMES_HOME = Path.home() / ".hermes"
 
 def setup():
-    # Create HERMES_HOME directory
     HERMES_HOME.mkdir(parents=True, exist_ok=True)
     print(f"HERMES_HOME: {HERMES_HOME}")
+
+    # Write minimal .env
+    env_file = HERMES_HOME / ".env"
+    if not env_file.exists():
+        env_file.write_text("GATEWAY_ALLOW_ALL_USERS=true\nONEBOT_WS_URL=ws://127.0.0.1:3001/\n", encoding="utf-8")
+        print("  .env created (GATEWAY_ALLOW_ALL_USERS=true)")
 
     # Copy templates â†' HERMES_HOME (user edits these)
     tpl_dir = BOT_DIR / "templates"
