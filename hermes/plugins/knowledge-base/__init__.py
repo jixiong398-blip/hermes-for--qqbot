@@ -1,5 +1,6 @@
 import sys, os
-sys.path.insert(0, os.path.expanduser("~/ai/ai"))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from knowledge_base_tool import knowledge_search, knowledge_read, OBSIDIAN_SEARCH_SCHEMA, OBSIDIAN_READ_SCHEMA
 
 def register(ctx):

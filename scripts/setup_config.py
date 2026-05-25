@@ -240,17 +240,12 @@ def generate_config(deepseek_key, mimo_key, vision_key, anysearch_key,
         "{{FEISHU_SECRET}}": feishu_secret,
         "{{TERMINAL_CWD}}": terminal_cwd,
         "{{STICKER_PATH}}": str(HERMES_HOME / "stickers"),
+        "{{LLM_BASE_URL}}": llm_url,
+        "{{VISION_BASE_URL}}": vision_url,
+        "{{VISION_MODEL}}": vision_model,
     }
     for old, new in replacements.items():
         tpl = tpl.replace(old, new)
-
-    # 替换 LLM base_url 和 model
-    tpl = tpl.replace("https://opencode.ai/zen/go/v1", llm_url)
-    tpl = tpl.replace("deepseek-v4-flash", llm_model)
-
-    # 替换 vision base_url 和 model
-    tpl = tpl.replace("https://token-plan-cn.xiaomimimo.com/v1", vision_url)
-    tpl = tpl.replace("mimo-v2.5", vision_model)
 
     return tpl
 

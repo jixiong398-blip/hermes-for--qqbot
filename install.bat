@@ -34,19 +34,23 @@ echo   Python 3.12 OK
 echo.
 echo   [2/5] Setting up Live2D...
 echo.
-if exist "node\npm.cmd" (
-    echo   Installing Live2D dependencies...
-    cd modules\live2d
-    call ..\..\node\npm.cmd install 2>nul
-    cd ..\..
-    if exist "modules\live2d\node_modules\electron" (
-        echo   Live2D OK
-    ) else (
-        echo   [WARNING] Live2D install failed
-        echo   Run: cd modules\live2d ^&^& ..\..\node\npm.cmd install
-    )
+:: Download Node.js if missing
+if not exist "node\node.exe" (
+    echo   Downloading Node.js...
+    powershell -Command "Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip' -OutFile '%TEMP%\node-l2d.zip'" 2>nul
+    powershell -Command "Expand-Archive -Path '%TEMP%\node-l2d.zip' -DestinationPath '%TEMP%\node-l2d' -Force"
+    xcopy "%TEMP%\node-l2d\node-v22.11.0-win-x64\*" "node\" /E /Y /Q >nul
+)
+echo   Installing Live2D dependencies (~150MB)...
+cd modules\live2d
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+call ..\..\node\npm.cmd install --registry=https://registry.npmmirror.com 2>nul
+cd ..\..
+if exist "modules\live2d\node_modules\electron" (
+    echo   Live2D OK
 ) else (
-    echo   [WARNING] Node.js not found - Live2D unavailable
+    echo   [WARNING] Live2D install failed
+    echo   Run Install-Live2D.bat manually
 )
 
 :: === Step 3: Virtual env ===

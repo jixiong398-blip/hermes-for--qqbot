@@ -908,18 +908,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"characters": models})
 
     def _handle_live2d_switch(self, body: Dict):
-        """Switch Live2D character/outfit via HTTP."""
-        character = body.get("character", "soyo")
-        costume = body.get("costume", "casual-2023")
+        """Switch Live2D character/outfit and save as preference."""
+        character = body.get("character", "")
+        outfit = body.get("outfit", body.get("costume", ""))
+        if not character:
+            return self._send_json({"error": "character required"})
+
+        # Save as default
+        pref_file = HERMES_HOME / "live2d_pref.json"
+        try:
+            pref_file.write_text(json.dumps({"character": character, "outfit": outfit}), encoding="utf-8")
+        except Exception:
+            pass
+
+        # Send to Live2D renderer
         try:
             import urllib.request
-            data = json.dumps({"type": "switch_model", "character": character, "costume": costume}).encode()
+            data = json.dumps({"type": "switch_model", "character": character, "costume": outfit}).encode()
             req = urllib.request.Request("http://127.0.0.1:19919/cmd", data=data,
                                          headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=5)
-            self._send_json({"ok": True, "character": character, "costume": costume})
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
+        except Exception:
+            pass
+
+        self._send_json({"ok": True, "character": character, "outfit": outfit, "saved": True})
 
     # ── NapCat Control ────────────────────────────────────────
 
@@ -1215,7 +1227,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "tts_adapter": ["ts_adapter.py"],
             "napcat": ["NapCat.Shell.exe", "NapCatWinBootMain"],
             "hermes_gateway": ["hermes_cli.main", "gateway"],
-            "live2d": ["live2d-electron", "electron"]
+            "live2d": ["electron", "live2d", "node.exe"]
 }
         pats = patterns.get(key, [])
         for pat in pats:
@@ -1261,29 +1273,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         pass
             elif key == "live2d":
                 # Live2D runs inside Electron — kill electron.exe processes in the project dir
-                try:
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command",
-                         "Get-CimInstance Win32_Process -Filter \"Name='electron.exe'\" | "
-                         "Where-Object { $_.CommandLine -like '*live2d-electron*' } | "
-                         "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
-                        capture_output=True, timeout=15,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                except Exception:
-                    pass
-                # Also kill node processes with live2d-electron
-                try:
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command",
-                         "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
-                         "Where-Object { $_.CommandLine -like '*live2d-electron*' } | "
-                         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-                        capture_output=True, timeout=15,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                except Exception:
-                    pass
+                for pattern in ("electron", "live2d", "node.exe"):
+                    try:
+                        subprocess.run(
+                            ["powershell", "-NoProfile", "-Command",
+                             f"Get-CimInstance Win32_Process -Filter \"Name='{pattern}'\" | "
+                             f"Where-Object {{ $_.CommandLine -like '*live2d*' }} | "
+                             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                            capture_output=True, timeout=15,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                    except Exception:
+                        pass
                 _kill_process_on_port(port)
             elif key == "local_vision":
                 try:

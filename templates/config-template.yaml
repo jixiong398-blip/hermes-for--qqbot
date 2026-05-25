@@ -16,18 +16,18 @@ approvals:
   mode: 'off'
 auto_join:
   deliver: onebot
-  enabled: false
+  enabled: true
   schedule: '*/30 * * * *'
   model: deepseek-v4-flash
   provider: custom
   api_key: {{DEEPSEEK_API_KEY}}
-  base_url: https://opencode.ai/zen/go/v1
-  task: 用 auto-join-check 脚本检查群聊是否需要插话。先检查最近30分钟内你是否已经在这个话题上回复过了——如果已经说过，就跳过。如果群友们聊到了你能自然参与的话题、而且你最近没说过话，就写一段20-50字的完整回复。必须是一句完整的话，绝对不能说到一半就停（禁止只输出几个字）。不要重复已经表达过的观点。如果不需要插话，就什么都不做。
+  base_url: {{LLM_BASE_URL}}
+  task: 用 auto-join-check 脚本检查群聊是否需要插话
 auxiliary:
   vision:
     api_key: {{MIMO_TOKEN}}
-    base_url: https://token-plan-cn.xiaomimimo.com/v1
-    model: mimo-v2.5
+    base_url: {{VISION_BASE_URL}}
+    model: {{VISION_MODEL}}
     provider: custom
     timeout: 30
 compression:
@@ -57,7 +57,7 @@ model:
   model: deepseek-v4-flash
   provider: custom
   api_key: {{DEEPSEEK_API_KEY}}
-  base_url: https://opencode.ai/zen/go/v1
+  base_url: {{LLM_BASE_URL}}
 platform_toolsets:
   onebot:
   - hermes-onebot
