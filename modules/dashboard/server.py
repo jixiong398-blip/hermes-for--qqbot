@@ -67,7 +67,7 @@ SERVICES = {
         "name": "NapCat (QQ)",
         "port": 3000,
         "cwd": str(ROOT / "napcat"),
-        "cmd": ["cmd", "/c", "launcher.bat"],
+        "cmd": ["cmd", "/c", "napcat.bat"],
         "color": "#34C759"
 },
     "hermes_gateway": {
@@ -920,7 +920,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         napcat_dir = str(ROOT / "napcat")
         try:
             proc = subprocess.Popen(
-                ["cmd", "/c", "launcher.bat"],
+                ["cmd", "/c", "napcat.bat"],
                 cwd=napcat_dir,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
@@ -958,12 +958,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 except Exception:
                     pass
-            # Method 3: Kill cmd.exe running launcher.bat
+            # Method 3: Kill cmd.exe running napcat.bat
             try:
                 subprocess.run(
                     ["powershell", "-NoProfile", "-Command",
                      "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | "
-                     "Where-Object { $_.CommandLine -like '*launcher*' -and $_.CommandLine -like '*NapCat*' } | "
+                     "Where-Object { $_.CommandLine -like '*napcat*' -and $_.CommandLine -like '*NapCat*' } | "
                      "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
                     capture_output=True, timeout=10,
                     creationflags=subprocess.CREATE_NO_WINDOW,
