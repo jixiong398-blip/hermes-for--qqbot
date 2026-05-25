@@ -376,6 +376,30 @@ def main():
     else:
         print(f"    - {soul_dst} (已存在，跳过)")
 
+    # NapCat 配置
+    napcat_tpl = TPL_DIR / "napcat"
+    napcat_cfg = BOT_DIR / "napcat" / "napcat" / "config"
+    napcat_cfg.mkdir(parents=True, exist_ok=True)
+
+    # onebot11_<QQ>.json
+    onebot_src = napcat_tpl / "onebot11.json"
+    if onebot_src.exists():
+        onebot = onebot_src.read_text(encoding="utf-8")
+        onebot = onebot.replace("{{ONEBOT_TOKEN}}", onebot_token)
+        onebot_dst = napcat_cfg / f"onebot11_{qq_group}.json"
+        if not onebot_dst.exists():
+            onebot_dst.write_text(onebot, encoding="utf-8")
+            print(f"    ✓ {onebot_dst}")
+
+    # napcat_<QQ>.json（防检测开关）
+    napcat_src = napcat_tpl / "napcat.json"
+    if napcat_src.exists():
+        napcat_dst = napcat_cfg / f"napcat_{qq_group}.json"
+        if not napcat_dst.exists():
+            napcat_cfg_data = napcat_src.read_text(encoding="utf-8")
+            napcat_dst.write_text(napcat_cfg_data, encoding="utf-8")
+            print(f"    ✓ {napcat_dst}")
+
     # ── 完成 ──
     print()
     print(green("  ✓ 配置完成！"))
