@@ -72,7 +72,7 @@ platforms:
     extra:
       access_token: {{ONEBOT_ACCESS_TOKEN}}
       http_url: http://127.0.0.1:3000
-      require_mention: false
+      require_mention: true
       ws_url: ws://127.0.0.1:3001/
     gateway_restart_notification: false
     home_channel:

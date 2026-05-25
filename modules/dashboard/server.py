@@ -75,11 +75,11 @@ SERVICES = {
         "port": 18789,
         "cwd": str(ROOT),
         "cmd": [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-X", "utf8", "-m", "hermes_cli.main", "gateway"],
-        "env": {"HERMES_HOME": str(ROOT)},
+        "env": {"HERMES_HOME": str(Path.home() / ".hermes")},
         "color": "#007AFF"
 },
     "live2d": {
-        "name": "Live2D (素世)",
+        "name": "Live2D",
         "port": 19919,
         "cwd": str(ROOT / "modules" / "live2d"),
         "cmd": ["cmd", "/c", "npm", "start"],

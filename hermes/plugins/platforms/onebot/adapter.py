@@ -1078,8 +1078,9 @@ class OneBotAdapter(BasePlatformAdapter):
             _msg_id = str(msg.get("message_id", ""))
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id)
 
-            # Trigger: @mention always works; # prefix only if require_mention is false
-            should_trigger = is_mentioned or (not self._require_mention and starts_with_hash)
+            # Trigger: @mention always works; # prefix also works.
+            # Auto-join handles proactive chat separately on its own schedule.
+            should_trigger = is_mentioned or starts_with_hash
             if not should_trigger:
                 logger.info("[OneBot] Group message without trigger, lurking")
                 return
