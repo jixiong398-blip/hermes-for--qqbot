@@ -882,7 +882,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _handle_live2d_models(self):
         """Return list of available characters and their outfits."""
         import glob
-        l2d_dir = r"E:\ai\live2d-electron\assets\figure"
+        l2d_dir = str(ROOT / "modules" / "live2d" / "assets" / "figure")
         models = {}
         for char_dir in sorted(Path(l2d_dir).iterdir()):
             if not char_dir.is_dir():

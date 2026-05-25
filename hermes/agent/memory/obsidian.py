@@ -123,7 +123,7 @@ class ObsidianVault:
     """Obsidian vault knowledge base with graph-aware search.
 
     Usage:
-        vault = ObsidianVault(Path("E:/ai/knowledge"))
+        vault = ObsidianVault(Path("~/knowledge"))
         vault.index()  # Initial indexing
         results = vault.search("transformer architecture", top_k=5)
         for note, score in results:

@@ -1,4 +1,6 @@
-@echo off
+﻿@echo off
+chcp 65001 >nul
+set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
@@ -7,7 +9,6 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-:: Clean up old processes
 echo Stopping old services...
 taskkill /F /FI "WINDOWTITLE eq Hermes Gateway" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Dashboard" >nul 2>&1

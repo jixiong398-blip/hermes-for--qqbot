@@ -439,7 +439,9 @@ def _handle_obsidian_search(gw, query: str, limit: int) -> str:
     from datetime import datetime
     knowledge_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge")
     if not os.path.isdir(knowledge_root):
-        knowledge_root = r"E:\ai\knowledge"
+        knowledge_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "modules", "knowledge")
+    if not os.path.isdir(knowledge_root):
+        knowledge_root = os.path.expanduser("~/.hermes/knowledge")
 
     enhanced = []
     for r in results:
