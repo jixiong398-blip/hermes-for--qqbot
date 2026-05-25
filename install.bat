@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 title QQBot Installer
@@ -20,7 +20,6 @@ echo   Press any key to start, or close this window to cancel...
 pause >nul
 cls
 
-:: ══════════════════════════════════════════════
 echo.
 echo   [Step 1/4] Installing Python 3.12...
 echo.
@@ -39,11 +38,8 @@ if %errorlevel% neq 0 (
 )
 echo   Python 3.12 installed.
 
-:: Refresh PATH - Python installer adds to user PATH, needs new shell
-:: We'll manually add to this session's PATH
 set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%PATH%"
 
-:: ══════════════════════════════════════════════
 echo.
 echo   [Step 2/4] Creating virtual environment...
 echo.
@@ -56,7 +52,6 @@ if %errorlevel% neq 0 (
 )
 echo   Virtual environment created.
 
-:: ══════════════════════════════════════════════
 echo.
 echo   [Step 3/4] Installing Hermes...
 echo   This may take a few minutes (downloading packages)...
@@ -71,7 +66,6 @@ if %errorlevel% neq 0 (
 )
 echo   Hermes installed.
 
-:: ══════════════════════════════════════════════
 echo.
 echo   [Step 4/4] Creating config files...
 echo.
@@ -87,8 +81,8 @@ echo   ========================================
 echo         Installation Complete!
 echo   ========================================
 echo.
-echo   Next step: double-click 配置API.bat
-echo   to select your LLM provider and enter API key.
+echo   Next step: run 配置API.bat
+echo   select your LLM provider and enter API key.
 echo.
 echo   Then: double-click start.bat to launch everything.
 echo.
