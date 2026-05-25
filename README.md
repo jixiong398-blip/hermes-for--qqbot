@@ -6,12 +6,12 @@
 
 ```
 1. 双击 install.bat     → 自动装 Python + 创建环境 + 安装依赖
-2. 编辑 config.yaml     → 填 DeepSeek API Key
-3. 编辑 SOUL.md         → 写角色人设
-4. 双击 start.bat       → 启动（NapCat + Gateway + Live2D + Dashboard）
+2. 双击 配置API.bat       → 选择 LLM 供应商，填入 API Key（支持 8 家）
+3. 双击 start.bat         → 启动（NapCat + Gateway + Live2D + Dashboard）
    → NapCat 弹窗扫码登录 QQ → 完成
-   → 右下角出现 Live2D 立绘，连接成功后显示 ● 接続済
 ```
+
+> 已安装过的用户可以直接运行 `配置API.bat` 更换供应商或 Key，无需重装。
 
 Dashboard: http://127.0.0.1:8899
 
@@ -38,9 +38,24 @@ Dashboard: http://127.0.0.1:8899
 └── templates/           ← 配置模板
 ```
 
+## 支持的 LLM 供应商
+
+| 供应商 | 说明 |
+|--------|------|
+| DeepSeek | 推荐，性价比最高 |
+| OpenCode Go | OpenCode 聚合接口 |
+| OpenAI | GPT-4o 系列 |
+| Anthropic | Claude 4 系列 |
+| SiliconFlow | 国产开源模型聚合 |
+| Moonshot (Kimi) | 月之暗面 |
+| MiniMax | MiniMax-Text-01 |
+| Ollama / LM Studio | 本地部署 |
+
+首次安装时交互式选择，填入 API Key 即自动配置。
+
 ## 需要自己准备
 
-- DeepSeek API Key → config.yaml
+- LLM API Key（安装时直接填入）
 - Live2D 立绘模型 → `modules/live2d/assets/figure/`（已内置 11 角色）
 - GPT-SoVITS → TTS 语音（可选，需自行安装）
-- NapCat → QQ 扫码登录（首次启动弹窗）
+- QQ 扫码登录（首次启动 NapCat 弹窗）
