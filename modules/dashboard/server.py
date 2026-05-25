@@ -1225,16 +1225,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         patterns = {
             "gptsovits": ["api_v2.py"],
             "tts_adapter": ["ts_adapter.py"],
-            "napcat": ["NapCat.Shell.exe", "NapCatWinBootMain"],
+            "napcat": ["NapCatWinBootMain", "qq", "napcat.mjs", "napcat"],
             "hermes_gateway": ["hermes_cli.main", "gateway"],
             "live2d": ["electron", "live2d", "node.exe"]
 }
         pats = patterns.get(key, [])
+        # kill by process name pattern (python.exe for most, node.exe for napcat/live2d)
         for pat in pats:
+            exe_filter = "node.exe" if key in ("napcat", "live2d") else "python.exe"
             try:
                 subprocess.run(
                     ["powershell", "-NoProfile", "-Command",
-                     f"Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                     f"Get-CimInstance Win32_Process -Filter \"Name='{exe_filter}'\" | "
                      f"Where-Object {{ $_.CommandLine -like '*{pat}*' }} | "
                      f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
                     capture_output=True, timeout=15,
@@ -1246,20 +1248,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if key in SERVICES:
             port = SERVICES[key]["port"]
             if key == "napcat":
-                # Multi-method kill: pattern + port + cmd wrapper
-                for pattern in ('*NapCat.Shell*', '*NapCatWinBootMain*'):
+                # Multi-method: kill node.exe running napcat, QQ process, and port
+                for exe in ('node.exe', 'QQ.exe', 'qq.exe'):
                     try:
                         subprocess.run(
                             ["powershell", "-NoProfile", "-Command",
-                             "Get-CimInstance Win32_Process | "
-                             f"Where-Object {{ $_.CommandLine -like '{pattern}' }} | "
+                             f"Get-CimInstance Win32_Process -Filter \"Name='{exe}'\" | "
+                             "Where-Object { $_.CommandLine -like '*napcat*' -or $_.CommandLine -like '*NapCat*' } | "
                              "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
                             capture_output=True, timeout=15,
                             creationflags=subprocess.CREATE_NO_WINDOW,
                         )
                     except Exception:
                         pass
-                for port in (3000, 3001):
+                for port in (3000, 3001, 6099):
                     try:
                         subprocess.run(
                             ["powershell", "-NoProfile", "-Command",
