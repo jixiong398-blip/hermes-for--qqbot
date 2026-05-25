@@ -1,6 +1,6 @@
 # AGENTS.md — bot-template 打包维护
 
-> 最后更新: 2026-05-25 | v0.4.1 | NapCat 启动修复 + Live2D WS 自动连接
+> 最后更新: 2026-05-26 | v0.5.0 | Dashboard 重写 + 全代码普适性修复
 
 ## 这是什么
 

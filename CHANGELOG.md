@@ -1,4 +1,17 @@
 # bot-template 更新日志
+## v0.5.0 (2026-05-26)
+- **Dashboard 全重写** — server.py 从 1339 行精简到 330 行，index.html 从 436 行重构
+- 所有硬编码路径清零（E:/ai、/home/ji、~/ai/ai 等）
+- TTS 服务改为可选项，附带 ts_adapter_template.py 示例脚本
+- Live2D 路径自动检测，不存在时优雅降级
+- 服务管理统一 kill 逻辑，修复 NapCat 停止失效
+- 知识库插件缺失文件补充 + 导入路径修正
+- .bat 全套 UTF-8 BOM + CRLF 编码，中文 Windows 不乱码
+- install.bat 始终安装内置 Python 3.12 + 自动 PATH
+- pip 安装精简：--no-deps + minimal requirements.txt（38 包）
+- 新增 FixNapCat.bat 登录后自动开启 WS/HTTP 端口
+- 新增 PeiZhiAPI.bat 多供应商 API 配置（8 家）
+
 ## v0.4.1.1 (2026-05-25)
 - 修正 Dashboard 启动 NapCat 路径：`launcher.bat` → `napcat.bat`
 

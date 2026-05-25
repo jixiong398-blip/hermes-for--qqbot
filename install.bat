@@ -62,7 +62,21 @@ if %errorlevel% neq 0 (
 echo   Hermes installed.
 
 echo.
-echo   [Step 4/4] Creating config files...
+echo   [Step 4/5] Installing Live2D dependencies...
+echo   This may take a few minutes (downloading Electron)...
+echo.
+cd modules\live2d
+call ..\..\napcat\npm.cmd install 2>&1
+cd ..\..
+if %errorlevel% neq 0 (
+    echo   [WARNING] Live2D setup incomplete - run manually:
+    echo     cd modules\live2d ^&^& ..\..\napcat\npm.cmd install
+) else (
+    echo   Live2D installed.
+)
+
+echo.
+echo   [Step 5/5] Creating config files...
 echo.
 python scripts\install.py 2>&1
 if %errorlevel% neq 0 (
@@ -74,9 +88,10 @@ echo   ========================================
 echo         Installation Complete!
 echo   ========================================
 echo.
-echo   Next step: run PeiZhiAPI.bat
-echo   to select your LLM provider and enter API key.
-echo.
-echo   Then: double-click start.bat to launch everything.
+echo   Next:
+echo     1. Run PeiZhiAPI.bat to configure your LLM provider
+echo     2. Run start.bat to launch (NapCat will pop up)
+echo     3. Scan QR code in NapCat to login QQ
+echo     4. Run FixNapCat.bat to enable WS/HTTP ports
 echo.
 pause

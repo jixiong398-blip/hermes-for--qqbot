@@ -880,7 +880,7 @@ class OneBotAdapter(BasePlatformAdapter):
                             "time": int(prev_ts + 60),
                             "user_id": 0,
                             "sender": {"nickname": "[系统]"},
-                            "raw_message": "�?掉线期间消息丢失，上下文不完�?,
+                            "raw_message": "[system] messages lost during disconnect gap",
                             "_is_placeholder": True,
                         })
                     filled.append(m)

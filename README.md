@@ -5,12 +5,11 @@
 ## 快速开始
 
 ```
-1. 双击 install.bat     → 自动装 Python + 创建环境 + 安装依赖
-2. 点击配置api.bat      进行手动配置api密钥和群，以方便自动生成配置
-3. 编辑 SOUL.md         → 写角色人设
-4. 双击 start.bat       → 启动（NapCat + Gateway + Live2D + Dashboard）
-   → NapCat 扫码登录 QQ → 完成
-   → 右下角出现 Live2D 立绘，连接成功后显示 ● 接続済
+1. 双击 install.bat     → 自动装 Python 3.12 + 创建环境 + 安装依赖
+2. 双击 PeiZhiAPI.bat    → 选择 LLM 供应商，填入 API Key
+3. 双击 start.bat        → 启动 Dashboard (:8899)
+4. 在面板点击启动 NapCat → 扫码登录 QQ
+5. 双击 FixNapCat.bat    → 开启 WS :3001 + HTTP :3000
 ```
 
 Dashboard: http://127.0.0.1:8899
