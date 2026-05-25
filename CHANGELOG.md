@@ -1,7 +1,11 @@
 # bot-template 更新日志
+## v0.4.2 (2026-05-25)
+- 修复 Live2D 路径硬编码 `E:\ai\` → 相对路径
+- 修复 NapCat node_modules 未包含在 Release zip
+- install.bat 优化：始终安装内置 Python + 自动添加 PATH
+- 新增 `配置API.bat` + NapCat 配置文件自动生成
+
 ## v0.4.1.1 (2026-05-25)
-- Dashboard 启动 NapCat 路径修正：`launcher.bat` → `napcat.bat`
-- **新增 `配置API.bat`**：独立 API 配置工具，双击即用，支持 8 家 LLM 供应商一键配置
 
 ## v0.4.1 (2026-05-25)
 - 修复 WebSocket 断连：心跳 15s/30s（之前 20s/10s 太短）

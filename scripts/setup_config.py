@@ -256,7 +256,8 @@ def generate_config(deepseek_key, mimo_key, vision_key, anysearch_key,
 
 
 def generate_env(deepseek_key, mimo_key, vision_key, anysearch_key,
-                 onebot_token, gateway_token, qq_app_id, qq_secret, ports):
+                 onebot_token, gateway_token, qq_app_id, qq_secret, ports,
+                 knowledge_path):
     tpl = (TPL_DIR / ".env.template").read_text(encoding="utf-8")
     replacements = {
         "{{HERMES_HOME_PATH}}": str(HERMES_HOME),
@@ -268,6 +269,8 @@ def generate_env(deepseek_key, mimo_key, vision_key, anysearch_key,
         "{{QQ_APP_ID}}": qq_app_id or "",
         "{{QQ_CLIENT_SECRET}}": qq_secret or "",
         "{{MIMO_TOKEN}}": mimo_key or "",
+        "{{KNOWLEDGE_PATH}}": knowledge_path,
+        "{{BOT_ROOT}}": str(BOT_DIR),
     }
     for old, new in replacements.items():
         tpl = tpl.replace(old, new)
@@ -353,9 +356,11 @@ def main():
     cfg_path.write_text(cfg, encoding="utf-8")
     print(f"    ✓ {cfg_path}")
 
+    knowledge_dir = terminal_cwd + "/knowledge"
     env = generate_env(
         llm_key, "", vision_key, anysearch_key,
-        onebot_token, gateway_token, qq_app_id, qq_secret, ports
+        onebot_token, gateway_token, qq_app_id, qq_secret, ports,
+        knowledge_dir
     )
     env_path = HERMES_HOME / ".env"
     env_path.write_text(env, encoding="utf-8")

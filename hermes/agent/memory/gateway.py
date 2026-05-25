@@ -316,9 +316,13 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
-            if not vault_path.exists():
-                vault_path = Path.home() / "Documents" / "Obsidian"
+            vault_path_str = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+            if vault_path_str:
+                vault_path = Path(vault_path_str)
+            else:
+                # Default: modules/knowledge/ next to bot root
+                bot_root = Path(os.environ.get("BOT_ROOT", str(Path.home())))
+                vault_path = bot_root / "modules" / "knowledge"
 
             try:
                 self._obsidian_vault = ObsidianVault(vault_path)
