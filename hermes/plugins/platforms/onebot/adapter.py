@@ -1516,6 +1516,43 @@ class OneBotAdapter(BasePlatformAdapter):
     # Sending messages
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _cq_to_segments(text: str) -> list:
+        """Convert [CQ:type,key=val,...] codes to OneBot message segments."""
+        if not isinstance(text, str):
+            return [{"type": "text", "data": {"text": str(text)}}]
+        import re
+        segments = []
+        last = 0
+        for m in re.finditer(r'\[CQ:(\w+),([^\]]+)\]', text):
+            prefix = text[last:m.start()]
+            if prefix:
+                segments.append({"type": "text", "data": {"text": prefix}})
+            cq_type = m.group(1)
+            data_str = m.group(2)
+            data = {}
+            for kv in data_str.split(','):
+                if '=' in kv:
+                    k, v = kv.split('=', 1)
+                    data[k.strip()] = v.strip()
+            # Map CQ types to OneBot segment types
+            if cq_type == "face":
+                segments.append({"type": "face", "data": {"id": data.get("id", "0")}})
+            elif cq_type == "image":
+                segments.append({"type": "image", "data": {"file": data.get("file", "")}})
+            elif cq_type == "at":
+                segments.append({"type": "at", "data": {"qq": data.get("qq", "all")}})
+            elif cq_type == "record":
+                segments.append({"type": "record", "data": {"file": data.get("file", "")}})
+            else:
+                # Unknown CQ type, keep as text
+                segments.append({"type": "text", "data": {"text": m.group(0)}})
+            last = m.end()
+        remaining = text[last:]
+        if remaining:
+            segments.append({"type": "text", "data": {"text": remaining}})
+        return segments if segments else [{"type": "text", "data": {"text": text}}]
+
     async def send(
         self,
         chat_id: str,
@@ -1572,7 +1609,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 logger.warning("[OneBot] Invalid group chat_id: %s", chat_id)
                 return SendResult(success=False, error="Invalid chat_id", retryable=False)
             action = "send_group_msg"
-            params = {"group_id": gid, "message": content}
+            params = {"group_id": gid}
         else:
             try:
                 uid = int(chat_id)
@@ -1580,15 +1617,15 @@ class OneBotAdapter(BasePlatformAdapter):
                 logger.warning("[OneBot] Invalid private chat_id: %s", chat_id)
                 return SendResult(success=False, error="Invalid chat_id", retryable=False)
             action = "send_private_msg"
-            params = {"user_id": uid, "message": content}
+            params = {"user_id": uid}
 
-        # Add reply quoting: construct message array with reply segment
-        # NapCat requires reply as a message SEGMENT, not a top-level param
+        # Convert CQ codes in content to proper OneBot message segments
+        message = _cq_to_segments(content)
+
+        # Add reply quoting as message segment
         if reply_to:
-            params["message"] = [
-                {"type": "reply", "data": {"id": str(reply_to)}},
-                {"type": "text", "data": {"text": content}}
-            ]
+            message.insert(0, {"type": "reply", "data": {"id": str(reply_to)}})
+        params["message"] = message
 
         last_error = None
         for attempt in range(max_retries):
@@ -1744,6 +1781,43 @@ class OneBotAdapter(BasePlatformAdapter):
                 }
         except Exception as e:
             return {"name": chat_id, "type": "dm"}
+
+    # ── Sticker / custom emoji system ──
+    # Maps QQ face IDs to local sticker images. Bot can grow this by saving new stickers.
+    # To add: _FACE_TO_STICKER[str(id)] = "path/to/image.jpg"
+    _FACE_TO_STICKER = {
+        '21': '{{STICKER_PATH}}/soyo_chibi_tea.jpg',
+        '22': '{{STICKER_PATH}}/soyo_chibi_excited.jpg',
+        '23': '{{STICKER_PATH}}/soyo_chibi_sad.jpg',
+        '24': '{{STICKER_PATH}}/soyo_chibi_speechless.jpg',
+        '25': '{{STICKER_PATH}}/soyo_chibi_clasp.jpg',
+        '26': '{{STICKER_PATH}}/soyo_chibi_excited.gif',
+    }
+
+    _STICKER_DIR = Path.home() / ".hermes" / "stickers"
+
+    def save_sticker(self, face_id: str, file_path: str):
+        """Save a new sticker to the library (grows over time)."""
+        self._STICKER_DIR.mkdir(parents=True, exist_ok=True)
+        dest = self._STICKER_DIR / Path(file_path).name
+        shutil = __import__("shutil")
+        shutil.copy(file_path, dest)
+        self._FACE_TO_STICKER[str(face_id)] = str(dest)
+        logger.info("[OneBot] Sticker saved: face_id=%s -> %s", face_id, dest)
+
+    @staticmethod
+    def extract_local_files(content: str):
+        """Override: replace [CQ:face,id=N] with sticker paths."""
+        import re as _re
+        def _replace_face(m):
+            fid_match = _re.search(r'id=(\d+)', m.group(0))
+            if fid_match:
+                path = OneBotAdapter._FACE_TO_STICKER.get(fid_match.group(1), "")
+                if path:
+                    return path
+            return m.group(0)  # keep original CQ code if no sticker mapped
+        content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
+        return BasePlatformAdapter.extract_local_files(content)
 
     async def send_image_file(
         self, chat_id: str, image_path: str,
