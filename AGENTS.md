@@ -1,12 +1,12 @@
 # AGENTS.md — bot-template 打包维护
 
-> 最后更新: 2026-05-25 | v0.4.1 | WS心跳修复 + 图片识别优化
+> 最后更新: 2026-05-25 | v0.4.1 | NapCat 启动修复 + Live2D WS 自动连接
 
 ## 这是什么
 
 bot-template 是 Hermes QQ Bot 的通用化分发模板。任何人都可以下载、安装、配置自己的 QQ 群 AI 机器人。
 
-源码来自 `E:\ai\hermes-agent\`（魔改版 Hermes），已做隐私清洗和品牌去敏。
+
 
 ## 目录结构
 
@@ -43,7 +43,7 @@ install.bat
 
 start.bat
   ├─ 清理旧进程
-  ├─ 启动 NapCat (launcher.bat)
+  ├─ 启动 NapCat (napcat.bat)
   ├─ 启动 Gateway (hermes gateway)
   ├─ 启动 Dashboard (server.py :8899)
   └─ 打开浏览器

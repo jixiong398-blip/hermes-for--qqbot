@@ -1,4 +1,7 @@
 # bot-template 更新日志
+## v0.4.1.1 (2026-05-25)
+- 修正 Dashboard 启动 NapCat 路径：`launcher.bat` → `napcat.bat`
+
 ## v0.4.1 (2026-05-25)
 - 修复 WebSocket 断连：心跳 15s/30s（之前 20s/10s 太短）
 - 优化图片识别：情绪/内容分类 + 多图编号 + 200 字限制
