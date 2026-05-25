@@ -6,10 +6,10 @@
 
 ```
 1. 双击 install.bat     → 自动装 Python + 创建环境 + 安装依赖
-2. 编辑 config.yaml     → 填 DeepSeek API Key
+2. 点击配置api.bat      进行手动配置api密钥和群，以方便自动生成配置
 3. 编辑 SOUL.md         → 写角色人设
 4. 双击 start.bat       → 启动（NapCat + Gateway + Live2D + Dashboard）
-   → NapCat 弹窗扫码登录 QQ → 完成
+   → NapCat 扫码登录 QQ → 完成
    → 右下角出现 Live2D 立绘，连接成功后显示 ● 接続済
 ```
 
