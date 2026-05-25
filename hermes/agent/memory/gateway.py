@@ -320,9 +320,7 @@ class UnifiedMemoryGateway:
             if vault_path_str:
                 vault_path = Path(vault_path_str)
             else:
-                # Default: modules/knowledge/ next to bot root
-                bot_root = Path(os.environ.get("BOT_ROOT", str(Path.home())))
-                vault_path = bot_root / "modules" / "knowledge"
+                vault_path = Path.home() / ".hermes" / "knowledge"
 
             try:
                 self._obsidian_vault = ObsidianVault(vault_path)

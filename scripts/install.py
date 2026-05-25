@@ -24,6 +24,13 @@ def setup():
 
     print()
     print("Done! Base config files created.")
+
+    # Create knowledge directory
+    kb = HERMES_HOME / "knowledge"
+    kb.mkdir(exist_ok=True)
+    (kb / ".gitkeep").touch(exist_ok=True)
+    print(f"  Knowledge dir: {kb}")
+
     print()
     print("Next: run the API config tool to set up your LLM provider.")
 

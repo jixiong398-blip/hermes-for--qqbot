@@ -317,7 +317,10 @@ def main():
     qq_group = ask("QQ 群号", required=True)
     channel_name = ask("群名称", default="默认群")
     character_name = ask("角色名称", default="QQBot")
-    terminal_cwd = ask("知识库路径", default=str(BOT_DIR))
+    terminal_cwd = str(BOT_DIR)  # auto-detect, not asked
+    knowledge_dir = str(HERMES_HOME / "knowledge")
+    print()
+    print(f"    知识库路径: {knowledge_dir} (自动，存放 .md 笔记)")
     print()
 
     print(dim("  [选填] 飞书"))
@@ -356,7 +359,6 @@ def main():
     cfg_path.write_text(cfg, encoding="utf-8")
     print(f"    ✓ {cfg_path}")
 
-    knowledge_dir = terminal_cwd + "/knowledge"
     env = generate_env(
         llm_key, "", vision_key, anysearch_key,
         onebot_token, gateway_token, qq_app_id, qq_secret, ports,

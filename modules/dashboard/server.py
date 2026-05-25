@@ -295,6 +295,13 @@ def _save_voice_modes(data: Dict):
 
 class DashboardHandler(BaseHTTPRequestHandler):
 
+    def handle_one_request(self):
+        """Suppress connection-aborted noise from browser tab closes."""
+        try:
+            super().handle_one_request()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     def log_message(self, format, *args):
         logger.debug("%s - %s", self.client_address[0], format % args)
 
