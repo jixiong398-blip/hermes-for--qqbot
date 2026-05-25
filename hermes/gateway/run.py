@@ -12450,13 +12450,15 @@ class GatewayRunner:
         from agent.memory_manager import sanitize_context
 
         analysis_prompt = (
-            "Describe everything visible in this image in thorough detail. "
-            "Include any text, code, data, objects, people, layout, colors, "
-            "and any other notable visual information."
+            "Identify: if this is an expression/meme/sticker → describe the emotion. "
+            "If this is a photo/screenshot → describe the content. "
+            "Keep it under 200 characters, concise."
         )
 
         enriched_parts = []
-        for path in image_paths:
+        for i, path in enumerate(image_paths, 1):
+            if len(image_paths) > 1:
+                enriched_parts.append(f"[图片{i}]")
             try:
                 logger.debug("Auto-analyzing user image: %s", path)
                 result_json = await vision_analyze_tool(

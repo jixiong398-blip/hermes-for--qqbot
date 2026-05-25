@@ -91,12 +91,12 @@ class OneBotAdapter(BasePlatformAdapter):
         self._pending_image_events: Dict[str, MessageEvent] = {}
         self._pending_image_tasks: Dict[str, asyncio.Task] = {}
         # Multi-@mention batching: merge nearby @mentions for one agent run
-        self._pending_mentions: Dict[str, list] = {}  # group_id �?[{name, text, ts}]
+        self._pending_mentions: Dict[str, list] = {}  # group_id �?[{name, text, ts}]
         self._mention_flush_tasks: Dict[str, asyncio.Task] = {}
         self._mention_batch_delay = 3.0  # seconds to wait for more @mentions
 
         # Group message buffer: store recent messages per group for context
-        self._group_buffer: Dict[str, list] = {}  # group_id �?[{name, text, ts}, ...]
+        self._group_buffer: Dict[str, list] = {}  # group_id �?[{name, text, ts}, ...]
         self._group_buffer_max = 50  # max messages per group
 
         # Per-group lock: ensure messages from the same group are processed serially
@@ -104,8 +104,8 @@ class OneBotAdapter(BasePlatformAdapter):
         self._group_locks: Dict[str, asyncio.Lock] = {}
 
         # Message dedup: prevent processing the same message twice
-        self._seen_msg_ids: Dict[str, float] = {}  # msg_id �?seen_at timestamp
-        self._DEDUP_TTL = 30  # 30 seconds �?only guards against reconnect replay
+        self._seen_msg_ids: Dict[str, float] = {}  # msg_id �?seen_at timestamp
+        self._DEDUP_TTL = 30  # 30 seconds �?only guards against reconnect replay
 
         # Reconnect tuning: independent of gateway's global backoff
         self._ws_reconnect_interval: int = int(os.getenv("ONEBOT_RECONNECT_INTERVAL", "10"))
@@ -251,7 +251,7 @@ class OneBotAdapter(BasePlatformAdapter):
         try:
             self._ws_server = await websockets.serve(
                 handler, "127.0.0.1", port,
-                ping_interval=20, ping_timeout=10,
+                ping_interval=15, ping_timeout=30,
             )
             logger.info("[OneBot] Reverse WS server started on port %s", port)
             return True
@@ -270,8 +270,8 @@ class OneBotAdapter(BasePlatformAdapter):
             self._ws = await websockets.connect(
                 self._ws_url,
                 additional_headers=additional_headers if additional_headers else None,
-                ping_interval=20,
-                ping_timeout=10,
+                ping_interval=15,
+                ping_timeout=30,
             )
             self._ws_task = asyncio.create_task(self._ws_loop())
 
@@ -319,7 +319,7 @@ class OneBotAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     async def _ws_loop(self) -> None:
-        """Main WebSocket event loop �?runs as background task after connect()."""
+        """Main WebSocket event loop �?runs as background task after connect()."""
         if not self._ws:
             return
 
@@ -712,7 +712,7 @@ class OneBotAdapter(BasePlatformAdapter):
     def _enqueue_image_event(self, event: MessageEvent) -> None:
         """Buffer an image event and start the flush timer.
 
-        When a user sends an image followed quickly by text (e.g., "这个�?),
+        When a user sends an image followed quickly by text (e.g., "这个�?),
         this waits for the quiet period so both can be processed together.
         """
         key = self._image_batch_key(event)
@@ -807,7 +807,7 @@ class OneBotAdapter(BasePlatformAdapter):
             {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
-        # Re-process without batching �?include images in merged message
+        # Re-process without batching �?include images in merged message
         merged_msg_arr = [
             {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
@@ -880,7 +880,7 @@ class OneBotAdapter(BasePlatformAdapter):
                             "time": int(prev_ts + 60),
                             "user_id": 0,
                             "sender": {"nickname": "[系统]"},
-                            "raw_message": "�?掉线期间消息丢失，上下文不完�?,
+                            "raw_message": "�?掉线期间消息丢失，上下文不完�?,
                             "_is_placeholder": True,
                         })
                     filled.append(m)
@@ -912,7 +912,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     if m.get("_is_placeholder"):
                         continue
                     if self._is_mentioned(m, self._self_id or 0):
-                        # Check if conversation is still "alive" �?look at last non-bot message
+                        # Check if conversation is still "alive" �?look at last non-bot message
                         last_other_ts = 0
                         for bm in reversed(buf[:-1]):  # skip current (just appended)
                             if bm.get("name") != "bot":
@@ -1011,7 +1011,7 @@ class OneBotAdapter(BasePlatformAdapter):
             return await self._process_message_impl(msg)
 
     async def _process_message_impl(self, msg: dict) -> None:
-        """Inner message processing �?called under group lock for group messages."""
+        """Inner message processing �?called under group lock for group messages."""
         user_id = msg.get("user_id")
         group_id = msg.get("group_id")
         msg_type = msg.get("message_type", "")
@@ -1175,10 +1175,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 if starts_with_hash and _preview_text.startswith("#"):
                     _preview_text = _preview_text[1:].strip()
             # Inject group chat context: identify WHO sent the message and WHAT they said
-            trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开�?
+            trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开�?
             channel_prompt = (
-                f"[群聊模式] 当前需要处理的消息来自用户「{sender_name}」（QQ: {user_id_str}），内容是：「{_preview_text[:100]}」�?
-                f"{trigger_reason}，你必须回复�?
+                f"[群聊模式] 当前需要处理的消息来自用户「{sender_name}」（QQ: {user_id_str}），内容是：「{_preview_text[:100]}」�?
+                f"{trigger_reason}，你必须回复�?
                 + (f"\n\n{group_context}" if group_context else "")
             )
             # Extract buffered image paths from group context so the AI can
@@ -1201,7 +1201,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 chat_type="dm",
             )
 
-        # Check for reply context (skip for recovered messages �?historical data, API will fail)
+        # Check for reply context (skip for recovered messages �?historical data, API will fail)
         reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
         reply_to_text = None
         reply_media_urls = []
@@ -1216,7 +1216,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
                     db.close()
                     if row:
-                        reply_to_text = f"[引用 {row[0]} 的消�? {row[1][:200]}]"
+                        reply_to_text = f"[引用 {row[0]} 的消�? {row[1][:200]}]"
                 except Exception:
                     pass
         reply_media_types = []
@@ -1248,7 +1248,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 if reply_text:
                     reply_sender = reply_raw.get("sender", {})
                     reply_name = reply_sender.get("nickname", "Unknown")
-                    reply_to_text = f"[引用 {reply_name} 的消�? {reply_text}]"
+                    reply_to_text = f"[引用 {reply_name} 的消�? {reply_text}]"
                 else:
                     # Fallback for non-text replies (stickers, files, etc.)
                     segments = reply_raw.get("message", [])
@@ -1259,7 +1259,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的图片]"
                             elif t == "file":
                                 fname = self._get_seg_data(seg, "file", "文件")
-                                reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的文�? {fname}]"
+                                reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的文�? {fname}]"
                             elif t == "video":
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的视频]"
                 # Download replied images so the bot can see them
@@ -1378,7 +1378,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 parts.append(f"{name}: {fwd_text}")
                         if parts:
                             # Forwarded content goes into channel_prompt as context,
-                            # NOT into the main text �?it must not override the live conversation.
+                            # NOT into the main text �?it must not override the live conversation.
                             _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
                             if len(_fwd_block) > 2000:
                                 _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
@@ -1464,7 +1464,7 @@ class OneBotAdapter(BasePlatformAdapter):
         )
 
         # Inject forwarded message content into channel_prompt as low-priority context.
-        # Forward content must NOT override the main text �?it's supplementary.
+        # Forward content must NOT override the main text �?it's supplementary.
         _fwd_block = getattr(self, '_fwd_temp', {}).pop(forward_id, "") if forward_id else ""
         if _fwd_block and channel_prompt:
             channel_prompt += f"\n\n{_fwd_block}"
@@ -1525,18 +1525,18 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send a text message to a QQ chat. Multi-paragraph content is split into separate messages (simulates human typing)."""
         # ── QQ 最终防线：过滤系统提示词和括号动作描写 ──
         if content:
-            # 过滤�?💾 的整行（Self-improvement review 等系统消息）
+            # 过滤�?💾 的整行（Self-improvement review 等系统消息）
             lines = content.split('\n')
             filtered_lines = [l for l in lines if '💾' not in l and 'Self-improvement review' not in l]
             content = '\n'.join(filtered_lines)
-            # 去除括号动作描写（愣了一下）、（笑）�?            content = re.sub(r'（[^）]*�?, '', content)
-            # 过滤手写 CQ 码（@mention 除外�?            content = re.sub(r'\[CQ:(?!at,qq=)[^\]]+\]', '', content)
+            # 去除括号动作描写（愣了一下）、（笑）�?            content = re.sub(r'（[^）]*�?, '', content)
+            # 过滤手写 CQ 码（@mention 除外�?            content = re.sub(r'\[CQ:(?!at,qq=)[^\]]+\]', '', content)
             # 清理多余空白
             content = re.sub(r'\n{3,}', '\n\n', content).strip()
             if not content or not content.strip():
                 return SendResult(success=True, message_id=None)
         # ── 过滤结束 ──
-        # Simulate human typing �?send line by line with small delays
+        # Simulate human typing �?send line by line with small delays
         if content and "\n" in content:
             lines = [l.strip() for l in content.replace('\r\n', '\n').replace('\r', '\n').split('\n') if l.strip()]
             if len(lines) > 1:
@@ -1718,7 +1718,7 @@ class OneBotAdapter(BasePlatformAdapter):
         *,
         finalize: bool = False,
     ) -> SendResult:
-        """QQ doesn't support message editing �?send a new message instead."""
+        """QQ doesn't support message editing �?send a new message instead."""
         return await self.send(chat_id, content, metadata=None)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
@@ -1744,7 +1744,7 @@ class OneBotAdapter(BasePlatformAdapter):
         except Exception as e:
             return {"name": chat_id, "type": "dm"}
 
-    # ── Image extraction override: map [CQ:face,id=N] �?custom stickers ──
+    # ── Image extraction override: map [CQ:face,id=N] �?custom stickers ──
 
     _FACE_TO_STICKER = {
         '192': '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg',
