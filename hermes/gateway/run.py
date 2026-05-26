@@ -2763,10 +2763,6 @@ class GatewayRunner:
                 if not adapter:
                     continue
 
-                # Never send shutdown notices to QQ groups
-                if platform_str == "onebot":
-                    continue
-
                 platform_cfg = self.config.platforms.get(platform)
                 if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
                     logger.info(
@@ -5262,7 +5258,7 @@ class GatewayRunner:
 
     async def _deliver_platform_notice(self, source, content: str) -> None:
         """Deliver a setup/operational notice using platform-specific privacy rules."""
-        # Never send system notices to QQ groups
+        # Suppress for OneBot (QQ groups don't need internal notices)
         if source.platform and source.platform.value == "onebot":
             return
         adapter = self.adapters.get(source.platform)
@@ -5872,11 +5868,8 @@ class GatewayRunner:
                 self._pending_messages[_quick_key] = event.text
             return None
 
-        # Check for commands — blocked on OneBot/QQ for safety
+        # Check for commands
         command = event.get_command()
-        if command and event.source and event.source.platform and event.source.platform.value == "onebot":
-            logger.debug("Blocked slash command '%s' on OneBot platform", command)
-            command = None
 
         from hermes_cli.commands import (
             GATEWAY_KNOWN_COMMANDS,
@@ -7058,30 +7051,27 @@ class GatewayRunner:
             )
         
         # One-time prompt if no home channel is set for this platform
-        # Skip for webhooks, OneBot (QQ group chats don't need this)
-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
-            if source.platform.value == "onebot":
-                pass  # QQ groups don't need home channel prompts
-            else:
-                platform_name = source.platform.value
-                env_key = _home_target_env_var(platform_name)
-                if not os.getenv(env_key):
-                    # Slack dispatches all Hermes commands through a single
-                    # parent slash command `/hermes`; bare `/sethome` is not
-                    # registered and would fail with "app did not respond".
-                    sethome_cmd = (
-                        "/hermes sethome"
-                        if source.platform == Platform.SLACK
-                        else "/sethome"
-                    )
-                    notice = (
-                        f"📬 No home channel is set for {platform_name.title()}. "
-                        f"A home channel is where Hermes delivers cron job results "
-                        f"and cross-platform messages.\n\n"
-                        f"Type {sethome_cmd} to make this chat your home channel, "
-                        f"or ignore to skip."
-                    )
-                    await self._deliver_platform_notice(source, notice)
+        # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK and source.platform.value != "onebot":
+            platform_name = source.platform.value
+            env_key = _home_target_env_var(platform_name)
+            if not os.getenv(env_key):
+                # Slack dispatches all Hermes commands through a single
+                # parent slash command `/hermes`; bare `/sethome` is not
+                # registered and would fail with "app did not respond".
+                sethome_cmd = (
+                    "/hermes sethome"
+                    if source.platform == Platform.SLACK
+                    else "/sethome"
+                )
+                notice = (
+                    f"📬 No home channel is set for {platform_name.title()}. "
+                    f"A home channel is where Hermes delivers cron job results "
+                    f"and cross-platform messages.\n\n"
+                    f"Type {sethome_cmd} to make this chat your home channel, "
+                    f"or ignore to skip."
+                )
+                await self._deliver_platform_notice(source, notice)
         
         # -----------------------------------------------------------------
         # Voice channel awareness — inject current voice channel state
@@ -12450,15 +12440,14 @@ class GatewayRunner:
         from agent.memory_manager import sanitize_context
 
         analysis_prompt = (
-            "Identify: if this is an expression/meme/sticker → describe the emotion. "
-            "If this is a photo/screenshot → describe the content. "
-            "Keep it under 200 characters, concise."
+            "Analyze this image concisely:\n"
+            "1. If it's an emoji/sticker/reaction image → describe the EMOTION it conveys (e.g. 'excited', 'facepalm', 'crying')\n"
+            "2. If it's a photo/screenshot → briefly describe what's visible (people, objects, text)\n"
+            "3. Keep your response under 200 characters."
         )
 
         enriched_parts = []
         for i, path in enumerate(image_paths, 1):
-            if len(image_paths) > 1:
-                enriched_parts.append(f"[图片{i}]")
             try:
                 logger.debug("Auto-analyzing user image: %s", path)
                 result_json = await vision_analyze_tool(
@@ -12470,30 +12459,24 @@ class GatewayRunner:
                     description = result.get("analysis", "")
                     description = sanitize_context(description)
                     enriched_parts.append(
-                        f"[The user sent an image~ Here's what I can see:\n{description}]\n"
-                        f"[If you need a closer look, use vision_analyze with "
-                        f"image_url: {path} ~]"
+                        f"[图片{i}] {description}"
                     )
                 else:
                     enriched_parts.append(
-                        "[The user sent an image but I couldn't quite see it "
-                        "this time (>_<) You can try looking at it yourself "
-                        f"with vision_analyze using image_url: {path}]"
+                        f"[图片{i}] 未能识别"
                     )
             except Exception as e:
                 logger.error("Vision auto-analysis error: %s", e)
                 enriched_parts.append(
-                    f"[The user sent an image but something went wrong when I "
-                    f"tried to look at it~ You can try examining it yourself "
-                    f"with vision_analyze using image_url: {path}]"
+                    f"[图片{i}] 识别出错"
                 )
 
         # Combine: vision descriptions first, then the user's original text
         if enriched_parts:
-            prefix = "\n\n".join(enriched_parts)
+            prefix = "\n".join(enriched_parts)
             if user_text:
-                return f"{prefix}\n\n{user_text}"
-            return prefix
+                return f"用户发了{i}张图：\n{prefix}\n\n用户说：{user_text}"
+            return f"用户发了{i}张图：\n{prefix}"
         return user_text
 
     async def _enrich_message_with_transcription(
@@ -14138,13 +14121,13 @@ class GatewayRunner:
             _status_thread_metadata = self._thread_metadata_for_source(source, event_message_id) if _progress_thread_id else None
 
         def _status_callback_sync(event_type: str, message: str) -> None:
-            if not _status_adapter or not _run_still_current():
-                return
-            # Suppress status messages for OneBot (QQ groups)
+            # Suppress for OneBot (QQ groups)
             if source.platform and source.platform.value == "onebot":
                 return
+            if not _status_adapter or not _run_still_current():
+                return
             try:
-                asyncio.run_coroutine_threadsafe(
+                _fut = asyncio.run_coroutine_threadsafe(
                     _status_adapter.send(
                         _status_chat_id,
                         message,
@@ -14284,24 +14267,22 @@ class GatewayRunner:
                             buffer_only=_buffer_only,
                             fresh_final_after_seconds=_fresh_final_secs,
                         )
-                    _stream_consumer = GatewayStreamConsumer(
-                        adapter=_adapter,
-                        chat_id=source.chat_id,
-                        config=_consumer_cfg,
-                        metadata=_status_thread_metadata,
-                        on_new_message=(
-                            (lambda: progress_queue.put(("__reset__",)))
-                            if progress_queue is not None
-                            else None
-                        ),
-                    )
-                    # Store reply anchor for quoting the triggering message
-                    _stream_consumer.reply_anchor = _reply_anchor_for_event(event)
-                    if _want_stream_deltas:
-                        def _stream_delta_cb(text: str) -> None:
-                            if _run_still_current():
-                                _stream_consumer.on_delta(text)
-                    stream_consumer_holder[0] = _stream_consumer
+                        _stream_consumer = GatewayStreamConsumer(
+                            adapter=_adapter,
+                            chat_id=source.chat_id,
+                            config=_consumer_cfg,
+                            metadata=_status_thread_metadata,
+                            on_new_message=(
+                                (lambda: progress_queue.put(("__reset__",)))
+                                if progress_queue is not None
+                                else None
+                            ),
+                        )
+                        if _want_stream_deltas:
+                            def _stream_delta_cb(text: str) -> None:
+                                if _run_still_current():
+                                    _stream_consumer.on_delta(text)
+                        stream_consumer_holder[0] = _stream_consumer
                 except Exception as _sc_err:
                     logger.debug("Could not set up stream consumer: %s", _sc_err)
 
@@ -14315,12 +14296,6 @@ class GatewayRunner:
                         _stream_consumer.on_commentary(text)
                     return
                 if already_streamed or not _status_adapter or not str(text or "").strip():
-                    return
-                # Never send thinking/interim messages to QQ groups
-                if getattr(source, 'platform', None) and source.platform.value == "onebot":
-                    return
-                # Suppress thinking/interim messages for OneBot (QQ groups)
-                if getattr(source, 'platform', None) and source.platform.value == "onebot":
                     return
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -14419,10 +14394,10 @@ class GatewayRunner:
             _bg_review_pending_lock = threading.Lock()
 
             def _deliver_bg_review_message(message: str) -> None:
-                if not _status_adapter or not _run_still_current():
-                    return
                 # Suppress for OneBot (QQ groups)
                 if source.platform and source.platform.value == "onebot":
+                    return
+                if not _status_adapter or not _run_still_current():
                     return
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -14446,7 +14421,7 @@ class GatewayRunner:
 
             # Background review delivery — send "💾 Memory updated" etc. to user
             def _bg_review_send(message: str) -> None:
-                # Suppress for OneBot (QQ groups don't need internal status messages)
+                # Suppress for OneBot (QQ groups)
                 if source.platform and source.platform.value == "onebot":
                     return
                 if not _status_adapter or not _run_still_current():
@@ -15037,11 +15012,15 @@ class GatewayRunner:
                     except Exception:
                         pass
                 try:
-                    _notify_res = await _notify_adapter.send(
-                        source.chat_id,
-                        f"⏳ Still working... ({_elapsed_mins} min elapsed{_status_detail})",
-                        metadata=_status_thread_metadata,
-                    )
+                    # Suppress long-running notifications for OneBot (QQ groups)
+                    if source.platform and source.platform.value == "onebot":
+                        pass
+                    else:
+                        _notify_res = await _notify_adapter.send(
+                            source.chat_id,
+                            f"⏳ Still working... ({_elapsed_mins} min elapsed{_status_detail})",
+                            metadata=_status_thread_metadata,
+                        )
                     if (
                         _cleanup_progress
                         and getattr(_notify_res, "success", False)

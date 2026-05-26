@@ -99,6 +99,10 @@ class OneBotAdapter(BasePlatformAdapter):
         self._group_buffer: Dict[str, list] = {}  # group_id → [{name, text, ts}, ...]
         self._group_buffer_max = 50  # max messages per group
 
+        # Async persist queue: decouple SQLite writes from message processing
+        self._persist_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._persist_worker_task: Optional[asyncio.Task] = None
+
         # Per-group lock: ensure messages from the same group are processed serially
         # Prevents concurrent agent runs from clobbering each other's context
         self._group_locks: Dict[str, asyncio.Lock] = {}
@@ -125,29 +129,48 @@ class OneBotAdapter(BasePlatformAdapter):
 
     def _persist_chat_message(self, group_id: str, chat_type: str, user_id: int,
                                sender_name: str, content: str, message_id: str = ""):
-        """Persist a chat message to the SQLite buffer (fire-and-forget)."""
+        """Queue a chat message for async SQLite persistence (non-blocking)."""
         try:
-            import sqlite3, time as _time
-            db_path = str(Path.home() / ".hermes" / "memory_store.db")
-            db = sqlite3.connect(db_path)
-            db.execute(
-                "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at) VALUES (?,?,?,?,?,?,?)",
-                (str(user_id) if chat_type == "private" else group_id,
-                 chat_type, str(user_id), sender_name, content[:400], str(message_id), _time.time())
-            )
-            db.commit()
-            # Auto-trim: keep at most 100 messages per chat
-            row = db.execute(
-                "SELECT id FROM chat_message_buffer WHERE chat_id = ? ORDER BY created_at DESC LIMIT 1 OFFSET 100",
-                (str(user_id) if chat_type == "private" else group_id,),
-            ).fetchone()
-            if row:
-                db.execute("DELETE FROM chat_message_buffer WHERE chat_id = ? AND id <= ?",
-                           (str(user_id) if chat_type == "private" else group_id, row[0]))
-                db.commit()
-            db.close()
-        except Exception as e:
-            logger.warning("[OneBot] Failed to persist message: %s", e)
+            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id))
+        except asyncio.QueueFull:
+            pass  # queue full → drop oldest acceptable for chat buffer
+
+    async def _persist_worker(self):
+        """Background worker: drain persist queue → write to SQLite with retry."""
+        import sqlite3, time as _time
+        db_path = str(Path.home() / ".hermes" / "memory_store.db")
+        while True:
+            try:
+                group_id, chat_type, user_id, sender_name, content, message_id = await self._persist_queue.get()
+                cid = str(user_id) if chat_type == "private" else group_id
+                for attempt in range(3):
+                    try:
+                        db = sqlite3.connect(db_path, timeout=10)
+                        db.execute("PRAGMA journal_mode=WAL")
+                        db.execute(
+                            "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                            (cid, chat_type, str(user_id), sender_name, content[:400], str(message_id), _time.time()),
+                        )
+                        db.commit()
+                        # Auto-trim
+                        row = db.execute(
+                            "SELECT id FROM chat_message_buffer WHERE chat_id=? ORDER BY created_at DESC LIMIT 1 OFFSET 100",
+                            (cid,),
+                        ).fetchone()
+                        if row:
+                            db.execute("DELETE FROM chat_message_buffer WHERE chat_id=? AND id<=?", (cid, row[0]))
+                            db.commit()
+                        db.close()
+                        break
+                    except Exception:
+                        if attempt < 2:
+                            await asyncio.sleep(1)
+                        db.close() if 'db' in dir() else None
+                self._persist_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
     @property
     def name(self) -> str:
@@ -270,10 +293,11 @@ class OneBotAdapter(BasePlatformAdapter):
             self._ws = await websockets.connect(
                 self._ws_url,
                 additional_headers=additional_headers if additional_headers else None,
-                ping_interval=20,
-                ping_timeout=10,
+                ping_interval=15,
+                ping_timeout=30,
             )
             self._ws_task = asyncio.create_task(self._ws_loop())
+            self._persist_worker_task = asyncio.create_task(self._persist_worker())
 
             if HTTPX_AVAILABLE:
                 self._http_client = httpx.AsyncClient(
@@ -294,6 +318,14 @@ class OneBotAdapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         self._mark_disconnected()
+        # Stop persist worker
+        if self._persist_worker_task and not self._persist_worker_task.done():
+            self._persist_worker_task.cancel()
+            try:
+                await self._persist_worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._persist_worker_task = None
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
             try:
@@ -1078,9 +1110,8 @@ class OneBotAdapter(BasePlatformAdapter):
             _msg_id = str(msg.get("message_id", ""))
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id)
 
-            # Trigger: @mention always works; # prefix also works.
-            # Auto-join handles proactive chat separately on its own schedule.
-            should_trigger = is_mentioned or starts_with_hash
+            # Trigger: @mention always works; # prefix only if require_mention is false
+            should_trigger = is_mentioned or (not self._require_mention and starts_with_hash)
             if not should_trigger:
                 logger.info("[OneBot] Group message without trigger, lurking")
                 return
@@ -1137,11 +1168,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 raw_lines = []
                 for m in recent:
                     if m['ts'] >= cutoff_5m:
-                        raw_lines.append(f"{m['name']}: {m['text']}")
+                        ts = time.strftime('%H:%M', time.localtime(m['ts']))
+                        raw_lines.append(f"[{ts}] {m['name']}: {m['text']}")
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines[-30:])
-                    if len(group_context) > 1500:
-                        group_context = group_context[:1500] + "\n...[已截断]"
             # API fallback (only when buffer is completely empty)
             if not group_context:
                 try:
@@ -1160,8 +1190,6 @@ class OneBotAdapter(BasePlatformAdapter):
                                 ctx_lines.append(f"{m_name}: {m_text}")
                         if len(ctx_lines) > 1:
                             group_context = "\n".join(ctx_lines)
-                            if len(group_context) > 800:
-                                group_context = group_context[:800] + "\n...[上下文已截断]"
                 except Exception as e:
                     logger.info("[OneBot] Failed to fetch group context: %s", e)
 
@@ -1177,9 +1205,10 @@ class OneBotAdapter(BasePlatformAdapter):
                     _preview_text = _preview_text[1:].strip()
             # Inject group chat context: identify WHO sent the message and WHAT they said
             trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开头"
+            msg_time = msg.get("time", 0)
+            time_str = time.strftime('%H:%M', time.localtime(msg_time)) if msg_time else ""
             channel_prompt = (
-                f"[群聊模式] 当前需要处理的消息来自用户「{sender_name}」（QQ: {user_id_str}），内容是：「{_preview_text[:100]}」。"
-                f"{trigger_reason}，你必须回复。"
+                f"[群聊模式] {time_str} 来自「{sender_name}」：{_preview_text[:100]}。"
                 + (f"\n\n{group_context}" if group_context else "")
             )
             # Extract buffered image paths from group context so the AI can
@@ -1342,6 +1371,11 @@ class OneBotAdapter(BasePlatformAdapter):
         # Extract text (strip CQ codes for both group and DM)
         text = self._get_raw_text(msg)
         text = re.sub(r'\[CQ:[^\]]+\]', '', text).strip()
+        # Add timestamp for DM (group has it in channel_prompt)
+        msg_time = msg.get("time", 0)
+        if msg_time and text:
+            time_str = time.strftime('%H:%M', time.localtime(msg_time))
+            text = f"[{time_str}] {text}"
         logger.info("[OneBot] Extracted text: %s", text[:200] if text else "(empty)")
 
         # Handle forwarded/merged messages (聊天记录合并转发)
@@ -1516,43 +1550,6 @@ class OneBotAdapter(BasePlatformAdapter):
     # Sending messages
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _cq_to_segments(text: str) -> list:
-        """Convert [CQ:type,key=val,...] codes to OneBot message segments."""
-        if not isinstance(text, str):
-            return [{"type": "text", "data": {"text": str(text)}}]
-        import re
-        segments = []
-        last = 0
-        for m in re.finditer(r'\[CQ:(\w+),([^\]]+)\]', text):
-            prefix = text[last:m.start()]
-            if prefix:
-                segments.append({"type": "text", "data": {"text": prefix}})
-            cq_type = m.group(1)
-            data_str = m.group(2)
-            data = {}
-            for kv in data_str.split(','):
-                if '=' in kv:
-                    k, v = kv.split('=', 1)
-                    data[k.strip()] = v.strip()
-            # Map CQ types to OneBot segment types
-            if cq_type == "face":
-                segments.append({"type": "face", "data": {"id": data.get("id", "0")}})
-            elif cq_type == "image":
-                segments.append({"type": "image", "data": {"file": data.get("file", "")}})
-            elif cq_type == "at":
-                segments.append({"type": "at", "data": {"qq": data.get("qq", "all")}})
-            elif cq_type == "record":
-                segments.append({"type": "record", "data": {"file": data.get("file", "")}})
-            else:
-                # Unknown CQ type, keep as text
-                segments.append({"type": "text", "data": {"text": m.group(0)}})
-            last = m.end()
-        remaining = text[last:]
-        if remaining:
-            segments.append({"type": "text", "data": {"text": remaining}})
-        return segments if segments else [{"type": "text", "data": {"text": text}}]
-
     async def send(
         self,
         chat_id: str,
@@ -1569,6 +1566,8 @@ class OneBotAdapter(BasePlatformAdapter):
             content = '\n'.join(filtered_lines)
             # 去除括号动作描写（愣了一下）、（笑）等
             content = re.sub(r'（[^）]*）', '', content)
+            # 过滤手写 CQ 码（@mention 除外）
+            content = re.sub(r'\[CQ:(?!at,qq=)[^\]]+\]', '', content)
             # 清理多余空白
             content = re.sub(r'\n{3,}', '\n\n', content).strip()
             if not content or not content.strip():
@@ -1609,7 +1608,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 logger.warning("[OneBot] Invalid group chat_id: %s", chat_id)
                 return SendResult(success=False, error="Invalid chat_id", retryable=False)
             action = "send_group_msg"
-            params = {"group_id": gid}
+            params = {"group_id": gid, "message": content}
         else:
             try:
                 uid = int(chat_id)
@@ -1617,15 +1616,15 @@ class OneBotAdapter(BasePlatformAdapter):
                 logger.warning("[OneBot] Invalid private chat_id: %s", chat_id)
                 return SendResult(success=False, error="Invalid chat_id", retryable=False)
             action = "send_private_msg"
-            params = {"user_id": uid}
+            params = {"user_id": uid, "message": content}
 
-        # Convert CQ codes in content to proper OneBot message segments
-        message = _cq_to_segments(content)
-
-        # Add reply quoting as message segment
+        # Add reply quoting: construct message array with reply segment
+        # NapCat requires reply as a message SEGMENT, not a top-level param
         if reply_to:
-            message.insert(0, {"type": "reply", "data": {"id": str(reply_to)}})
-        params["message"] = message
+            params["message"] = [
+                {"type": "reply", "data": {"id": str(reply_to)}},
+                {"type": "text", "data": {"text": content}}
+            ]
 
         last_error = None
         for attempt in range(max_retries):
@@ -1782,41 +1781,29 @@ class OneBotAdapter(BasePlatformAdapter):
         except Exception as e:
             return {"name": chat_id, "type": "dm"}
 
-    # ── Sticker / custom emoji system ──
-    # Maps QQ face IDs to local sticker images. Bot can grow this by saving new stickers.
-    # To add: _FACE_TO_STICKER[str(id)] = "path/to/image.jpg"
+    # ── Image extraction override: map [CQ:face,id=N] → custom stickers ──
+
     _FACE_TO_STICKER = {
-        '21': '{{STICKER_PATH}}/soyo_chibi_tea.jpg',
-        '22': '{{STICKER_PATH}}/soyo_chibi_excited.jpg',
-        '23': '{{STICKER_PATH}}/soyo_chibi_sad.jpg',
-        '24': '{{STICKER_PATH}}/soyo_chibi_speechless.jpg',
-        '25': '{{STICKER_PATH}}/soyo_chibi_clasp.jpg',
-        '26': '{{STICKER_PATH}}/soyo_chibi_excited.gif',
+        '192': '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg',
+        '193': '/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg',
+        '194': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.jpg',
+        '195': '/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg',
+        '196': '/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg',
+        '197': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
     }
-
-    _STICKER_DIR = Path.home() / ".hermes" / "stickers"
-
-    def save_sticker(self, face_id: str, file_path: str):
-        """Save a new sticker to the library (grows over time)."""
-        self._STICKER_DIR.mkdir(parents=True, exist_ok=True)
-        dest = self._STICKER_DIR / Path(file_path).name
-        shutil = __import__("shutil")
-        shutil.copy(file_path, dest)
-        self._FACE_TO_STICKER[str(face_id)] = str(dest)
-        logger.info("[OneBot] Sticker saved: face_id=%s -> %s", face_id, dest)
 
     @staticmethod
     def extract_local_files(content: str):
-        """Override: replace [CQ:face,id=N] with sticker paths."""
+        """Override: replace [CQ:face,id=N] with sticker paths, ensure paths have boundaries."""
         import re as _re
         def _replace_face(m):
-            fid_match = _re.search(r'id=(\d+)', m.group(0))
-            if fid_match:
-                path = OneBotAdapter._FACE_TO_STICKER.get(fid_match.group(1), "")
-                if path:
-                    return path
-            return m.group(0)  # keep original CQ code if no sticker mapped
+            fid = _re.search(r'id=(\d+)', m.group(0))
+            path = OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
+            return path or '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg'
         content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
+        # Ensure file paths are separated from surrounding text (fix \w matching CJK)
+        # Insert newline before bare paths like /home/{{USERNAME}}/Pictures/*.jpg
+        content = _re.sub(r'([^\s/])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
         return BasePlatformAdapter.extract_local_files(content)
 
     async def send_image_file(

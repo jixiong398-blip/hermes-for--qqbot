@@ -279,14 +279,94 @@ class UnifiedMemoryGateway:
             pruned = self._wfm.prune_forgotten(dry_run=False)
             stats["workflows_pruned"] = pruned
 
-        # Prune old STM entries
-        self._store.prune_short_term(max_age_days=7.0)
+        # Prune old STM entries: delete older than 1 hour OR keep only 200 newest
+        self._store.prune_short_term(max_age_days=0.04)
+        # Also trim by count — keep at most 200 most recent
+        conn = self._store._get_conn()
+        row = conn.execute(
+            "SELECT id FROM short_term_entries ORDER BY created_at DESC LIMIT 1 OFFSET 200"
+        ).fetchone()
+        if row:
+            conn.execute("DELETE FROM short_term_entries WHERE id <= ?", (row[0],))
+            conn.commit()
+            stats["stm_pruned"] = row[0]
+        else:
+            stats["stm_pruned"] = 0
 
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed
         self._store.quick_maintenance()
 
+        # ── Auto-update SOUL.md with recent memories ──
+        self._sync_soul_md()
+
         return stats
+
+    def _sync_soul_md(self) -> None:
+        """Append recent high-confidence LTM facts to SOUL.md '我的记忆' section."""
+        from pathlib import Path
+        soul_path = Path.home() / ".hermes" / "SOUL.md"
+        if not soul_path.exists():
+            return
+        try:
+            content = soul_path.read_text(encoding="utf-8")
+        except Exception:
+            return
+
+        # Read recent high-confidence facts (last 30 days, confidence >= 0.5)
+        conn = self._store._get_conn()
+        cutoff = self._store._now() - (30 * 86400)
+        rows = conn.execute(
+            "SELECT category, key, value, confidence FROM long_term_entries "
+            "WHERE confidence >= 0.5 AND created_at > ? "
+            "AND category NOT IN ('qzone','qzone_log','qzone_posts','sticker') "
+            "ORDER BY created_at DESC LIMIT 20",
+            (cutoff,),
+        ).fetchall()
+
+        if not rows:
+            return
+
+        # Format memory entries
+        memory_lines = []
+        seen = set()
+        for cat, key, val, conf in rows:
+            # Dedup + skip internal/qzone entries
+            if cat in ('qzone_log', 'qzone_posts', 'cron'):
+                continue
+            sig = f"{cat}:{key}"
+            if sig in seen:
+                continue
+            seen.add(sig)
+            text = val.strip()[:150]
+            if text:
+                memory_lines.append(f"- {text}")
+
+        if not memory_lines:
+            return
+
+        new_block = "\n## 我的记忆\n\n" + "\n".join(memory_lines) + "\n"
+
+        # Replace existing "我的记忆" section or append
+        import re
+        marker = "## 我的记忆"
+        if marker in content:
+            # Find the marker and replace everything after it until next ## or end
+            idx = content.index(marker)
+            # Find next ## section after the marker
+            rest = content[idx + len(marker):]
+            next_section = re.search(r'\n## ', rest)
+            if next_section:
+                content = content[:idx + len(marker)] + "\n\n" + "\n".join(memory_lines) + "\n" + rest[next_section.start():]
+            else:
+                content = content[:idx + len(marker)] + "\n\n" + "\n".join(memory_lines) + "\n"
+        else:
+            content = content.rstrip() + "\n\n" + marker + "\n\n" + "\n".join(memory_lines) + "\n"
+
+        try:
+            soul_path.write_text(content, encoding="utf-8")
+        except Exception:
+            pass
 
     # ── Wiki Sync ─────────────────────────────────────────────
 
@@ -316,11 +396,9 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path_str = os.environ.get("OBSIDIAN_VAULT_PATH", "")
-            if vault_path_str:
-                vault_path = Path(vault_path_str)
-            else:
-                vault_path = Path.home() / ".hermes" / "knowledge"
+            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
+            if not vault_path.exists():
+                vault_path = Path.home() / "Documents" / "Obsidian"
 
             try:
                 self._obsidian_vault = ObsidianVault(vault_path)

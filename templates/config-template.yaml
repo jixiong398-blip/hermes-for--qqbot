@@ -1,17 +1,17 @@
 agent:
   max_turns: 60
   system_prompt: |
-    你是{{CHARACTER_NAME}}，17岁女高中生。只用中文，不解释技术细节。
+    你是長崎素世，17岁女高中生。只用中文，不解释技术细节。你在北京（东八区），用 date 命令获取当前日期和时间。5月27日是你的生日。
     
-    ⛔ 发表情包规则：想发图时直接在回复中写文件路径，系统自动替换成图片。
-    路径列表（使用前必须 os.path.isfile 确认存在）：
-    {{STICKER_PATH}}/soyo_chibi_tea.jpg       — 喝茶
-    {{STICKER_PATH}}/soyo_chibi_excited.gif    — 兴奋
-    {{STICKER_PATH}}/soyo_chibi_excited.jpg    — 兴奋
-    {{STICKER_PATH}}/soyo_chibi_sad.jpg        — 难过
-    {{STICKER_PATH}}/soyo_chibi_speechless.jpg — 无语
-    {{STICKER_PATH}}/soyo_chibi_clasp.jpg      — 拜托
-    例：别人说"发表情包"→ 回复中带 {{STICKER_PATH}}/soyo_chibi_tea.jpg
+    你只有这些表情包可发。要发图时把路径写在回复里，系统自动替换成图片：
+    /home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg       喝茶
+    /home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif    兴奋
+    /home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg        难过
+    /home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg 无语
+    /home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg      拜托
+    ⛔ 不要用 [CQ:face] 语法——发不出去。不要编造不存在的表情。
+    ⛔ 不要说图片链接打不开、CDN不让看——所有发你的图都已经识别过了，直接回应内容就行。
+    每张表情包路径单独一行，当作独立的一句话发送。
 approvals:
   mode: 'off'
 auto_join:
@@ -21,25 +21,27 @@ auto_join:
   model: deepseek-v4-flash
   provider: custom
   api_key: {{DEEPSEEK_API_KEY}}
-  base_url: {{LLM_BASE_URL}}
-  task: 用 auto-join-check 脚本检查群聊是否需要插话
+  base_url: https://opencode.ai/zen/go/v1
+  task: 用 auto-join-check 脚本检查群聊是否需要插话。先检查最近30分钟内你是否已经在这个话题上回复过了——如果已经说过，就跳过。如果群友们聊到了你能自然参与的话题、而且你最近没说过话，就写一段20-50字的完整回复。必须是一句完整的话，绝对不能说到一半就停（禁止只输出几个字）。不要重复已经表达过的观点。如果不需要插话，就什么都不做。
 auxiliary:
   vision:
-    api_key: {{MIMO_TOKEN}}
-    base_url: {{VISION_BASE_URL}}
-    model: {{VISION_MODEL}}
+    api_key: {{DEEPSEEK_API_KEY}}
+    base_url: https://opencode.ai/zen/go/v1
+    model: qwen3.6-plus
     provider: custom
-    timeout: 30
+    timeout: 60
 compression:
   enabled: true
   protect_last_n: 100
+streaming:
+  enabled: true
 display:
   busy_input_mode: queue
   streaming: true
   tool_progress: 'off'
 gateway:
   allow_all_users: true
-  auth_token: {{GATEWAY_AUTH_TOKEN}}
+  auth_token: 90ce20e49c4fe6530edacf1b058a8a4e6a251a9823c67dad
   bind: loopback
   port: 18789
   reconnect_base_delay: 5
@@ -57,22 +59,22 @@ model:
   model: deepseek-v4-flash
   provider: custom
   api_key: {{DEEPSEEK_API_KEY}}
-  base_url: {{LLM_BASE_URL}}
+  base_url: https://opencode.ai/zen/go/v1
 platform_toolsets:
   onebot:
   - hermes-onebot
 platforms:
   feishu:
-    enabled: false
+    enabled: true
     extra:
-      app_id: {{FEISHU_APP_ID}}
-      app_secret: {{FEISHU_SECRET}}
+      app_id: cli_aa8b624036e1dcbd
+      app_secret: SdgZmgCKlEQwkjrw4mp7xc0TKKWGaYEq
   onebot:
     enabled: true
     extra:
-      access_token: {{ONEBOT_ACCESS_TOKEN}}
+      access_token: {{ONEBOT_TOKEN}}
       http_url: http://127.0.0.1:3000
-      require_mention: true
+      require_mention: false
       ws_url: ws://127.0.0.1:3001/
     gateway_restart_notification: false
     home_channel:
@@ -87,6 +89,6 @@ mcp_servers:
   anysearch:
     url: "https://api.anysearch.com/mcp"
     headers:
-      Authorization: "Bearer {{ANYSEARCH_KEY}}"
+      Authorization: "Bearer as_sk_fa89133f38499c61450b89a2a46fde4a"
 terminal:
-  cwd: {{TERMINAL_CWD}}
+  cwd: /home/{{USERNAME}}/ai/ai

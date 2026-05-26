@@ -433,10 +433,12 @@ class MemoryStore:
                 pass
         return list(dict.fromkeys(all_topics))  # unique, preserve order
 
-    def prune_short_term(self, max_age_days: float = 7.0):
+    def prune_short_term(self, max_age_days: float = 0.04):
         conn = self._get_conn()
         cutoff = self._now() - (max_age_days * 86400)
         conn.execute("DELETE FROM short_term_entries WHERE created_at < ?", (cutoff,))
+        # Keep at most 200 most recent entries
+        conn.execute("DELETE FROM short_term_entries WHERE id NOT IN (SELECT id FROM short_term_entries ORDER BY created_at DESC LIMIT 200)")
         conn.commit()
 
     # ── Long-Term Memory ───────────────────────────────────────
