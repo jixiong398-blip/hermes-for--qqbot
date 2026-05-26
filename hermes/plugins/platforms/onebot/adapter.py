@@ -1168,7 +1168,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 raw_lines = []
                 for m in recent:
                     if m['ts'] >= cutoff_5m:
-                        ts = time.strftime('%H:%M', time.localtime(m['ts']))
+                        ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
                         raw_lines.append(f"[{ts}] {m['name']}: {m['text']}")
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines[-30:])
@@ -1206,7 +1206,7 @@ class OneBotAdapter(BasePlatformAdapter):
             # Inject group chat context: identify WHO sent the message and WHAT they said
             trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开头"
             msg_time = msg.get("time", 0)
-            time_str = time.strftime('%H:%M', time.localtime(msg_time)) if msg_time else ""
+            time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
             channel_prompt = (
                 f"[群聊模式] {time_str} 来自「{sender_name}」：{_preview_text[:100]}。"
                 + (f"\n\n{group_context}" if group_context else "")
@@ -1374,7 +1374,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Add timestamp for DM (group has it in channel_prompt)
         msg_time = msg.get("time", 0)
         if msg_time and text:
-            time_str = time.strftime('%H:%M', time.localtime(msg_time))
+            time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time))
             text = f"[{time_str}] {text}"
         logger.info("[OneBot] Extracted text: %s", text[:200] if text else "(empty)")
 
@@ -1864,5 +1864,5 @@ def register(ctx):
         allowed_users_env="ONEBOT_ALLOWED_USERS",
         allow_all_env="ONEBOT_ALLOW_ALL_USERS",
         emoji="🐧",
-        pii_safe=False,
+        pii_risk="low"
     )
