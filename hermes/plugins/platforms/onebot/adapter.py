@@ -1534,11 +1534,9 @@ class OneBotAdapter(BasePlatformAdapter):
         # Build text message event
         _all_media_urls = list(reply_media_urls) if reply_media_urls else []
         _all_media_types = list(reply_media_types) if reply_media_types else []
-        if context_image_paths:
-            for _p in context_image_paths:
-                if _p not in _all_media_urls:
-                    _all_media_urls.append(_p)
-                    _all_media_types.append("image/jpeg")
+        # NOTE: context_image_paths intentionally NOT added to media_urls —
+        # they belong to OTHER senders and are already attributed in channel_prompt.
+        # Adding them here would make vision analysis confuse who sent which image.
         # Include images from forwarded messages for vision analysis
         if forward_id and forward_image_paths:
             for _p in forward_image_paths:
