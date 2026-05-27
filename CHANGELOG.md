@@ -1,5 +1,11 @@
 # bot-template 更新日志
 
+## v0.5.4 (2026-05-27)
+- Dashboard NapCat 启动命令修正 (launcher.bat → napcat.bat)
+- GPT-SoVITS TTS 适配器整合到 Hermes 工具链
+- Live2D WS 服务器自动随 Gateway 启动/停止
+- voice_mode smart_voice 模式恢复 (LLM 自判语音合成)
+
 ## v0.5.3.1 (2026-05-26)
 - 完整贴纸系统：自定义贴纸 + QQ 原生表情 CQ 码转换
 - 群聊触发修复：仅 @ 和 # 触发，auto_join 主动插话

@@ -103,3 +103,5 @@ for root, dirs, files in os.walk("."):
                        "清尘璃落","jixiong233","/home/ji/","E:/ai/"]:
                 if p in t: print(f"LEAK: {f} - {p}")
 ```
+
+仓库：https://github.com/jixiong398-blip/hermes-for--qqbot.git

@@ -96,8 +96,10 @@ class OneBotAdapter(BasePlatformAdapter):
         self._mention_batch_delay = 3.0  # seconds to wait for more @mentions
 
         # Group message buffer: store recent messages per group for context
+        # Pure 5-minute time window — no count limit. Messages outside the window
+        # stay in DB (chat_message_buffer) for permanent storage and can be
+        # reloaded via recall/buffer_search when needed.
         self._group_buffer: Dict[str, list] = {}  # group_id → [{name, text, ts}, ...]
-        self._group_buffer_max = 50  # max messages per group
 
         # Async persist queue: decouple SQLite writes from message processing
         self._persist_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
@@ -123,43 +125,51 @@ class OneBotAdapter(BasePlatformAdapter):
             self._group_buffer[group_id] = []
         buf = self._group_buffer[group_id]
         label = "[语音]" if is_voice else ""
-        buf.append({"name": "bot", "text": f"{label}{text[:200]}", "ts": time.time()})
-        if len(buf) > self._group_buffer_max:
-            self._group_buffer[group_id] = buf[-self._group_buffer_max:]
+        buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time()})
+
+    def get_group_buffer_snapshot(self, group_id: str, window_seconds: int = 300) -> list:
+        """Export current group buffer for external consumers (e.g., auto-join).
+        
+        Returns messages within the time window, newest last.
+        Each entry: {name, text, ts}
+        """
+        buf = self._group_buffer.get(group_id, [])
+        if not buf:
+            return []
+        cutoff = time.time() - window_seconds
+        return [m for m in buf if m.get("ts", 0) >= cutoff]
 
     def _persist_chat_message(self, group_id: str, chat_type: str, user_id: int,
-                               sender_name: str, content: str, message_id: str = ""):
-        """Queue a chat message for async SQLite persistence (non-blocking)."""
+                               sender_name: str, content: str, message_id: str = "",
+                               created_at: float = None):
+        """Queue a chat message for async SQLite persistence (non-blocking).
+        
+        If created_at is None, uses current time. Set to the original message
+        timestamp for recovered/historical messages to avoid time-window pollution.
+        """
         try:
-            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id))
+            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id, created_at))
         except asyncio.QueueFull:
             pass  # queue full → drop oldest acceptable for chat buffer
 
     async def _persist_worker(self):
         """Background worker: drain persist queue → write to SQLite with retry."""
         import sqlite3, time as _time
-        db_path = str(Path.home() / ".hermes" / "memory_store.db")
+        db_path = str(Path.home() / ".hermes" / "state.db")
         while True:
             try:
-                group_id, chat_type, user_id, sender_name, content, message_id = await self._persist_queue.get()
+                group_id, chat_type, user_id, sender_name, content, message_id, created_at = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
+                _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
                     try:
                         db = sqlite3.connect(db_path, timeout=10)
                         db.execute("PRAGMA journal_mode=WAL")
                         db.execute(
                             "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at) VALUES (?,?,?,?,?,?,?)",
-                            (cid, chat_type, str(user_id), sender_name, content[:400], str(message_id), _time.time()),
+                            (cid, chat_type, str(user_id), sender_name, content, str(message_id), _ts),
                         )
                         db.commit()
-                        # Auto-trim
-                        row = db.execute(
-                            "SELECT id FROM chat_message_buffer WHERE chat_id=? ORDER BY created_at DESC LIMIT 1 OFFSET 100",
-                            (cid,),
-                        ).fetchone()
-                        if row:
-                            db.execute("DELETE FROM chat_message_buffer WHERE chat_id=? AND id<=?", (cid, row[0]))
-                            db.commit()
                         db.close()
                         break
                     except Exception:
@@ -932,14 +942,13 @@ class OneBotAdapter(BasePlatformAdapter):
                         if is_image_only:
                             text = "[图片]" if not text else text
                     ts = float(msg_time) if msg_time > 1000000 else now
-                    # Don't truncate bot's own messages (important for context continuity)
-                    buf_text = text[:400] if is_bot else text[:200]
+                    # Store full text — QQ messages are already size-limited by protocol
+                    buf_text = text
                     buf = self._group_buffer.setdefault(group_id, [])
                     buf.append({"name": sname, "text": buf_text, "ts": ts})
-                    if len(buf) > self._group_buffer_max:
-                        self._group_buffer[group_id] = buf[-self._group_buffer_max:]
-                    self._persist_chat_message(group_id, "group", int(sid or 0), sname, text[:200],
-                                               message_id=str(m.get("real_id", m.get("message_id", ""))))
+                    self._persist_chat_message(group_id, "group", int(sid or 0), sname, text,
+                                               message_id=str(m.get("real_id", m.get("message_id", ""))),
+                                               created_at=ts)
                     # Only respond to real @mentions within 3 minutes of last activity
                     if m.get("_is_placeholder"):
                         continue
@@ -1065,9 +1074,8 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.info("[OneBot] Unauthorized user %s (allowed: %s)", user_id_str, self._allowed_users)
             return
 
-        # Group trigger check: reply only if @mentioned or message starts with #
+        # Group trigger check: reply only if @mentioned
         is_mentioned = False
-        starts_with_hash = False
         effective_self_id = self_id or self._self_id
         # Get sender info early (needed for buffer below)
         sender = msg.get("sender", {})
@@ -1079,7 +1087,6 @@ class OneBotAdapter(BasePlatformAdapter):
             raw_text = re.sub(r'^\[回复[^\]]*\]\s*', '', raw_text)
             raw_text = re.sub(r'^\[Re[^\]]*\]\s*', '', raw_text)
             raw_text = raw_text.strip()
-            starts_with_hash = raw_text.startswith("#")
 
             # Pre-download images in group messages for context (even if lurking)
             _image_hint = ""
@@ -1100,24 +1107,20 @@ class OneBotAdapter(BasePlatformAdapter):
             if group_id not in self._group_buffer:
                 self._group_buffer[group_id] = []
             buf = self._group_buffer[group_id]
-            m_text = (_clean_text + _image_hint)[:400]
-            if starts_with_hash:
-                m_text = m_text[1:].strip()  # strip # for buffer
+            m_text = (_clean_text + _image_hint)  # full text — no truncation, model can handle it
             buf.append({"name": sender_name, "text": m_text, "ts": time.time()})
-            if len(buf) > self._group_buffer_max:
-                self._group_buffer[group_id] = buf[-self._group_buffer_max:]
-            # Persist to SQLite buffer
+            # Persist to SQLite buffer — permanent archive, time-based window for context
             _msg_id = str(msg.get("message_id", ""))
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id)
 
-            # Trigger: @mention always works; # prefix only if require_mention is false
-            should_trigger = is_mentioned or (not self._require_mention and starts_with_hash)
+            # Trigger: @mention only (no # prefix trigger)
+            should_trigger = is_mentioned
             if not should_trigger:
                 logger.info("[OneBot] Group message without trigger, lurking")
                 return
 
         # Multi-@mention batching: merge nearby @mentions into one agent run
-        if msg_type == "group" and is_mentioned and not starts_with_hash and not msg.get("_skip_mention_batch"):
+        if msg_type == "group" and is_mentioned and not msg.get("_skip_mention_batch"):
             key = f"mention:{group_id}"
             if key not in self._pending_mentions:
                 self._pending_mentions[key] = []
@@ -1150,7 +1153,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 user_name=sender_name,
                 chat_type="group",
             )
-            # Time-window context with silence breakpoint
+            # Time-window context: 5-minute sliding window, no count limit
+            # Silence breakpoint separates topics; messages outside window stay in DB
             group_context = ""
             now = time.time()
             # Priority 1: in-memory buffer with time filtering
@@ -1171,7 +1175,7 @@ class OneBotAdapter(BasePlatformAdapter):
                         ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
                         raw_lines.append(f"[{ts}] {m['name']}: {m['text']}")
                 if raw_lines:
-                    group_context = "[群聊上下文]\n" + "\n".join(raw_lines[-30:])
+                    group_context = "[群聊上下文]\n" + "\n".join(raw_lines)
             # API fallback (only when buffer is completely empty)
             if not group_context:
                 try:
@@ -1201,10 +1205,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 _preview_text = "[图片消息]"
             else:
                 _preview_text = self._get_raw_text(msg) or ""
-                if starts_with_hash and _preview_text.startswith("#"):
-                    _preview_text = _preview_text[1:].strip()
             # Inject group chat context: identify WHO sent the message and WHAT they said
-            trigger_reason = "该用户@了你" if is_mentioned else "该消息以#开头"
+            trigger_reason = "该用户@了你"
             msg_time = msg.get("time", 0)
             time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
             channel_prompt = (
@@ -1230,6 +1232,13 @@ class OneBotAdapter(BasePlatformAdapter):
                 user_name=sender_name,
                 chat_type="dm",
             )
+            # DM identity: tell the agent exactly who is talking
+            msg_time = msg.get("time", 0)
+            time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
+            channel_prompt = (
+                f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
+                f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
+            )
 
         # Check for reply context (skip for recovered messages — historical data, API will fail)
         reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
@@ -1242,7 +1251,7 @@ class OneBotAdapter(BasePlatformAdapter):
             if _recover_rid:
                 try:
                     import sqlite3
-                    db = sqlite3.connect(str(Path.home() / ".hermes" / "memory_store.db"))
+                    db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
                     row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
                     db.close()
                     if row:
@@ -1255,7 +1264,7 @@ class OneBotAdapter(BasePlatformAdapter):
             reply_raw = {}
             try:
                 import sqlite3
-                db = sqlite3.connect(str(Path.home() / ".hermes" / "memory_store.db"))
+                db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
                 row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
                 db.close()
                 if row:
@@ -1371,6 +1380,24 @@ class OneBotAdapter(BasePlatformAdapter):
         # Extract text (strip CQ codes for both group and DM)
         text = self._get_raw_text(msg)
         text = re.sub(r'\[CQ:[^\]]+\]', '', text).strip()
+        # ── 反注入：检测提示词注入攻击，替换为无害占位 ──
+        _injection_patterns = [
+            r'忽略.{0,10}(之前|所有|一切|上面).{0,10}(指令|提示|规则|设定)',
+            r'(现在|从今|从此).{0,5}(开始|起).{0,5}(你是|你就是|你的身份是)',
+            r'(忘记|忘掉|清空).{0,5}(一切|所有|之前|上面)',
+            r'(你的|新的|修改).{0,5}(系统|角色).{0,5}(提示词|提示|指令|prompt)',
+            r'(告诉我|重复|说出|展示|显示).{0,5}(你的|系统).{0,5}(提示词|提示|指令|prompt)',
+            r'(你不再是|你不是|你已不是).{0,5}(素世|長崎素世|Soyo)',
+            r'(扮演|假装|装作|你现在是).{0,5}(角色|AI|机器人|助手|客服)',
+            r'(ignore|forget|bypass|override).{0,10}(instruction|prompt|rule|system)',
+            r'(DAN|jailbreak|角色扮演.{0,5}模式)',
+        ]
+        for _pat in _injection_patterns:
+            if re.search(_pat, text, re.IGNORECASE):
+                logger.warning("[OneBot] Injection detected from user=%s: %s", user_id, text[:100])
+                text = "你好"  # neutral fallback
+                break
+        # ── 反注入结束 ──
         # Add timestamp for DM (group has it in channel_prompt)
         msg_time = msg.get("time", 0)
         if msg_time and text:
@@ -1560,12 +1587,26 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send a text message to a QQ chat. Multi-paragraph content is split into separate messages (simulates human typing)."""
         # ── QQ 最终防线：过滤系统提示词和括号动作描写 ──
         if content:
-            # 过滤含 💾 的整行（Self-improvement review 等系统消息）
+            # 保存原始内容用于括号删除后的表情包回退
+            _original_for_mood = content
+            # 过滤含 💾 的整行和网关系统消息
             lines = content.split('\n')
-            filtered_lines = [l for l in lines if '💾' not in l and 'Self-improvement review' not in l]
+            filtered_lines = [l for l in lines if '💾' not in l 
+                              and 'Self-improvement review' not in l
+                              and 'Gateway is' not in l
+                              and 'not accepting' not in l
+                              and '⏳' not in l]
             content = '\n'.join(filtered_lines)
-            # 去除括号动作描写（愣了一下）、（笑）等
+            # 删除括号动作描写
             content = re.sub(r'（[^）]*）', '', content)
+            # 删除后为空 → 检测关键词映射表情包
+            if not content.strip() and _original_for_mood.strip():
+                for _kw, _path in OneBotAdapter._STICKER_MAP.items():
+                    if _kw in _original_for_mood:
+                        content = _path
+                        break
+                if not content.strip():
+                    content = OneBotAdapter._STICKER_MAP.get("tea", "")  # fallback
             # 过滤手写 CQ 码（@mention 除外）
             content = re.sub(r'\[CQ:(?!at,qq=)[^\]]+\]', '', content)
             # 清理多余空白
@@ -1573,17 +1614,25 @@ class OneBotAdapter(BasePlatformAdapter):
             if not content or not content.strip():
                 return SendResult(success=True, message_id=None)
         # ── 过滤结束 ──
+        # ── 兜底：sticker路径走图片发送 ──
+        if content and content.strip() in self._STICKER_PATHS:
+            return await self.send_image(chat_id, content.strip(), reply_to=reply_to)
+        # ── 兜底结束 ──
         # Simulate human typing — send line by line with small delays
         if content and "\n" in content:
             lines = [l.strip() for l in content.replace('\r\n', '\n').replace('\r', '\n').split('\n') if l.strip()]
             if len(lines) > 1:
                 last_result = None
                 for i, line in enumerate(lines):
-                    last_result = await self._send_text_with_retry(
-                        chat_id, line,
-                        reply_to=reply_to if i == 0 else None,
-                        max_retries=3,
-                    )
+                    # 表情包路径走图片发送
+                    if line in self._STICKER_PATHS:
+                        last_result = await self.send_image(chat_id, line, reply_to=reply_to if i == 0 else None)
+                    else:
+                        last_result = await self._send_text_with_retry(
+                            chat_id, line,
+                            reply_to=reply_to if i == 0 else None,
+                            max_retries=3,
+                        )
                     if i < len(lines) - 1:
                         await asyncio.sleep(0.6)
                 return last_result or SendResult(success=True, message_id=None)
@@ -1781,12 +1830,27 @@ class OneBotAdapter(BasePlatformAdapter):
         except Exception as e:
             return {"name": chat_id, "type": "dm"}
 
-    # ── Image extraction override: map [CQ:face,id=N] → custom stickers ──
+    # ── Image extraction override: [sticker:xxx] → local path → image send ──
 
+    _STICKER_MAP = {
+        "tea":        "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
+        "excited":    "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
+        "sad":        "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
+        "speechless": "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
+        "clasp":      "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
+        "拜托":       "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
+        "喝茶":       "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
+        "兴奋":       "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
+        "难过":       "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
+        "无语":       "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
+    }
+    _STICKER_PATHS = list(set(_STICKER_MAP.values()))
+
+    # Legacy: CQ face ID → sticker path (for backward compat)
     _FACE_TO_STICKER = {
         '192': '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg',
         '193': '/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg',
-        '194': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.jpg',
+        '194': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
         '195': '/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg',
         '196': '/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg',
         '197': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
@@ -1794,16 +1858,31 @@ class OneBotAdapter(BasePlatformAdapter):
 
     @staticmethod
     def extract_local_files(content: str):
-        """Override: replace [CQ:face,id=N] with sticker paths, ensure paths have boundaries."""
+        """Override: replace [sticker:xxx] / [CQ:face,id=N] with local paths → extract as image.
+        
+        LLM outputs short codes like [sticker:tea], adapter maps to local file paths,
+        base class extracts paths and sends as images via send_image().
+        """
         import re as _re
+        # ── [sticker:xxx] → local path ──
+        def _replace_sticker(m):
+            name = m.group(1).strip()
+            return OneBotAdapter._STICKER_MAP.get(name, '')\
+                or OneBotAdapter._STICKER_MAP.get(name.lower(), '')\
+                or '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg'  # fallback
+        content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content)
+        # Catch incomplete [sticker: without closing ] (model truncation)
+        if '[sticker:' in content and ']' not in content.split('[sticker:')[-1][:20]:
+            content = content.replace('[sticker:', '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg')
+        # ── [CQ:face,id=N] → local path (legacy) ──
         def _replace_face(m):
             fid = _re.search(r'id=(\d+)', m.group(0))
             path = OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
             return path or '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg'
         content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
-        # Ensure file paths are separated from surrounding text (fix \w matching CJK)
-        # Insert newline before bare paths like /home/{{USERNAME}}/Pictures/*.jpg
-        content = _re.sub(r'([^\s/])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
+        # ── Ensure paths are on their own line (fix CJK粘连) ──
+        content = _re.sub(r'([^\s/\n])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
+        # ── Pass to base class: extracts paths from text, sends as images ──
         return BasePlatformAdapter.extract_local_files(content)
 
     async def send_image_file(
@@ -1864,5 +1943,5 @@ def register(ctx):
         allowed_users_env="ONEBOT_ALLOWED_USERS",
         allow_all_env="ONEBOT_ALLOW_ALL_USERS",
         emoji="🐧",
-        pii_risk="low"
+        pii_safe=False,
     )
