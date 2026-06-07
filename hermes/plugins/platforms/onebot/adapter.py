@@ -117,7 +117,8 @@ class OneBotAdapter(BasePlatformAdapter):
         self._ws_reconnect_interval: int = int(os.getenv("ONEBOT_RECONNECT_INTERVAL", "10"))
 
     def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False):
-        """Add the bot's own reply to the group buffer so the LLM can see it in context."""
+        """Add the bot's own reply to the group buffer so the LLM can see it in context.
+        Also persists to DB with is_bot=1 so auto-join can detect recent activity."""
         if not chat_id.startswith("group:"):
             return
         group_id = chat_id.split(":", 1)[1]
@@ -125,7 +126,9 @@ class OneBotAdapter(BasePlatformAdapter):
             self._group_buffer[group_id] = []
         buf = self._group_buffer[group_id]
         label = "[语音]" if is_voice else ""
-        buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time()})
+        buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0"})
+        # Persist bot messages to DB for auto-join / context retrieval
+        self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
 
     def get_group_buffer_snapshot(self, group_id: str, window_seconds: int = 300) -> list:
         """Export current group buffer for external consumers (e.g., auto-join).
@@ -141,14 +144,15 @@ class OneBotAdapter(BasePlatformAdapter):
 
     def _persist_chat_message(self, group_id: str, chat_type: str, user_id: int,
                                sender_name: str, content: str, message_id: str = "",
-                               created_at: float = None):
+                               created_at: float = None, is_bot: int = 0):
         """Queue a chat message for async SQLite persistence (non-blocking).
         
         If created_at is None, uses current time. Set to the original message
         timestamp for recovered/historical messages to avoid time-window pollution.
+        is_bot: 1 if this is the bot's own message (for auto-join dedup).
         """
         try:
-            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id, created_at))
+            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot))
         except asyncio.QueueFull:
             pass  # queue full → drop oldest acceptable for chat buffer
 
@@ -158,16 +162,17 @@ class OneBotAdapter(BasePlatformAdapter):
         db_path = str(Path.home() / ".hermes" / "state.db")
         while True:
             try:
-                group_id, chat_type, user_id, sender_name, content, message_id, created_at = await self._persist_queue.get()
+                group_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
                 _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
                     try:
                         db = sqlite3.connect(db_path, timeout=10)
-                        db.execute("PRAGMA journal_mode=WAL")
+                        # DELETE mode: no WAL race condition. Single-writer, infrequent reads.
+                        db.execute("PRAGMA journal_mode=DELETE")
                         db.execute(
-                            "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at) VALUES (?,?,?,?,?,?,?)",
-                            (cid, chat_type, str(user_id), sender_name, content, str(message_id), _ts),
+                            "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot) VALUES (?,?,?,?,?,?,?,?)",
+                            (cid, chat_type, str(user_id), sender_name, content, str(message_id), _ts, is_bot),
                         )
                         db.commit()
                         db.close()
@@ -945,7 +950,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     # Store full text — QQ messages are already size-limited by protocol
                     buf_text = text
                     buf = self._group_buffer.setdefault(group_id, [])
-                    buf.append({"name": sname, "text": buf_text, "ts": ts})
+                    buf.append({"name": sname, "text": buf_text, "ts": ts, "uid": str(sid)})
                     self._persist_chat_message(group_id, "group", int(sid or 0), sname, text,
                                                message_id=str(m.get("real_id", m.get("message_id", ""))),
                                                created_at=ts)
@@ -1108,7 +1113,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 self._group_buffer[group_id] = []
             buf = self._group_buffer[group_id]
             m_text = (_clean_text + _image_hint)  # full text — no truncation, model can handle it
-            buf.append({"name": sender_name, "text": m_text, "ts": time.time()})
+            buf.append({"name": sender_name, "text": m_text, "ts": time.time(), "uid": str(user_id)})
             # Persist to SQLite buffer — permanent archive, time-based window for context
             _msg_id = str(msg.get("message_id", ""))
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id)
@@ -1173,7 +1178,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 for m in recent:
                     if m['ts'] >= cutoff_5m:
                         ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
-                        raw_lines.append(f"[{ts}] {m['name']}: {m['text']}")
+                        raw_lines.append(f"[{ts}] {m['name']}({m.get('uid','')})" + (f": {m['text']}" if m.get('text') else ""))
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines)
             # API fallback (only when buffer is completely empty)
@@ -1331,7 +1336,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 if group_id not in self._group_buffer:
                     self._group_buffer[group_id] = []
                 self._group_buffer[group_id].append({
-                    "name": sender_name, "text": "[语音]", "ts": time.time()
+                    "name": sender_name, "text": "[语音]", "ts": time.time(), "uid": str(user_id)
                 })
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
                                            "[语音]", message_id=str(msg.get("message_id", "")))
@@ -1640,6 +1645,23 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send text with automatic retry on failure."""
         logger.info("[OneBot] _send_text_with_retry: chat_id=%s, len=%d, reply_to=%s", 
                      chat_id, len(content) if content else 0, reply_to)
+        
+        # ── 引用回复时自动补上 @被回复人 ──
+        if reply_to and chat_id.startswith("group:") and content:
+            if not re.match(r'\[CQ:at,qq=\d+\]', content.strip()):
+                try:
+                    import sqlite3
+                    db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
+                    row = db.execute(
+                        "SELECT user_id, sender_name FROM chat_message_buffer WHERE message_id=? LIMIT 1",
+                        (str(reply_to),)
+                    ).fetchone()
+                    db.close()
+                    if row and row[0] and int(row[0]) > 10000:  # valid QQ number
+                        content = f"[CQ:at,qq={row[0]}] {content}"
+                except Exception:
+                    pass
+        # ── @补全结束 ──
         if not self._ws:
             logger.error("[OneBot] send() failed: WebSocket not connected")
             return SendResult(success=False, error="Not connected", retryable=True)
@@ -1668,10 +1690,20 @@ class OneBotAdapter(BasePlatformAdapter):
         # Add reply quoting: construct message array with reply segment
         # NapCat requires reply as a message SEGMENT, not a top-level param
         if reply_to:
-            params["message"] = [
-                {"type": "reply", "data": {"id": str(reply_to)}},
-                {"type": "text", "data": {"text": content}}
-            ]
+            _segments = [{"type": "reply", "data": {"id": str(reply_to)}}]
+            # Extract [CQ:at,qq=XXX] into proper at segments for NapCat
+            _at_pat = re.compile(r'\[CQ:at,qq=(\d+)\]\s*')
+            _last = 0
+            for _m in _at_pat.finditer(content):
+                if _m.start() > _last:
+                    _segments.append({"type": "text", "data": {"text": content[_last:_m.start()]}})
+                _segments.append({"type": "at", "data": {"qq": _m.group(1)}})
+                _last = _m.end()
+            if _last < len(content):
+                _segments.append({"type": "text", "data": {"text": content[_last:]}})
+            if len(_segments) == 1:  # no @ found, just reply + text
+                _segments.append({"type": "text", "data": {"text": content}})
+            params["message"] = _segments
 
         last_error = None
         for attempt in range(max_retries):

@@ -297,10 +297,154 @@ class UnifiedMemoryGateway:
         # Full VACUUM with freelist threshold is only run when needed
         self._store.quick_maintenance()
 
+        # ── LLM-based memory distillation from chat history ──
+        self._distill_from_chat_buffer()
+
         # ── Auto-update SOUL.md with recent memories ──
         self._sync_soul_md()
 
         return stats
+
+    # ── LLM Chat Buffer Distillation ─────────────────────────
+
+    def _distill_from_chat_buffer(self) -> None:
+        """Extract facts from recent group chat messages using LLM and store in LTM.
+        
+        Reads chat_message_buffer from state.db, formats recent messages as
+        context, sends to LLM for structured fact extraction, and stores
+        results as long_term_entries.
+        """
+        import json as _json, sqlite3 as _sqlite3, time as _time, os as _os
+        from pathlib import Path as _Path
+        
+        db_path = _Path.home() / ".hermes" / "state.db"
+        if not db_path.exists():
+            return
+        
+        try:
+            # Read recent messages (last 6 hours, up to 200 messages)
+            db = _sqlite3.connect(str(db_path))
+            cutoff = _time.time() - 21600  # 6 hours
+            rows = db.execute(
+                "SELECT chat_id, sender_name, content FROM chat_message_buffer "
+                "WHERE created_at > ? AND is_bot != 1 "
+                "AND content NOT LIKE '[图片]%' "
+                "ORDER BY id DESC LIMIT 200",
+                (cutoff,),
+            ).fetchall()
+            db.close()
+            
+            if len(rows) < 10:
+                return  # not enough data
+            
+            # Group by chat_id and format
+            groups: dict = {}
+            for gid, name, text in rows:
+                groups.setdefault(gid, []).append(f"{name}: {text[:200]}")
+            
+            # Build prompt for each group (max 2 groups)
+            new_facts = 0
+            for gid, msgs in list(groups.items())[:2]:
+                if len(msgs) < 5:
+                    continue
+                chat_text = "\n".join(reversed(msgs[-30:]))
+                facts = self._call_distill_llm(chat_text)
+                if facts:
+                    for cat, key, val, conf in facts:
+                        try:
+                            self.add_long_term(cat, key, val, confidence=conf)
+                            new_facts += 1
+                        except Exception:
+                            pass
+            
+            if new_facts:
+                logger.info("Distillation: %d new facts from %d groups", new_facts, min(2, len(groups)))
+                
+        except Exception as e:
+            logger.warning("Distillation failed: %s", e, exc_info=True)
+    
+    def _call_distill_llm(self, chat_text: str) -> list:
+        """Call LLM to extract structured facts from chat transcript.
+        
+        Returns list of (category, key, value, confidence) tuples.
+        """
+        import requests as _r, json as _json, os as _os
+        from pathlib import Path as _P
+        
+        api_key = _os.getenv("HERMES_API_KEY", "")
+        base_url = _os.getenv("HERMES_BASE_URL", "https://opencode.ai/zen/go/v1")
+        
+        # Try to read from config.yaml
+        try:
+            import yaml as _y
+            cfg = _y.safe_load((_P.home() / ".hermes" / "config.yaml").read_text())
+            model_cfg = cfg.get("model", {})
+            api_key = model_cfg.get("api_key", api_key)
+            base_url = model_cfg.get("base_url", base_url)
+        except Exception as e:
+            logger.warning("Distill: cannot read config: %s", e)
+        
+        if not api_key:
+            logger.warning("Distill: no API key found")
+            return []
+        
+        prompt = (
+            "你是一个记忆提取助手。从下面的群聊记录中提取值得记忆的事实。\n\n"
+            "规则：\n"
+            "1. 只提取关于具体用户的偏好、习惯、身份、关系、决策\n"
+            "2. 忽略闲聊、表情、重复内容、无意义对话\n"
+            "3. 每条事实一句话概括，带发言人名字\n"
+            "4. 输出 JSON 数组，每个元素：[类别, 键, 值, 置信度]\n\n"
+            "类别用: user_profile / user_preference / relationship / knowledge / decision\n"
+            "置信度必须是数字 0.0-1.0，不确定的给 0.3-0.5，确定的给 0.6-0.9\n\n"
+            "示例输出:\n"
+            '[\n  ["user_preference", "{{CHANNEL_NAME}}_回复风格", "{{CHANNEL_NAME}}喜欢简短回复不喜欢长篇大论", 0.7],\n'
+            '  ["knowledge", "群聊话题_贝斯", "大家今天讨论了Fender和Gibson贝斯的区别", 0.5]\n'
+            ']\n\n'
+            f"群聊记录:\n{chat_text}\n\n"
+            "只输出 JSON 数组，不要其他文字。"
+        )
+        
+        try:
+            r = _r.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "deepseek-v4-flash",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                },
+                timeout=60,
+            )
+            if r.status_code != 200:
+                logger.warning("Distill LLM returned %d: %s", r.status_code, r.text[:200])
+                return []
+            data = r.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            
+            # Parse JSON
+            if not content:
+                logger.warning("Distill: empty response from LLM")
+                return []
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1].rsplit("\n```", 1)[0]
+            facts = _json.loads(content)
+            logger.info("Distill: extracted %d facts", len(facts))
+            
+            # Normalize confidence: map strings to floats
+            _conf_map = {"high": 0.8, "medium": 0.5, "low": 0.3, "none": 0.1}
+            result = []
+            for f in facts:
+                if len(f) < 4:
+                    continue
+                conf = f[3]
+                if isinstance(conf, str):
+                    conf = _conf_map.get(conf.lower(), 0.4)
+                result.append((str(f[0]), str(f[1]), str(f[2]), float(conf)))
+            return result
+        except Exception as e:
+            logger.warning("Distill LLM call failed: %s", e)
+            return []
 
     def _sync_soul_md(self) -> None:
         """Append recent high-confidence LTM facts to SOUL.md '我的记忆' section."""
