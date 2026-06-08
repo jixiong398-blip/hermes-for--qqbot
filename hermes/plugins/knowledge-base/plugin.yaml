@@ -1,0 +1,6 @@
+name: knowledge-base
+label: Knowledge Base
+kind: standalone
+version: 1.0.0
+description: Nagasaki Soyo knowledge base — search and read 281 markdown notes
+author: Nagasaki
