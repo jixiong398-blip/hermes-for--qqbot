@@ -1,0 +1,34 @@
+name: onebot-platform
+label: OneBot (QQ)
+kind: platform
+version: 1.0.0
+description: >
+  QQ Bot via OneBot v11 protocol (NapCat/Lagrange/go-cqhttp).
+  Connects Hermes to QQ over WebSocket and relays group/DM messages.
+author: Nagasaki
+requires_env:
+  - name: ONEBOT_WS_URL
+    description: "OneBot WebSocket URL (e.g. ws://127.0.0.1:3001/onebot/v11/ws)"
+    prompt: "WebSocket URL"
+    password: false
+  - name: ONEBOT_ACCESS_TOKEN
+    description: "OneBot access token"
+    prompt: "Access token"
+    password: true
+optional_env:
+  - name: ONEBOT_HTTP_URL
+    description: "OneBot HTTP API URL (e.g. http://127.0.0.1:3000)"
+    prompt: "HTTP URL"
+    password: false
+  - name: ONEBOT_HOME_CHANNEL
+    description: "Default chat for cron delivery"
+    prompt: "Home channel"
+    password: false
+  - name: ONEBOT_ALLOWED_USERS
+    description: "Comma-separated QQ IDs allowed to talk to the bot"
+    prompt: "Allowed users"
+    password: false
+  - name: ONEBOT_ALLOW_ALL_USERS
+    description: "Allow all users (dev only)"
+    prompt: "Allow all users? (true/false)"
+    password: false
