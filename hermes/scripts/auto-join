@@ -1,0 +1,195 @@
+#!/home/{{USERNAME}}/.hermes/.venv/bin/python3
+"""auto_join: 读取5分钟群聊缓冲 → 完整SOUL人设判断 → 生成回复(支持表情包) → QQ发送"""
+import requests, sqlite3, time, os, json, re
+
+# ── 硬编码配置 ──
+API_KEY = "{{DEEPSEEK_API_KEY}}"
+CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
+MODEL = "deepseek-v4-flash"
+DB = os.path.expanduser("~/.hermes/state.db")
+ONEBOT = "http://127.0.0.1:3000"
+TOKEN = "{{ONEBOT_TOKEN}}"
+GROUPS = ["{{HOME_CHANNEL}}", "1054161140", "638473184"]
+
+# ── 表情包映射 ──
+STICKER_MAP = {
+    "tea":        "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
+    "excited":    "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
+    "sad":        "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
+    "speechless": "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
+    "clasp":      "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
+}
+STICKER_NAMES = {v: k for k, v in STICKER_MAP.items()}
+
+# ── 加载 SOUL.md 人设 ──
+def load_soul_md():
+    p = os.path.expanduser("~/.hermes/SOUL.md")
+    if os.path.exists(p):
+        with open(p) as f:
+            return f.read()
+    return ""
+
+# ── 加载 config.yaml 系统提示词 ──
+def load_system_prompt():
+    """Extract the system_prompt field from config.yaml"""
+    cfg = os.path.expanduser("~/.hermes/config.yaml")
+    if not os.path.exists(cfg):
+        return ""
+    with open(cfg) as f:
+        text = f.read()
+    m = re.search(r'system_prompt:\s*\|\s*\n((?:\s{4,}.+\n?)+)', text)
+    if m:
+        return "\n".join(line[6:] for line in m.group(1).split("\n"))
+    return ""
+
+
+def call_llm(messages, max_tokens=100, temperature=0.7):
+    r = requests.post(
+        CHAT_URL,
+        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+        json={"model": MODEL, "messages": messages, "max_tokens": max_tokens,
+              "temperature": temperature, "reasoning_effort": "low"},
+        timeout=25,
+    )
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+
+def send_to_qq(group_id: int, text: str):
+    """Send text or image to QQ group. Detects [sticker:xxx] and sends image."""
+    import re
+    # 检测 [sticker:xxx] 格式
+    m = re.search(r'\[sticker:([^\]]+)\]', text)
+    if m:
+        name = m.group(1).strip()
+        img = STICKER_MAP.get(name)
+        if img:
+            r = requests.post(
+                f"{ONEBOT}/send_group_msg",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+                json={"group_id": group_id, "message": f"[CQ:image,file=file://{img}]"},
+                timeout=10,
+            )
+            # 如果有文字，分开发送
+            text_only = re.sub(r'\[sticker:[^\]]+\]', '', text).strip()
+            if text_only:
+                time.sleep(0.3)
+                requests.post(
+                    f"{ONEBOT}/send_group_msg",
+                    headers={"Authorization": f"Bearer {TOKEN}"},
+                    json={"group_id": group_id, "message": text_only},
+                    timeout=10,
+                )
+            return r.json().get("retcode") == 0
+
+    # 纯文本
+    r = requests.post(
+        f"{ONEBOT}/send_group_msg",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"group_id": group_id, "message": text},
+        timeout=10,
+    )
+    return r.json().get("retcode") == 0
+
+
+def build_chat_context(group_id: str, window_minutes: int = 5):
+    """Read recent group messages from chat_message_buffer."""
+    db = sqlite3.connect(DB)
+    cutoff = time.time() - (window_minutes * 60)
+    rows = db.execute(
+        "SELECT sender_name, content FROM chat_message_buffer "
+        "WHERE chat_id=? AND created_at>? "
+        "AND lower(sender_name) NOT LIKE '%bot%' "
+        "AND lower(sender_name) NOT LIKE '%nagasaki%' "
+        "ORDER BY id DESC LIMIT 20",
+        (group_id, cutoff),
+    ).fetchall()
+    db.close()
+    if len(rows) < 3:
+        return "", 0
+    chat_text = "\n".join(f"{r[0]}: {r[1]}" for r in reversed(rows))
+    return chat_text, len(rows)
+
+
+# ── 主循环 ──
+SOUL = load_soul_md()
+SYS_PROMPT = load_system_prompt()
+
+# 完整系统提示词：SOUL.md 人设 + config.yaml 系统提示词
+FULL_PERSONALITY = SOUL or SYS_PROMPT
+
+now_str = time.strftime('%Y年%m月%d日 %H:%M')
+for group_id in GROUPS:
+    chat_text, msg_count = build_chat_context(group_id, window_minutes=5)
+    if not chat_text:
+        continue
+
+    # ── 1. 判断是否插话 ──
+    try:
+        decision = call_llm(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"{FULL_PERSONALITY}\n\n"
+                        f"现在是{now_str}，北京时间。5月27日是你的生日，今年你18岁了。\n\n"
+                        f"【重要】你现在是群聊旁观模式。看下面的群聊上下文，判断你是否应该自然地插一句话。\n"
+                        f"只回复一个字：「插」或「不」。不要解释，不要括号，不要多字。\n"
+                        f"如果群友在聊的话题你完全不了解、或者气氛不适合插嘴、或者你最近刚说过话，就选「不」。\n"
+                        f"如果群友聊到了你能自然接话的话题（音乐、贝斯、红茶、动漫、日常吐槽等），而且气氛轻松，可以选「插」。"
+                    ),
+                },
+                {"role": "user", "content": f"群聊最近{msg_count}条:\n{chat_text}"},
+            ],
+            max_tokens=20,
+            temperature=0,
+        )
+        if "不" in decision and "插" not in decision:
+            continue
+        # Explicitly require "插" to proceed — anything else is noise
+        if "插" not in decision.strip():
+            continue
+    except Exception:
+        continue
+
+    # ── 2. 生成回复 ──
+    try:
+        reply = call_llm(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"{FULL_PERSONALITY}\n\n"
+                        f"现在是{now_str}，北京时间。5月27日是你的生日，今年你18岁了。\n\n"
+                        f"【表情包】想发表情时在单独一行写短码：\n"
+                        + "\n".join(f"  [sticker:{k}]" for k in STICKER_MAP)
+                        + f"\n先说文字，换行再写 [sticker:xxx]，每次只发一个。可以只发 [sticker:xxx] 不配文字。"
+                        f"【回复要求】\n"
+                        f"- 最多2句话，简短自然，说完就停\n"
+                        f"- 可以只说一句话+一个表情包\n"
+                        f"- 可以只发表情包（只输出路径）\n"
+                        f"- 自然随意像真人发消息，不用AI味\n"
+                        f"- 禁止括号动作描写\n"
+                        f"- 如果群友叫你「妈妈」之类的，不要配合，轻松带过"
+                    ),
+                },
+                {"role": "user", "content": f"群聊:\n{chat_text}\n\n你决定插句话。自然地回复（可以发表情包）："},
+            ],
+            max_tokens=150,
+            temperature=0.8,
+        )
+        if not reply or len(reply) < 2:
+            continue
+        # 过滤决策文本泄漏（不回应、保持安静等）
+        if any(kw in reply for kw in ["不回应", "保持安静", "不插话", "跳过"]):
+            continue
+    except Exception:
+        continue
+
+    # ── 3. 发送 ──
+    try:
+        ok = send_to_qq(int(group_id), reply)
+        if ok:
+            with open("/tmp/auto-join.log", "a") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] group={group_id} ✓ {reply[:80]}\n")
+    except Exception:
+        pass
