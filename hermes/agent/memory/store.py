@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS long_term_entries (
     source_session_ids TEXT DEFAULT '[]',
     retrieval_count INTEGER DEFAULT 0,
     last_retrieved REAL DEFAULT 0.0,
+    ttl_days INTEGER DEFAULT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     UNIQUE(category, key)
@@ -219,6 +220,7 @@ class LongTermEntry:
     source_session_ids: List[str] = field(default_factory=list)
     retrieval_count: int = 0
     last_retrieved: float = 0.0
+    ttl_days: Optional[int] = None
     created_at: float = 0.0
     updated_at: float = 0.0
 
@@ -283,6 +285,10 @@ class MemoryStore:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_message_buffer)")}
         if "message_id" not in cols:
             conn.execute("ALTER TABLE chat_message_buffer ADD COLUMN message_id TEXT DEFAULT ''")
+        # Migration: add ttl_days column for memory expiration
+        lte_cols = {r[1] for r in conn.execute("PRAGMA table_info(long_term_entries)")}
+        if "ttl_days" not in lte_cols:
+            conn.execute("ALTER TABLE long_term_entries ADD COLUMN ttl_days INTEGER DEFAULT NULL")
         conn.commit()
 
     def close(self):
@@ -307,11 +313,6 @@ class MemoryStore:
              1 if is_bot else 0, self._now(), message_id),
         )
         conn.commit()
-        # Auto-trim: keep at most 100 messages per chat
-        try:
-            self.trim_chat_buffer(chat_id, keep=100)
-        except Exception:
-            pass  # trim is best-effort
         return row.lastrowid
 
     def get_chat_buffer(self, chat_id: str, limit: int = 20,
@@ -433,12 +434,10 @@ class MemoryStore:
                 pass
         return list(dict.fromkeys(all_topics))  # unique, preserve order
 
-    def prune_short_term(self, max_age_days: float = 0.04):
+    def prune_short_term(self, max_age_days: float = 7.0):
         conn = self._get_conn()
         cutoff = self._now() - (max_age_days * 86400)
         conn.execute("DELETE FROM short_term_entries WHERE created_at < ?", (cutoff,))
-        # Keep at most 200 most recent entries
-        conn.execute("DELETE FROM short_term_entries WHERE id NOT IN (SELECT id FROM short_term_entries ORDER BY created_at DESC LIMIT 200)")
         conn.commit()
 
     # ── Long-Term Memory ───────────────────────────────────────
@@ -454,12 +453,13 @@ class MemoryStore:
             row = conn.execute(
                 """INSERT INTO long_term_entries
                    (category, key, value, tags, confidence, source_session_ids,
-                    created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ttl_days, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(category, key) DO UPDATE SET
                    value=excluded.value,
                    tags=excluded.tags,
                    confidence=excluded.confidence,
+                   ttl_days=excluded.ttl_days,
                    source_session_ids=(
                        SELECT json_group_array(val) FROM (
                            SELECT value AS val FROM json_each(
@@ -477,6 +477,7 @@ class MemoryStore:
                     json.dumps(entry.tags, ensure_ascii=False),
                     entry.confidence,
                     json.dumps(entry.source_session_ids, ensure_ascii=False),
+                    entry.ttl_days,
                     entry.created_at, entry.updated_at,
                 ),
             )
@@ -498,11 +499,12 @@ class MemoryStore:
                 merged = list(dict.fromkeys(prior_ids + entry.source_session_ids))
                 conn.execute(
                     """UPDATE long_term_entries SET value=?, tags=?, confidence=?,
-                       source_session_ids=?, updated_at=? WHERE id=?""",
+                       ttl_days=?, source_session_ids=?, updated_at=? WHERE id=?""",
                     (
                         entry.value,
                         json.dumps(entry.tags, ensure_ascii=False),
                         entry.confidence,
+                        entry.ttl_days,
                         json.dumps(merged, ensure_ascii=False),
                         entry.updated_at,
                         existing["id"],

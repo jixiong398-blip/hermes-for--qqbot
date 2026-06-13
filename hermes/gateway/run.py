@@ -2201,7 +2201,10 @@ class GatewayRunner:
             if cfg_path.exists():
                 with open(cfg_path, encoding="utf-8") as _f:
                     cfg = _y.safe_load(_f) or {}
-                return (cfg_get(cfg, "agent", "system_prompt", default="") or "").strip()
+                raw = (cfg_get(cfg, "agent", "system_prompt", default="") or "").strip()
+                if raw:
+                    from agent.prompt_builder import _apply_soul_templates
+                    return _apply_soul_templates(raw)
         except Exception:
             pass
         return ""
@@ -12440,10 +12443,10 @@ class GatewayRunner:
         from agent.memory_manager import sanitize_context
 
         analysis_prompt = (
-            "Analyze this image concisely:\n"
-            "1. If it's an emoji/sticker/reaction image → describe the EMOTION it conveys (e.g. 'excited', 'facepalm', 'crying')\n"
-            "2. If it's a photo/screenshot → briefly describe what's visible (people, objects, text)\n"
-            "3. Keep your response under 200 characters."
+            "Analyze this image thoroughly:\n"
+            "1. If it's an emoji/sticker/reaction image → describe the EMOTION and visual style\n"
+            "2. If it's a photo/screenshot → describe everything visible: people, objects, text, colors, composition, mood\n"
+            "3. Be detailed and complete — no character limit."
         )
 
         enriched_parts = []

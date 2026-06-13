@@ -119,16 +119,17 @@ class OneBotAdapter(BasePlatformAdapter):
     def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False):
         """Add the bot's own reply to the group buffer so the LLM can see it in context.
         Also persists to DB with is_bot=1 so auto-join can detect recent activity."""
-        if not chat_id.startswith("group:"):
-            return
-        group_id = chat_id.split(":", 1)[1]
-        if group_id not in self._group_buffer:
-            self._group_buffer[group_id] = []
-        buf = self._group_buffer[group_id]
-        label = "[语音]" if is_voice else ""
-        buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0"})
-        # Persist bot messages to DB for auto-join / context retrieval
-        self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
+        if chat_id.startswith("group:"):
+            group_id = chat_id.split(":", 1)[1]
+            if group_id not in self._group_buffer:
+                self._group_buffer[group_id] = []
+            buf = self._group_buffer[group_id]
+            label = "[语音]" if is_voice else ""
+            buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0"})
+            self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
+        else:
+            # DM reply: persist to DB so LLM can see its own messages
+            self._persist_chat_message(chat_id, "private", 0, "bot", text, is_bot=1)
 
     def get_group_buffer_snapshot(self, group_id: str, window_seconds: int = 300) -> list:
         """Export current group buffer for external consumers (e.g., auto-join).
@@ -191,9 +192,122 @@ class OneBotAdapter(BasePlatformAdapter):
     def name(self) -> str:
         return "OneBot (QQ)"
 
-    # ------------------------------------------------------------------
-    # Config resolution
-    # ------------------------------------------------------------------
+    def _get_sender_identity(self, user_id: str, sender_name: str) -> str:
+        """Query LTM for a sender's profile and return a compact identity card.
+
+        Returns empty string if no relevant entries found or query fails.
+        """
+        try:
+            from agent.memory.gateway import UnifiedMemoryGateway
+            gw = UnifiedMemoryGateway.get_instance()
+            if not gw:
+                return ""
+            conn = gw._store._get_conn()
+            rows = conn.execute(
+                "SELECT category, key, value FROM long_term_entries "
+                "WHERE key LIKE ? AND confidence >= 0.5 "
+                "AND category IN ('user_profile', 'user_preference') "
+                "ORDER BY category, confidence DESC LIMIT 8",
+                (f"{user_id}%",),
+            ).fetchall()
+            if not rows:
+                return ""
+
+            lines = []
+            for cat, key, value in rows:
+                text = value.strip()[:80]
+                if text:
+                    lines.append(text)
+
+            if not lines:
+                return ""
+
+            return f"[关于 {sender_name}] " + "；".join(lines)
+        except Exception:
+            return ""
+
+    def _auto_recall(self, message_text: str, exclude_qq: str = "") -> str:
+        """Search LTM for memories relevant to the current message using FTS.
+
+        Returns formatted recall results or empty string if nothing found.
+        Excludes entries already shown in the sender's identity card.
+        """
+        if not message_text or len(message_text.strip()) < 3:
+            return ""
+        try:
+            from agent.memory.gateway import UnifiedMemoryGateway
+            gw = UnifiedMemoryGateway.get_instance()
+            if not gw:
+                return ""
+            conn = gw._store._get_conn()
+
+            # Extract meaningful keywords: Chinese bigrams + English words
+            import re as _re
+            cjk_chars = _re.findall(r'[\u4e00-\u9fff]', message_text)
+            bigrams = {"".join(cjk_chars[i:i+2]) for i in range(len(cjk_chars)-1)}
+            eng_words = _re.findall(r'[a-zA-Z]{3,}', message_text)
+            words = list(bigrams)[:12] + eng_words[:5]
+            if not words:
+                return ""
+
+            # LIKE query: OR multiple keywords, order by confidence DESC
+            clauses = " OR ".join(["value LIKE ?" for _ in words[:8]])
+            params = [f"%{w}%" for w in words[:8]]
+            rows = conn.execute(
+                f"SELECT value, category, key FROM long_term_entries "
+                f"WHERE ({clauses}) AND confidence >= 0.4 "
+                f"AND category NOT IN ('sticker') "
+                f"ORDER BY confidence DESC LIMIT 5",
+                params,
+            ).fetchall()
+
+            if not rows:
+                return ""
+
+            # Tag-based expansion: for each hit, pull entries sharing tags
+            import json as _json
+            seen_keys = {row[2] for row in rows}
+            expanded = list(rows)
+            for _, cat, key in rows[:3]:  # Expand from top 3 hits only
+                tag_row = conn.execute(
+                    "SELECT tags FROM long_term_entries WHERE key = ?", (key,)
+                ).fetchone()
+                if not tag_row or not tag_row[0] or tag_row[0] == "[]":
+                    continue
+                try:
+                    entry_tags = _json.loads(tag_row[0])
+                except Exception:
+                    continue
+                for tag in entry_tags[:4]:
+                    if len(expanded) >= 8:
+                        break
+                    sub = conn.execute(
+                        "SELECT value, category, key FROM long_term_entries "
+                        "WHERE tags LIKE ? AND key != ? "
+                        "AND confidence >= 0.4 AND key NOT IN ({}) "
+                        "LIMIT 2".format(",".join("?" * len(seen_keys))),
+                        [f"%{tag}%", key] + list(seen_keys),
+                    ).fetchall()
+                    for v, c, k in sub:
+                        if k not in seen_keys:
+                            expanded.append((v, c, k))
+                            seen_keys.add(k)
+
+            lines = []
+            for value, cat, key in expanded[:5]:  # Limit total to 5
+                # Skip entries from the sender (already in identity card)
+                if exclude_qq and key.startswith(f"{exclude_qq}_"):
+                    continue
+                text = value.strip()[:100]
+                if text:
+                    lines.append(text)
+
+            if not lines:
+                return ""
+
+            return "[相关记忆] " + "；".join(lines)
+        except Exception:
+            return ""
 
     def _load_config(self) -> None:
         extra = self.config.extra if self.config else {}
@@ -1238,6 +1352,13 @@ class OneBotAdapter(BasePlatformAdapter):
                         _p = _p.strip()
                         if _p and _p != "download_failed" and not _p.startswith("qq_face:") and _p not in context_image_paths:
                             context_image_paths.append(_p)
+            # Inject sender identity card for group messages
+            identity = self._get_sender_identity(user_id_str, sender_name)
+            if identity:
+                channel_prompt = identity
+            recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
+            if recall:
+                channel_prompt = (channel_prompt + "\n\n" + recall) if channel_prompt else recall
         else:
             session_key = f"onebot:{user_id}"
             chat_id = user_id_str
@@ -1255,6 +1376,12 @@ class OneBotAdapter(BasePlatformAdapter):
                 f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
                 f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
             )
+            identity = self._get_sender_identity(user_id_str, sender_name)
+            if identity:
+                channel_prompt += f"\n{identity}"
+            recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
+            if recall:
+                channel_prompt += f"\n{recall}"
 
         # Check for reply context (skip for recovered messages — historical data, API will fail)
         reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
@@ -1621,8 +1748,8 @@ class OneBotAdapter(BasePlatformAdapter):
                         break
                 if not content.strip():
                     content = OneBotAdapter._STICKER_MAP.get("tea", "")  # fallback
-            # 过滤手写 CQ 码（@mention 除外）
-            content = re.sub(r'\[CQ:(?!at,qq=)[^\]]+\]', '', content)
+            # 过滤手写 CQ 码（@mention 和 face 除外）
+            content = re.sub(r'\[CQ:(?!at,qq=|face,)[^\]]+\]', '', content)
             # 清理多余空白
             content = re.sub(r'\n{3,}', '\n\n', content).strip()
             if not content or not content.strip():
@@ -1656,22 +1783,6 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send text with automatic retry on failure."""
         logger.info("[OneBot] _send_text_with_retry: chat_id=%s, len=%d, reply_to=%s", 
                      chat_id, len(content) if content else 0, reply_to)
-        
-        # ── 引用回复时自动补上 @被回复人 ──
-        if reply_to and chat_id.startswith("group:") and content:
-            if not re.match(r'\[CQ:at,qq=\d+\]', content.strip()):
-                try:
-                    import sqlite3
-                    db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
-                    row = db.execute(
-                        "SELECT user_id, sender_name FROM chat_message_buffer WHERE message_id=? LIMIT 1",
-                        (str(reply_to),)
-                    ).fetchone()
-                    db.close()
-                    if row and row[0] and int(row[0]) > 10000:  # valid QQ number
-                        content = f"[CQ:at,qq={row[0]}] {content}"
-                except Exception:
-                    pass
         # ── @补全结束 ──
         if not self._ws:
             logger.error("[OneBot] send() failed: WebSocket not connected")
@@ -1702,17 +1813,20 @@ class OneBotAdapter(BasePlatformAdapter):
         # NapCat requires reply as a message SEGMENT, not a top-level param
         if reply_to:
             _segments = [{"type": "reply", "data": {"id": str(reply_to)}}]
-            # Extract [CQ:at,qq=XXX] into proper at segments for NapCat
-            _at_pat = re.compile(r'\[CQ:at,qq=(\d+)\]\s*')
+            # 把 [CQ:at,qq=XXX] 和 [CQ:face,id=XXX] 拆成独立 segment
+            _cq_pat = re.compile(r'\[CQ:(at,qq=(\d+)|face,id=(\d+))\]\s*')
             _last = 0
-            for _m in _at_pat.finditer(content):
+            for _m in _cq_pat.finditer(content):
                 if _m.start() > _last:
                     _segments.append({"type": "text", "data": {"text": content[_last:_m.start()]}})
-                _segments.append({"type": "at", "data": {"qq": _m.group(1)}})
+                if _m.group(2):  # at
+                    _segments.append({"type": "at", "data": {"qq": _m.group(2)}})
+                elif _m.group(3):  # face
+                    _segments.append({"type": "face", "data": {"id": _m.group(3)}})
                 _last = _m.end()
             if _last < len(content):
                 _segments.append({"type": "text", "data": {"text": content[_last:]}})
-            if len(_segments) == 1:  # no @ found, just reply + text
+            if len(_segments) == 1:  # nothing found, just reply + text
                 _segments.append({"type": "text", "data": {"text": content}})
             params["message"] = _segments
 
@@ -1905,21 +2019,31 @@ class OneBotAdapter(BasePlatformAdapter):
         base class extracts paths and sends as images via send_image().
         """
         import re as _re
-        # ── [sticker:xxx] → local path ──
+        # ── [sticker:xxx] → local path（模糊匹配LLM编的名字）──
         def _replace_sticker(m):
-            name = m.group(1).strip()
-            return OneBotAdapter._STICKER_MAP.get(name, '')\
-                or OneBotAdapter._STICKER_MAP.get(name.lower(), '')\
-                or '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg'  # fallback
-        content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content)
+            name = m.group(1).strip().lower()
+            # 精确匹配
+            if name in OneBotAdapter._STICKER_MAP:
+                return OneBotAdapter._STICKER_MAP[name]
+            # 模糊匹配：从名字里找情绪词
+            if any(w in name for w in ['excite','happy','开心','兴奋','激动','好','耶','wink','笑','乐']):
+                return OneBotAdapter._STICKER_MAP['excited']
+            if any(w in name for w in ['sad','cry','难过','伤心','哭','委屈','泪']):
+                return OneBotAdapter._STICKER_MAP['sad']
+            if any(w in name for w in ['speechless','无语','shy','尴尬','汗','...','……','害羞','脸红']):
+                return OneBotAdapter._STICKER_MAP['speechless']
+            if any(w in name for w in ['clasp','拜托','求','please','撒娇','嘛','讨']):
+                return OneBotAdapter._STICKER_MAP['clasp']
+            # 默认：喝茶
+            return OneBotAdapter._STICKER_MAP['tea']
+        content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content, flags=_re.IGNORECASE)
         # Catch incomplete [sticker: without closing ] (model truncation)
         if '[sticker:' in content and ']' not in content.split('[sticker:')[-1][:20]:
             content = content.replace('[sticker:', '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg')
         # ── [CQ:face,id=N] → local path (legacy) ──
         def _replace_face(m):
             fid = _re.search(r'id=(\d+)', m.group(0))
-            path = OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
-            return path or '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg'
+            return OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
         content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
         # ── Ensure paths are on their own line (fix CJK粘连) ──
         content = _re.sub(r'([^\s/\n])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
