@@ -21,17 +21,15 @@ from .store import MemoryStore, LongTermEntry
 logger = logging.getLogger(__name__)
 
 CATEGORIES = [
-    "user_profile",      # Who the user is
-    "user_preferences",  # User likes/dislikes
-    "user_preference",   # Alias for user_preferences (distillation)
+    "user_profile",      # Who the user is (identity, skills, background)
+    "user_preference",   # User likes/dislikes/habits
     "agent_identity",    # Agent's own notes about itself
     "knowledge",         # General facts/knowledge
-    "decisions",         # Past decisions and their outcomes
-    "decision",          # Alias for decisions (distillation)
-    "relationships",     # People/entity relationships
-    "relationship",      # Alias for relationships (distillation)
-    "coding",           # Code-related knowledge
-    "general",          # Uncategorized
+    "decision",          # Past decisions and their outcomes
+    "relationship",      # People/entity relationships
+    "coding",            # Code-related knowledge
+    # Internal categories (not from distillation):
+    "sticker",           # Sticker path mapping
 ]
 
 
@@ -50,6 +48,19 @@ class LongTermMemory:
             logger.warning("Unknown LTM category '%s', using 'general'", category)
             category = "general"
 
+        # Category-based default TTL (None = permanent)
+        _TTL_DEFAULTS = {
+            "user_profile": None,       # Identity facts are permanent
+            "user_preference": 180,     # Preferences can shift over months
+            "knowledge": None,          # Knowledge is generally permanent
+            "decision": 30,             # Plans/decisions expire after ~1 month
+            "relationship": None,       # Relationships are permanent
+            "agent_identity": None,     # Self-knowledge is permanent
+            "coding": None,             # Code knowledge is permanent
+            "sticker": None,            # Config, not memory
+        }
+        ttl_days = _TTL_DEFAULTS.get(category)
+
         entry = LongTermEntry(
             category=category,
             key=key,
@@ -57,6 +68,7 @@ class LongTermMemory:
             tags=tags or [],
             confidence=min(1.0, max(0.0, confidence)),
             source_session_ids=[session_id] if session_id else [],
+            ttl_days=ttl_days,
             created_at=datetime.now(timezone.utc).timestamp(),
             updated_at=datetime.now(timezone.utc).timestamp(),
         )
@@ -121,13 +133,13 @@ class LongTermMemory:
         total_chars = 0
         category_labels = {
             "user_profile": "## User Profile",
-            "user_preferences": "## User Preferences",
+            "user_preference": "## User Preferences",
             "agent_identity": "## Agent Notes",
             "knowledge": "## Knowledge",
-            "decisions": "## Past Decisions",
-            "relationships": "## Relationships",
+            "decision": "## Past Decisions",
+            "relationship": "## Relationships",
             "coding": "## Code Knowledge",
-            "general": "## General",
+            "sticker": "## Stickers",
         }
 
         for cat in CATEGORIES:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified Memory Gateway — single entry point for all memory operations.
 
 Coordinates all memory subsystems:
@@ -293,6 +293,34 @@ class UnifiedMemoryGateway:
         else:
             stats["stm_pruned"] = 0
 
+        # ── TTL-based memory expiration ──
+        # Decay confidence for entries past their TTL. Permanently delete
+        # entries whose confidence drops below the forget threshold.
+        ttl_decayed = 0
+        ttl_deleted = 0
+        now_ts = self._store._now()
+        expired = conn.execute(
+            "SELECT id, category, confidence FROM long_term_entries "
+            "WHERE ttl_days IS NOT NULL "
+            "AND created_at + (ttl_days * 86400.0) < ?",
+            (now_ts,),
+        ).fetchall()
+        for eid, cat, conf in expired:
+            new_conf = conf * 0.3  # Soft decay: keep partial memory
+            if new_conf < 0.15:
+                conn.execute("DELETE FROM long_term_entries WHERE id = ?", (eid,))
+                ttl_deleted += 1
+            else:
+                conn.execute(
+                    "UPDATE long_term_entries SET confidence = ? WHERE id = ?",
+                    (new_conf, eid),
+                )
+                ttl_decayed += 1
+        if ttl_decayed or ttl_deleted:
+            conn.commit()
+            logger.info("TTL: decayed %d, deleted %d expired memories",
+                        ttl_decayed, ttl_deleted)
+
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed
         self._store.quick_maintenance()
@@ -353,21 +381,45 @@ class UnifiedMemoryGateway:
                 chat_text = "\n".join(reversed(msgs[-30:]))
                 facts = self._call_distill_llm(chat_text)
                 if facts:
-                    for cat, key, val, conf in facts:
+                    for cat, key, val, conf, *extra in facts:
                         if new_facts >= _max_per_cycle:
                             break
+                        tags = extra[0] if extra else []
                         # 置信度门槛：低于0.5不存
                         if conf < 0.5:
                             continue
-                        # 去重：7天内相同key不重复
+                        # 冲突检测：同key已存在→更新或跳过
                         try:
                             existing = self._ltm.get_fact(cat, key)
                             if existing:
-                                continue  # key已存在，跳过
+                                days_old = (_time.time() - existing.created_at) / 86400.0
+                                # 更新条件：旧条目>30天 或 新事实置信度更高
+                                if days_old > 30 or conf > existing.confidence + 0.1:
+                                    self.add_long_term(cat, key, val, tags=tags, confidence=conf)
+                                    new_facts += 1
+                                continue
                         except Exception:
                             pass
+                        # 相似key冲突检测：同QQ号、key后缀相似但值不同→可能是更新
+                        qq = key.split("_")[0] if "_" in key and key.split("_")[0].isdigit() else ""
+                        key_suffix = key[len(qq)+1:] if qq else ""
+                        if qq and len(key_suffix) >= 2:
+                            try:
+                                conn2 = self._store._get_conn()
+                                similar_rows = conn2.execute(
+                                    "SELECT id, key, value, confidence FROM long_term_entries "
+                                    "WHERE key LIKE ? AND category = ? AND key != ?",
+                                    (f"{qq}%", cat, key),
+                                ).fetchall()
+                                for sid, skey, sval, sconf in similar_rows:
+                                    s_suffix = skey[len(qq)+1:] if "_" in skey else ""
+                                    suffix_overlap = len(set(key_suffix) & set(s_suffix)) / max(len(set(key_suffix) | set(s_suffix)), 1)
+                                    if suffix_overlap > 0.5 and conf > sconf:
+                                        self._ltm.update_confidence(sid, -0.2)
+                            except Exception:
+                                pass
                         try:
-                            self.add_long_term(cat, key, val, confidence=conf)
+                            self.add_long_term(cat, key, val, tags=tags, confidence=conf)
                             new_facts += 1
                         except Exception:
                             pass
@@ -418,15 +470,17 @@ class UnifiedMemoryGateway:
             "0.5-0.7: 从对话中合理推断的偏好（如多次提到喜欢某事物）\n"
             "0.3-0.4: 弱信号，宁可不存也不要存错的\n"
             "低于0.5的不要输出。\n\n"
-            "【类别说明】\n"
-            "user_preference: 用户的喜好/厌恶\n"
+            "【类别】只允许以下5种类别：\n"
+            "user_preference: 用户的喜好/厌恶/习惯\n"
             "user_profile: 用户的身份/技能/背景\n"
             "knowledge: 有价值的知识/信息\n"
             "decision: 用户明确表达的决定/计划\n"
             "relationship: 真实的人际关系（不是角色扮演）\n\n"
+            "【标签】每条事实标注2-5个关键词标签，帮助后续检索关联：\n"
+            "格式: [类别, key, 值, 置信度, [标签列表]]\n\n"
             "示例:\n"
-            '[\n  ["user_profile", "{{HOME_CHANNEL}}_开发环境", "{{CHANNEL_NAME}}使用Ubuntu+GNOME开发环境", 0.8],\n'
-            '  ["user_preference", "2276279679_贝斯偏好", "Tomoris喜欢Fender Precision贝斯", 0.6]\n'
+            '[\n  ["user_profile", "2910137276_开发环境", "{{CHANNEL_NAME}}使用Ubuntu+GNOME开发环境", 0.8, ["开发", "Ubuntu", "GNOME"]],\n'
+            '  ["user_preference", "2276279679_贝斯偏好", "Tomoris喜欢Fender Precision贝斯", 0.6, ["贝斯", "Fender", "乐器"]]\n'
             ']\n\n'
             f"群聊记录:\n{chat_text}\n\n"
             "输出 JSON 数组，没有值得记的就输出 []。不要其他文字。"
@@ -467,7 +521,8 @@ class UnifiedMemoryGateway:
                 conf = f[3]
                 if isinstance(conf, str):
                     conf = _conf_map.get(conf.lower(), 0.4)
-                result.append((str(f[0]), str(f[1]), str(f[2]), float(conf)))
+                tags = list(f[4]) if len(f) >= 5 and isinstance(f[4], list) else []
+                result.append((str(f[0]), str(f[1]), str(f[2]), float(conf), tags))
             return result
         except Exception as e:
             logger.warning("Distill LLM call failed: %s", e)
@@ -490,7 +545,7 @@ class UnifiedMemoryGateway:
         rows = conn.execute(
             "SELECT category, key, value, confidence FROM long_term_entries "
             "WHERE confidence >= 0.5 AND created_at > ? "
-            "AND category NOT IN ('qzone','qzone_log','qzone_posts','sticker') "
+            "AND category NOT IN ('qzone','qzone_log','qzone_posts','qzone_post','cron','general','sticker') "
             "ORDER BY created_at DESC LIMIT 20",
             (cutoff,),
         ).fetchall()
@@ -502,9 +557,7 @@ class UnifiedMemoryGateway:
         memory_lines = []
         seen = set()
         for cat, key, val, conf in rows:
-            # Dedup + skip internal/qzone entries
-            if cat in ('qzone_log', 'qzone_posts', 'cron'):
-                continue
+            # Dedup by category+key in this batch
             sig = f"{cat}:{key}"
             if sig in seen:
                 continue

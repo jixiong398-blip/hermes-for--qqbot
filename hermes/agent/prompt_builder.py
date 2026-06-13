@@ -1293,6 +1293,35 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
+def _apply_soul_templates(content: str) -> str:
+    """Replace template variables in SOUL.md with dynamically computed values.
+
+    Supported placeholders:
+      {{age}}         — Age computed from SOUL_MD_BIRTH_YEAR env var (default 2008)
+                         and SOUL_MD_BIRTH_MONTH / SOUL_MD_BIRTH_DAY (default May 27).
+                         Calculation: current year - birth year, minus 1 if
+                         current date is before the birthday this year.
+      {{today_is_birthday}} — "是" if today is the birthday, "不是" otherwise.
+    """
+    import os
+    from datetime import date as _date
+
+    birth_year = int(os.getenv("SOUL_MD_BIRTH_YEAR", "2008"))
+    birth_month = int(os.getenv("SOUL_MD_BIRTH_MONTH", "5"))
+    birth_day = int(os.getenv("SOUL_MD_BIRTH_DAY", "27"))
+
+    today = _date.today()
+    birthday_this_year = _date(today.year, birth_month, birth_day)
+    age = today.year - birth_year
+    if today < birthday_this_year:
+        age -= 1
+    is_birthday = "是" if today == birthday_this_year else "不是"
+
+    content = content.replace("{{age}}", str(age))
+    content = content.replace("{{today_is_birthday}}", is_birthday)
+    return content
+
+
 def load_soul_md() -> Optional[str]:
     """Load SOUL.md from HERMES_HOME and return its content, or None.
 
@@ -1315,6 +1344,7 @@ def load_soul_md() -> Optional[str]:
             return None
         content = _scan_context_content(content, "SOUL.md")
         content = _truncate_content(content, "SOUL.md")
+        content = _apply_soul_templates(content)
         return content
     except Exception as e:
         logger.debug("Could not read SOUL.md from %s: %s", soul_path, e)
