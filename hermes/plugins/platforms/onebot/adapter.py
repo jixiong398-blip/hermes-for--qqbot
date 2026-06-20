@@ -2514,14 +2514,190 @@ class OneBotAdapter(BasePlatformAdapter):
                 message.insert(0, {"type": "text", "data": {"text": caption}})
 
             if chat_id.startswith("group:"):
-                gid = int(chat_id.split(":", 1)[1])
+                try:
+                    gid = int(chat_id.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    logger.warning("[OneBot] Invalid group chat_id: %s", chat_id)
+                    return SendResult(success=False, error="Invalid group chat_id", retryable=False)
                 result = await self._send_action("send_group_msg", {"group_id": gid, "message": message})
             else:
-                uid = int(chat_id)
+                try:
+                    uid = int(chat_id)
+                except ValueError:
+                    logger.warning("[OneBot] Invalid private chat_id: %s", chat_id)
+                    return SendResult(success=False, error="Invalid private chat_id", retryable=False)
                 result = await self._send_action("send_private_msg", {"user_id": uid, "message": message})
-            if result and result.get("data"):
-                return SendResult(success=True, message_id=str(result["data"].get("message_id", "")))
-            return SendResult(success=True)
+
+            msg_id = (result.get("data") or {}).get("message_id")
+            return SendResult(
+                success=True,
+                message_id=str(msg_id) if msg_id else None,
+                raw_response=result,
+            )
         except Exception as e:
-            return SendResult(success=False, error=str(e))
-   
+            logger.error("[OneBot] Failed to send voice: %s", e)
+            return SendResult(success=False, error=str(e), retryable=True)
+
+    async def send_typing(self, chat_id: str, metadata=None) -> None:
+        """OneBot doesn't support typing indicators natively, so this is a no-op."""
+        pass
+
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        *,
+        finalize: bool = False,
+    ) -> SendResult:
+        """QQ doesn't support message editing — send a new message instead."""
+        return await self.send(chat_id, content, metadata=None)
+
+    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+        """Get information about a QQ chat."""
+        try:
+            if chat_id.startswith("group:"):
+                gid = int(chat_id.split(":", 1)[1])
+                result = await self._send_action("get_group_info", {"group_id": gid})
+                data = result.get("data", {})
+                return {
+                    "name": data.get("group_name", f"Group {gid}"),
+                    "type": "group",
+                    "member_count": data.get("member_count", 0),
+                }
+            else:
+                uid = int(chat_id)
+                result = await self._send_action("get_stranger_info", {"user_id": uid})
+                data = result.get("data", {})
+                return {
+                    "name": data.get("nickname", f"User {uid}"),
+                    "type": "dm",
+                }
+        except Exception as e:
+            return {"name": chat_id, "type": "dm"}
+
+    # ── Image extraction override: [sticker:xxx] → local path → image send ──
+
+    _STICKER_MAP = {
+        "tea":        "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
+        "excited":    "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
+        "sad":        "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
+        "speechless": "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
+        "clasp":      "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
+        "拜托":       "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
+        "喝茶":       "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
+        "兴奋":       "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
+        "难过":       "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
+        "无语":       "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
+    }
+    _STICKER_PATHS = list(set(_STICKER_MAP.values()))
+
+    # Legacy: CQ face ID → sticker path (for backward compat)
+    _FACE_TO_STICKER = {
+        '192': '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg',
+        '193': '/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg',
+        '194': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
+        '195': '/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg',
+        '196': '/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg',
+        '197': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
+    }
+
+    @staticmethod
+    def extract_local_files(content: str):
+        """Override: replace [sticker:xxx] / [CQ:face,id=N] with local paths → extract as image.
+        
+        LLM outputs short codes like [sticker:tea], adapter maps to local file paths,
+        base class extracts paths and sends as images via send_image().
+        """
+        import re as _re
+        # ── [sticker:xxx] → local path（模糊匹配LLM编的名字）──
+        def _replace_sticker(m):
+            name = m.group(1).strip().lower()
+            # 精确匹配
+            if name in OneBotAdapter._STICKER_MAP:
+                return OneBotAdapter._STICKER_MAP[name]
+            # 模糊匹配：从名字里找情绪词
+            if any(w in name for w in ['excite','happy','开心','兴奋','激动','好','耶','wink','笑','乐']):
+                return OneBotAdapter._STICKER_MAP['excited']
+            if any(w in name for w in ['sad','cry','难过','伤心','哭','委屈','泪']):
+                return OneBotAdapter._STICKER_MAP['sad']
+            if any(w in name for w in ['speechless','无语','shy','尴尬','汗','...','……','害羞','脸红']):
+                return OneBotAdapter._STICKER_MAP['speechless']
+            if any(w in name for w in ['clasp','拜托','求','please','撒娇','嘛','讨']):
+                return OneBotAdapter._STICKER_MAP['clasp']
+            # 默认：喝茶
+            return OneBotAdapter._STICKER_MAP['tea']
+        content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content, flags=_re.IGNORECASE)
+        # Catch incomplete [sticker: without closing ] (model truncation)
+        if '[sticker:' in content and ']' not in content.split('[sticker:')[-1][:20]:
+            content = content.replace('[sticker:', '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg')
+        # ── [CQ:face,id=N] → local path (legacy) ──
+        def _replace_face(m):
+            fid = _re.search(r'id=(\d+)', m.group(0))
+            return OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
+        content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
+        # ── Ensure paths are on their own line (fix CJK粘连) ──
+        content = _re.sub(r'([^\s/\n])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
+        # ── Pass to base class: extracts paths from text, sends as images ──
+        return BasePlatformAdapter.extract_local_files(content)
+
+    async def send_image_file(
+        self, chat_id: str, image_path: str,
+        caption: Optional[str] = None, reply_to: Optional[str] = None, **kwargs,
+    ) -> SendResult:
+        """Send a local image file via OneBot. Delegates to send_image."""
+        return await self.send_image(chat_id, image_path, caption=caption, reply_to=reply_to, **kwargs)
+
+    async def send_document(
+        self, chat_id: str, file_path: str,
+        caption: Optional[str] = None, file_name: Optional[str] = None,
+        reply_to: Optional[str] = None, **kwargs,
+    ) -> SendResult:
+        """OneBot does not support generic document send. Silently drop."""
+        logger.debug("[OneBot] send_document not supported, skipping: %s", file_path)
+        return SendResult(success=True, message_id=None)
+
+# ── Plugin Registration ──
+
+def _check_requirements():
+    try:
+        import websockets, httpx
+        return True
+    except ImportError:
+        return False
+
+def _validate_config(cfg):
+    extra = getattr(cfg, "extra", {}) or {}
+    return bool(extra.get("ws_url") or os.getenv("ONEBOT_WS_URL"))
+
+def _is_connected(cfg):
+    return _validate_config(cfg)
+
+def _env_enablement():
+    ws = os.getenv("ONEBOT_WS_URL", "")
+    token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
+    home = os.getenv("ONEBOT_HOME_CHANNEL", "")
+    if not ws:
+        return None
+    extra = {"ws_url": ws}
+    if token:
+        extra["access_token"] = token
+    hc = {"chat_id": home} if home else None
+    return {"extra": extra, "home_channel": hc}
+
+def register(ctx):
+    ctx.register_platform(
+        name="onebot",
+        label="OneBot (QQ)",
+        adapter_factory=lambda cfg: OneBotAdapter(cfg),
+        check_fn=_check_requirements,
+        validate_config=_validate_config,
+        is_connected=_is_connected,
+        required_env=["ONEBOT_WS_URL"],
+        install_hint="pip install websockets httpx",
+        env_enablement_fn=_env_enablement,
+        allowed_users_env="ONEBOT_ALLOWED_USERS",
+        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
+        emoji="🐧",
+        pii_safe=False,
+    )
