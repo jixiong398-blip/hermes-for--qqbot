@@ -8,7 +8,11 @@ wiki search, and skill auto-generation.
 Actions:
   - recall: Search all memory sources (STM, LTM, WFM, Wiki) for relevant context
   - remember: Save a fact to long-term memory
+  - correct: Correct a previously stored memory (supersede, not overwrite)
   - forget: Remove a fact from long-term memory
+  - doubt: Mark a memory as uncertain
+  - link: Create a relationship edge between two memories
+  - search: Explicit semantic search (non-auto recall)
   - list_facts: List facts by category
   - list_workflows: List active workflows with weights
   - use_workflow: Record workflow usage (triggers weight boost)
@@ -16,6 +20,7 @@ Actions:
   - wiki_search: Search the Karpathy Wiki knowledge base
   - stats: Get memory system statistics
   - consolidate: Manually trigger STM→LTM consolidation
+  - self_audit: Scan for internal contradictions (v1: log only)
 """
 
 from __future__ import annotations
@@ -42,11 +47,12 @@ GATEWAY_SCHEMA = {
             "action": {
                 "type": "string",
                 "enum": [
-                    "recall", "remember", "forget", "list_facts",
+                    "recall", "remember", "correct", "forget", "doubt", "link",
+                    "search", "list_facts",
                     "list_workflows", "use_workflow", "suggest_skill",
                     "wiki_search", "obsidian_search", "obsidian_read",
                     "stats", "consolidate", "decay_report",
-                    "timeline",
+                    "timeline", "self_audit",
                 ],
                 "description": "The memory action to perform.",
             },
@@ -67,7 +73,14 @@ GATEWAY_SCHEMA = {
             "confidence": {
                 "type": "number", "description": "Confidence 0.0-1.0.",
             },
-            "fact_id": {"type": "integer", "description": "Fact ID for forget action."},
+            "fact_id": {"type": "integer", "description": "Fact ID for forget/doubt/correct target actions."},
+            "target_id": {"type": "integer", "description": "Memory ID to correct (L2)."},
+            "new_value": {"type": "string", "description": "Corrected value (for correct action)."},
+            "new_confidence": {"type": "number", "description": "Confidence for corrected memory."},
+            "relation": {"type": "string", "description": "Edge relation for link action: related_to, supports, contradicts."},
+            "dst_id": {"type": "integer", "description": "Destination memory ID for link action."},
+            "memory_type": {"type": "string", "description": "Filter by memory_type: semantic, episodic, procedural."},
+            "user_id": {"type": "string", "description": "Source user ID filter for search."},
             "workflow_name": {"type": "string", "description": "Workflow name."},
             "limit": {"type": "integer", "description": "Max results. Default 10.", "default": 10},
         },
@@ -96,6 +109,13 @@ def memory_gateway_tool(
     tags: list = None,
     confidence: float = 0.5,
     fact_id: int = 0,
+    target_id: int = 0,
+    new_value: str = "",
+    new_confidence: float = 0.85,
+    relation: str = "",
+    dst_id: int = 0,
+    memory_type: str = "",
+    user_id: str = "",
     workflow_name: str = "",
     limit: int = 10,
     **kwargs,
@@ -111,8 +131,23 @@ def memory_gateway_tool(
         elif action == "remember":
             return _handle_remember(gw, category, key, value, tags, confidence)
 
+        elif action == "correct":
+            return _handle_correct(gw, target_id, new_value, new_confidence)
+
         elif action == "forget":
             return _handle_forget(gw, fact_id or 0)
+
+        elif action == "doubt":
+            return _handle_doubt(gw, fact_id or 0)
+
+        elif action == "link":
+            return _handle_link(gw, fact_id or 0, dst_id, relation)
+
+        elif action == "search":
+            return _handle_search(gw, query, memory_type, user_id, limit)
+
+        elif action == "self_audit":
+            return _handle_self_audit(gw, user_id, limit)
 
         elif action == "list_facts":
             return _handle_list_facts(gw, category, limit)
@@ -159,14 +194,16 @@ def _handle_recall(gw: UnifiedMemoryGateway, query: str, limit: int) -> str:
     if not query:
         return json.dumps({"error": "query is required for recall"})
 
-    context = gw.recall(query, max_chars=4000)
-    # Also get direct search results
+    structured = gw.recall_structured(query, max_chars=4000)
+    context = structured["prompt"]
+    recalled_ids = structured.get("recalled_ids", [])
     ltm_results = gw.search_long_term(query, limit)
     wfm_results = gw.search_workflows(query)
     wiki_results = gw._wiki.search(query, limit) if gw._enable_wiki else []
 
     return json.dumps({
         "context": context[:3000],
+        "recalled_memory_ids": recalled_ids,
         "long_term_matches": ltm_results,
         "workflow_matches": wfm_results,
         "wiki_matches": [
@@ -499,12 +536,41 @@ def _handle_obsidian_read(gw, title: str) -> str:
     }, ensure_ascii=False)
 
 
+def _handle_correct(gw, target_id: int, new_value: str, new_confidence: float) -> str:
+    if not target_id or not new_value:
+        return json.dumps({"error": "target_id and new_value are required for correct"})
+    result = gw.correct(target_id, new_value, new_confidence)
+    if result:
+        return json.dumps(result, ensure_ascii=False)
+    return json.dumps({"error": "correction failed"})
+
+def _handle_doubt(gw, fact_id: int) -> str:
+    if not fact_id:
+        return json.dumps({"error": "fact_id is required for doubt"})
+    result = gw.doubt(fact_id)
+    return json.dumps(result, ensure_ascii=False)
+
+def _handle_link(gw, src_id: int, dst_id: int, relation: str) -> str:
+    if not src_id or not dst_id:
+        return json.dumps({"error": "src_id and dst_id required for link"})
+    edge_id = gw.link(src_id, dst_id, relation or "related_to")
+    if edge_id:
+        return json.dumps({"edge_id": edge_id}, ensure_ascii=False)
+    return json.dumps({"error": "link failed"})
+
+def _handle_search(gw, query: str, memory_type: str, user_id: str, limit: int) -> str:
+    results = gw.search(query, memory_type=memory_type, user_id=user_id, limit=limit)
+    return json.dumps({"results": results}, ensure_ascii=False)
+
+def _handle_self_audit(gw, user_id: str, limit: int) -> str:
+    conflicts = gw.source_conflict_scan(user_id=user_id, dry_run=True)
+    return json.dumps({"conflicts": conflicts, "note": "v1: log only, no auto-correct"}, ensure_ascii=False)
+
+
 def check_requirements() -> bool:
-    """Always available — uses local SQLite only."""
     return True
 
 
-# ── Registry ──────────────────────────────────────────────────
 from tools.registry import registry
 
 registry.register(
@@ -520,9 +586,11 @@ registry.register(
         tags=args.get("tags", []),
         confidence=args.get("confidence", 0.5),
         fact_id=args.get("fact_id", 0),
-        workflow_name=args.get("workflow_name", ""),
-        limit=args.get("limit", 10),
-    ),
-    check_fn=check_requirements,
-    emoji="🧠",
-)
+        target_id=args.get("target_id", 0),
+        new_value=args.get("new_value", ""),
+        new_confidence=args.get("new_confidence", 0.85),
+        relation=args.get("relation", ""),
+        dst_id=args.get("dst_id", 0),
+        memory_type=args.get("memory_type", ""),
+        user_id=args.get("user_id", ""),
+        workflow_name=args.get("workflo

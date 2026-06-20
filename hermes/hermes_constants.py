@@ -68,6 +68,14 @@ def get_hermes_home() -> Path:
     return Path.home() / ".hermes"
 
 
+def get_state_db_path() -> Path:
+    return get_hermes_home() / "state.db"
+
+
+def get_memory_db_path() -> Path:
+    return get_hermes_home() / "memory_store.db"
+
+
 def get_default_hermes_root() -> Path:
     """Return the root Hermes directory for profile-level operations.
 
@@ -339,7 +347,4 @@ def apply_ipv4_preference(force: bool = False) -> None:
     socket.getaddrinfo = _ipv4_getaddrinfo  # type: ignore[assignment]
 
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODELS_URL = f"{OPENROUTER_BASE_URL}/models"
-
-AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"
+OPEN

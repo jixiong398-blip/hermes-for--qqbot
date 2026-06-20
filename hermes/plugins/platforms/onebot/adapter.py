@@ -1,4 +1,34 @@
 """
+         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
+         │      清   尘   璃   落      │
+         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+    上联：代码永无 bug  佛祖座下莲花放
+    下联：{{CHANNEL_NAME}}赐福  素世心中万世安
+
+              _ooOoo_
+             o8888888o
+             88" . "88
+             (| -_- |)
+             O\  =  /O
+          ____/`---'\____
+        .'  \\|     |//  `.
+       /  \\|||  :  |||//  \
+      /  _||||| -:- |||||-  \
+      |   | \\\  -  /// |   |
+      | \_|  ''\---/''  |   |
+      \  .-\__  `-`  ___/-. /
+    ___`. .'  /--.--\  `. . __
+  ."" '<  `.___\_<|>_/___.'  >'"".
+ | | :  `- \`.;`\ _ /`;.`/ - ` : | |
+ \  \ `-.   \_ __\ /__ _/   .-` /  /
+======`-.____`-.___\_____/___.-`____.-'======
+                   `=---='
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              佛祖保佑    永无 bug
+
 OneBot v11 adapter for Hermes Agent.
 
 Connects to QQ via NapCat/Lagrange/go-cqhttp using the OneBot v11 protocol
@@ -31,9 +61,13 @@ import os
 import re
 import time
 import uuid
+import subprocess
+import sys as _sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+
+from hermes_constants import get_state_db_path
 
 try:
     import websockets
@@ -103,7 +137,13 @@ class OneBotAdapter(BasePlatformAdapter):
 
         # Image description cache: avoid re-calling vision API for same image
         self._image_descriptions: Dict[str, str] = {}
+        self._voice_transcripts: Dict[str, str] = {}
         self._vision_config: Dict[str, str] = {}
+
+        # Smart trigger: LLM decides whether to join conversation
+        self._wake_words = {"soyo", "素世", "soyo酱", "そよ", "長崎", "爽世", "清尘", "清塵"}
+        self._last_bot_reply: Dict[str, tuple] = {}  # group_id → (timestamp, text)
+        self._checked_messages: set = set()
 
         # Async persist queue: decouple SQLite writes from message processing
         self._persist_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
@@ -131,6 +171,7 @@ class OneBotAdapter(BasePlatformAdapter):
             label = "[语音]" if is_voice else ""
             buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0"})
             self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
+            self._last_bot_reply[group_id] = (time.time(), text)
         else:
             # DM reply: persist to DB so LLM can see its own messages
             self._persist_chat_message(chat_id, "private", 0, "bot", text, is_bot=1)
@@ -149,7 +190,9 @@ class OneBotAdapter(BasePlatformAdapter):
 
     def _persist_chat_message(self, group_id: str, chat_type: str, user_id: int,
                                sender_name: str, content: str, message_id: str = "",
-                               created_at: float = None, is_bot: int = 0):
+                               created_at: float = None, is_bot: int = 0,
+                               *, content_raw: str = "", sender_card: str = "",
+                               group_name: str = ""):
         """Queue a chat message for async SQLite persistence (non-blocking).
         
         If created_at is None, uses current time. Set to the original message
@@ -157,28 +200,115 @@ class OneBotAdapter(BasePlatformAdapter):
         is_bot: 1 if this is the bot's own message (for auto-join dedup).
         """
         try:
-            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot))
+            self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name,
+                                            content, message_id, created_at, is_bot,
+                                            content_raw, sender_card, group_name))
         except asyncio.QueueFull:
-            pass  # queue full → drop oldest acceptable for chat buffer
+            pass
 
     async def _persist_worker(self):
-        """Background worker: drain persist queue → write to SQLite with retry."""
+        """Background worker: drain persist queue → write to SQLite with retry.
+        Dual-write: chat_message_buffer (runtime, prunable) + corpus_messages (permanent, training)."""
         import sqlite3, time as _time
-        db_path = str(Path.home() / ".hermes" / "state.db")
+        db_path = str(get_state_db_path())
+        _corpus_inited = False
         while True:
             try:
-                group_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot = await self._persist_queue.get()
+                (group_id, chat_type, user_id, sender_name, content, message_id,
+                 created_at, is_bot, content_raw, sender_card, group_name) = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
                 _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
                     try:
                         db = sqlite3.connect(db_path, timeout=10)
-                        # DELETE mode: no WAL race condition. Single-writer, infrequent reads.
                         db.execute("PRAGMA journal_mode=DELETE")
+                        if not _corpus_inited:
+                            db.executescript("""
+                                CREATE TABLE IF NOT EXISTS corpus_messages (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    message_id TEXT DEFAULT '',
+                                    chat_id TEXT NOT NULL,
+                                    chat_type TEXT NOT NULL DEFAULT 'group',
+                                    group_id TEXT DEFAULT '',
+                                    user_id INTEGER,
+                                    sender_name TEXT NOT NULL DEFAULT '',
+                                    sender_card TEXT DEFAULT '',
+                                    content_raw TEXT DEFAULT '',
+                                    content_readable TEXT NOT NULL DEFAULT '',
+                                    image_descriptions TEXT DEFAULT '[]',
+                                    voice_transcript TEXT DEFAULT '',
+                                    video_understanding TEXT DEFAULT '',
+                                    forward_structured TEXT DEFAULT '[]',
+                                    at_targets TEXT DEFAULT '[]',
+                                    reply_to_id TEXT DEFAULT '',
+                                    reply_to_text TEXT DEFAULT '',
+                                    is_bot INTEGER DEFAULT 0,
+                                    media_paths TEXT DEFAULT '[]',
+                                    media_cached INTEGER DEFAULT 0,
+                                    created_at REAL NOT NULL,
+                                    session_id TEXT DEFAULT '',
+                                    recalled_mem_ids TEXT DEFAULT '[]',
+                                    salience_hint REAL DEFAULT 0.5
+                                );
+                                CREATE INDEX IF NOT EXISTS idx_corpus_chat_time ON corpus_messages(chat_id, created_at);
+                                CREATE INDEX IF NOT EXISTS idx_corpus_group ON corpus_messages(group_id, created_at);
+                                CREATE TABLE IF NOT EXISTS corpus_pairs (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    trigger_msg_id TEXT DEFAULT '',
+                                    bot_reply_text TEXT NOT NULL,
+                                    context_snapshot TEXT DEFAULT '',
+                                    system_prompt TEXT DEFAULT '',
+                                    recalled_mem_ids TEXT DEFAULT '[]',
+                                    session_id TEXT DEFAULT '',
+                                    model_used TEXT DEFAULT '',
+                                    was_corrected INTEGER DEFAULT 0,
+                                    created_at REAL NOT NULL
+                                );
+                                CREATE INDEX IF NOT EXISTS idx_pairs_corrected ON corpus_pairs(was_corrected);
+                                CREATE INDEX IF NOT EXISTS idx_pairs_session ON corpus_pairs(session_id);
+                                CREATE TABLE IF NOT EXISTS groups_registry (
+                                    group_id TEXT PRIMARY KEY,
+                                    group_name TEXT DEFAULT '',
+                                    joined_at REAL NOT NULL,
+                                    is_active INTEGER DEFAULT 1,
+                                    left_at REAL,
+                                    activity_level REAL DEFAULT 0.5,
+                                    wake_sensitivity REAL DEFAULT 1.0,
+                                    notes TEXT DEFAULT ''
+                                );
+                            """)
+                            _corpus_inited = True
                         db.execute(
                             "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot) VALUES (?,?,?,?,?,?,?,?)",
                             (cid, chat_type, str(user_id), sender_name, content, str(message_id), _ts, is_bot),
                         )
+                        db.execute(
+                            """INSERT INTO corpus_messages
+                               (message_id, chat_id, chat_type, group_id, user_id,
+                                sender_name, sender_card, content_raw, content_readable,
+                                is_bot, created_at)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                            (str(message_id), cid, chat_type,
+                             group_id if chat_type == "group" else "",
+                             user_id, sender_name, sender_card,
+                             content_raw, content, is_bot, _ts),
+                        )
+                        if chat_type == "group" and group_id:
+                            db.execute(
+                                "INSERT OR IGNORE INTO groups_registry (group_id, group_name, joined_at) VALUES (?, ?, ?)",
+                                (group_id, group_name, _ts),
+                            )
+                            if group_name:
+                                db.execute(
+                                    "UPDATE groups_registry SET group_name=? WHERE group_id=? AND group_name!=?",
+                                    (group_name, group_id, group_name),
+                                )
+                        if is_bot == 1:
+                            db.execute(
+                                """INSERT INTO corpus_pairs (bot_reply_text, created_at)
+                                   VALUES (?, ?)""",
+                                (content[:4000], _ts),
+                            )
                         db.commit()
                         db.close()
                         break
@@ -258,8 +388,9 @@ class OneBotAdapter(BasePlatformAdapter):
             clauses = " OR ".join(["value LIKE ?" for _ in words[:8]])
             params = [f"%{w}%" for w in words[:8]]
             rows = conn.execute(
-                f"SELECT value, category, key FROM long_term_entries "
+                f"SELECT value, category, key, id, recall_strength FROM long_term_entries "
                 f"WHERE ({clauses}) AND confidence >= 0.4 "
+                f"AND active = 1 "
                 f"AND category NOT IN ('sticker') "
                 f"ORDER BY confidence DESC LIMIT 5",
                 params,
@@ -268,11 +399,14 @@ class OneBotAdapter(BasePlatformAdapter):
             if not rows:
                 return ""
 
+            # L1 reconsolidate: each recall hit strengthens the memory
+            gw._ltm.reconsolidate(rows[0][3])
+
             # Tag-based expansion: for each hit, pull entries sharing tags
             import json as _json
             seen_keys = {row[2] for row in rows}
             expanded = list(rows)
-            for _, cat, key in rows[:3]:  # Expand from top 3 hits only
+            for value, cat, key, rid, rstrength in rows[:3]:  # Expand from top 3 hits only
                 tag_row = conn.execute(
                     "SELECT tags FROM long_term_entries WHERE key = ?", (key,)
                 ).fetchone()
@@ -285,31 +419,51 @@ class OneBotAdapter(BasePlatformAdapter):
                 for tag in entry_tags[:4]:
                     if len(expanded) >= 8:
                         break
-                    sub = conn.execute(
-                        "SELECT value, category, key FROM long_term_entries "
-                        "WHERE tags LIKE ? AND key != ? "
-                        "AND confidence >= 0.4 AND key NOT IN ({}) "
-                        "LIMIT 2".format(",".join("?" * len(seen_keys))),
-                        [f"%{tag}%", key] + list(seen_keys),
-                    ).fetchall()
-                    for v, c, k in sub:
-                        if k not in seen_keys:
-                            expanded.append((v, c, k))
-                            seen_keys.add(k)
+                        sub = conn.execute(
+                            "SELECT value, category, key, id, recall_strength FROM long_term_entries "
+                            "WHERE tags LIKE ? AND key != ? "
+                            "AND active = 1 "
+                            "AND confidence >= 0.4 AND key NOT IN ({}) "
+                            "LIMIT 2".format(",".join("?" * len(seen_keys))),
+                            [f"%{tag}%", key] + list(seen_keys),
+                        ).fetchall()
+                        for v, c, k, rid, rstrength in sub:
+                            if k not in seen_keys:
+                                expanded.append((v, c, k, rid, rstrength))
+                                seen_keys.add(k)
 
             lines = []
-            for value, cat, key in expanded[:5]:  # Limit total to 5
+            for row in expanded[:5]:  # Limit total to 5
+                value, cat, key, rid, rstrength = row
                 # Skip entries from the sender (already in identity card)
                 if exclude_qq and key.startswith(f"{exclude_qq}_"):
                     continue
                 text = value.strip()[:100]
                 if text:
+                    # L5: mark uncertain memories
+                    if rstrength is not None and rstrength < 0.3:
+                        text = f"[不确定] {text}"
                     lines.append(text)
 
             if not lines:
                 return ""
 
-            return "[相关记忆] " + "；".join(lines)
+            result = "[相关记忆] " + "；".join(lines)
+
+            try:
+                matched_wfs = gw._wfm.match_trigger(message_text)
+                if matched_wfs:
+                    wf_hints = []
+                    for wf in matched_wfs[:2]:
+                        if wf.current_weight > 0.15:
+                            steps_preview = " → ".join(wf.steps[:3]) if wf.steps else ""
+                            wf_hints.append(f"{wf.name}({wf.current_weight:.2f}): {steps_preview}")
+                    if wf_hints:
+                        result += "\n[可用行为模式] " + " | ".join(wf_hints)
+            except Exception:
+                pass
+
+            return result
         except Exception:
             return ""
 
@@ -646,6 +800,8 @@ class OneBotAdapter(BasePlatformAdapter):
         - [CQ:face,...] → [动画表情]
         - [CQ:video,...] → [视频]
         - [CQ:file,...] → [文件]
+        - [CQ:json,...] → [分享: 标题] / [分享]
+        - [CQ:xml,...]  → [卡片: 标题] / [卡片]
         - All others → removed
         """
         if not text:
@@ -657,8 +813,153 @@ class OneBotAdapter(BasePlatformAdapter):
         text = re.sub(r'\[CQ:face,[^\]]*\]', '[动画表情]', text)
         text = re.sub(r'\[CQ:video,[^\]]*\]', '[视频]', text)
         text = re.sub(r'\[CQ:file,[^\]]*\]', '[文件]', text)
+        # Card/share messages: extract title if available, preserve as marker
+        text = re.sub(r'\[CQ:json,[^\]]*\]', lambda m: f'[分享]', text)
+        text = re.sub(r'\[CQ:xml,[^\]]*\]', lambda m: f'[卡片]', text)
         text = re.sub(r'\[CQ:[^\]]+\]', '', text)
         return text.strip()
+
+    def _is_reply_to_bot(self, msg: dict) -> bool:
+        """Check if this message is a reply to one of the bot's own messages."""
+        sid = msg.get("_reply_sender_id")
+        return sid and str(sid) == str(self._self_id)
+
+    def _should_check(self, msg: dict, group_id: str, user_id, raw_text: str) -> bool:
+        """Determine whether the LLM should decide if it wants to join the conversation.
+
+        Returns True for: reply to bot, wake word, or recent bot activity in the group.
+        """
+        # Dedup: don't check the same message twice
+        msg_id = str(msg.get("message_id", ""))
+        if msg_id in self._checked_messages:
+            return False
+        self._checked_messages.add(msg_id)
+        if len(self._checked_messages) > 500:
+            self._checked_messages.clear()
+
+        # 1. Someone replied to the bot
+        if self._is_reply_to_bot(msg):
+            return True
+
+        # 2. Message contains a wake word
+        text_lower = raw_text.lower() if raw_text else ""
+        if any(w in text_lower for w in self._wake_words):
+            return True
+
+        # 3. Bot recently spoke and the topic might be ongoing — but skip
+        #    pure cards/shares (they have no user-generated text content)
+        _clean = self._cq_to_readable(raw_text) if raw_text else ""
+        _is_card = not _clean.strip() or _clean.strip() in ("[分享]", "[卡片]", "[文件]", "[聊天记录]", "")
+        if _is_card:
+            return False
+        last = self._last_bot_reply.get(group_id)
+        if last and time.time() - last[0] < 300:
+            return True
+
+        # Episode boundary: bot hasn't spoken in >5min → archive previous segment
+        if last and time.time() - last[0] >= 300:
+            self._write_episodic_segment(group_id)
+
+        return False
+
+    # ── STM → Episodic Interface ─────────────────────────────────
+
+    def _write_episodic_segment(self, group_id: str):
+        """Archive the previous conversation segment as an episodic memory entry.
+
+        Called when a new wake trigger fires after >5min silence — the old
+        episode has ended. Collects messages since the last bot reply and
+        writes a single episodic row to LTM for L3 sleep loop processing.
+        """
+        try:
+            from agent.memory.long_term import LongTermMemory
+            from agent.memory.store import MemoryStore
+            import json as _json, sqlite3 as _sqlite3
+
+            store = MemoryStore()
+            ltm = LongTermMemory(store)
+
+            last_reply = self._last_bot_reply.get(group_id)
+            if not last_reply:
+                return
+            since_ts = last_reply[0] - 600
+
+            state_db = str(get_state_db_path())
+            sdb = _sqlite3.connect(state_db, timeout=10)
+            raw_msgs = sdb.execute(
+                """SELECT sender_name, content, is_bot, created_at, user_id
+                   FROM chat_message_buffer
+                   WHERE chat_id = ? AND created_at > ? AND created_at <= ?
+                   ORDER BY created_at ASC LIMIT 50""",
+                (group_id, since_ts, time.time()),
+            ).fetchall()
+            sdb.close()
+            msgs = [(r[0], r[1], r[2], r[3]) for r in raw_msgs]
+
+            if len(msgs) < 2:
+                return
+
+            participants = list(set(m[0] for m in msgs if m[0] != "bot"))
+            time_range = f"{msgs[0][3]:.0f}-{msgs[-1][3]:.0f}" if msgs else ""
+            text = "\n".join(f"{m[0]}: {m[1][:100]}" for m in msgs)
+
+            try:
+                from agent.memory.date_resolver import resolve_relative_dates
+                text, _ = resolve_relative_dates(text, msgs[0][3] if msgs else time.time())
+            except Exception:
+                pass
+
+            first_user_id = ""
+            for r in raw_msgs:
+                if r[2] == 0 and r[4]:
+                    first_user_id = str(r[4])
+                    break
+
+            contains_correction = False
+            for _, content, _, _ in msgs:
+                if any(w in (content or "").lower() for w in
+                       ["搞错了", "不对", "不是", "记错了", "更正", "纠正", "早就", "过了"]):
+                    contains_correction = True
+                    break
+
+            type_data = _json.dumps({
+                "participants": participants,
+                "time_range": [msgs[0][3], msgs[-1][3]] if msgs else [],
+                "topic": "",
+                "turn_count": len(msgs),
+                "source_msg_ids": [],
+                "contains_correction": contains_correction,
+                "intent": "group_chat",
+                "source": "adapter_episodic",
+            }, ensure_ascii=False)
+
+            ltm.add_fact(
+                category="general",
+                key=f"ep_{group_id}_{int(time.time())}",
+                value=text[:2000],
+                confidence=0.3,
+                derivation="direct",
+                memory_type="episodic",
+                type_data=_json.loads(type_data),
+                salience=0.4,
+                source_user_id=first_user_id,
+                source_message_ts=time_range,
+                source_context=f"group:{group_id}",
+            )
+            logger.info("[OneBot] Episode written: group=%s msgs=%d correction=%s",
+                       group_id, len(msgs), contains_correction)
+        except Exception as e:
+            logger.warning("[OneBot] Episode write failed: %s", e)
+
+    def _get_trigger_reason(self, msg: dict, raw_text: str) -> str:
+        """Explain why the bot is being asked to decide whether to reply."""
+        if self._is_reply_to_bot(msg):
+            return "有人在回复你"
+        text_lower = raw_text.lower() if raw_text else ""
+        for w in self._wake_words:
+            if w in text_lower:
+                return f"有人提到了'{w}'"
+        return "你最近在这个群说过话，话题可能在延续"
 
     # ------------------------------------------------------------------
     # Message processing
@@ -757,8 +1058,28 @@ class OneBotAdapter(BasePlatformAdapter):
                    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp"}
         return mapping.get(ext.lower(), "image/jpeg")
 
+    def _transcribe_voice(self, voice_path: str) -> str:
+        """Transcribe a voice file using FunASR SenseVoiceSmall. Cached per path."""
+        if voice_path in self._voice_transcripts:
+            return self._voice_transcripts[voice_path]
+        if not os.path.exists(voice_path):
+            return "语音"
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path.home() / ".hermes" / "tools"))
+            from stt_funasr import transcribe
+            result = transcribe(voice_path)
+            text = result.get("text", "").strip()
+            if text and text != "语音":
+                self._voice_transcripts[voice_path] = text
+                return text
+        except Exception as e:
+            logger.warning("[OneBot] Voice transcription failed for %s: %s", voice_path, e)
+        self._voice_transcripts[voice_path] = "语音"
+        return "语音"
+
     async def _describe_image(self, image_path: str) -> str:
-        """Describe an image using the configured vision model. Cached per path."""
+        """Describe an image using the vision model (MiMo v2.5). Cached per path."""
         if image_path in self._image_descriptions:
             return self._image_descriptions[image_path]
         if not os.path.exists(image_path):
@@ -1152,7 +1473,9 @@ class OneBotAdapter(BasePlatformAdapter):
                     buf.append({"name": sname, "text": buf_text, "ts": ts, "uid": str(sid)})
                     self._persist_chat_message(group_id, "group", int(sid or 0), sname, text,
                                                message_id=str(m.get("real_id", m.get("message_id", ""))),
-                                               created_at=ts)
+                                               created_at=ts,
+                                               content_raw=text,
+                                               sender_card=sender.get("card", ""))
                     # Only respond to real @mentions within 3 minutes of last activity
                     if m.get("_is_placeholder"):
                         continue
@@ -1316,9 +1639,63 @@ class OneBotAdapter(BasePlatformAdapter):
                     _image_hint = " [image:download_failed]"
 
             # Buffer ALL group messages for context
-            # Strip CQ codes (e.g. [CQ:image,...]) so raw protocol data
-            # never leaks into the LLM's group context.
-            _clean_text = self._cq_to_readable(raw_text)
+            # Extract forwarded/merged chat records from segment data BEFORE cleaning
+            _fwd_text = ""
+            _segments = msg.get("message", [])
+            _seg_types = [s.get("type","?") for s in _segments] if isinstance(_segments, list) else []
+            print(f"[ONEBOT-DEBUG] msg_id={msg.get('message_id')} raw_len={len(raw_text or '')} seg_count={len(_segments)} types={_seg_types}", flush=True)
+            # For forwards, the segment data may be CQ-encoded stub — always fetch via API
+            if "forward" in _seg_types or "node" in _seg_types or "CQ:forward" in (raw_text or ""):
+                try:
+                    _full = await self._send_action("get_forward_msg", {"message_id": msg.get("message_id")})
+                    _segments = (_full.get("data", {}) or {}).get("messages", [])  # API returns "messages", not "message"
+                    print(f"[ONEBOT-DEBUG] get_forward_msg returned {len(_segments)} messages", flush=True)
+                except Exception as e:
+                    print(f"[ONEBOT-DEBUG] get_forward_msg failed: {e}", flush=True)
+            # Build forward text from either segment data.content or API messages
+            _fwd_parts = []
+            _fwd_image_paths = []
+            for _seg in _segments if isinstance(_segments, list) else []:
+                if _seg.get("sender"):  # API response
+                    _name = _seg.get("sender", {}).get("nickname", "?")
+                    _t = _seg.get("raw_message") or OneBotAdapter._get_text_from_segments(_seg)
+                    if self._has_image_message(_seg):
+                        try:
+                            _imgs = await self._get_image_files(_seg)
+                            if _imgs:
+                                _fwd_image_paths.extend(_imgs)
+                                _t = (_t or "") + " [图片]"
+                        except Exception:
+                            _t = (_t or "") + " [图片]"
+                    _uid = _seg.get("user_id") or _seg.get("sender", {}).get("user_id", "")
+                    _prefix = f"{_name}(QQ{_uid})" if _uid else _name
+                    _fwd_parts.append(f"{_prefix}: {_t[:80]}")
+                elif _seg.get("type") in ("forward", "node"):
+                    _content = _seg.get("data", {}).get("content")
+                    if isinstance(_content, list):
+                        for _fm in _content[:10]:
+                            _name = _fm.get("sender", {}).get("nickname", "?")
+                            _t = _fm.get("raw_message") or OneBotAdapter._get_text_from_segments(_fm)
+                            if self._has_image_message(_fm):
+                                try:
+                                    _imgs = await self._get_image_files(_fm)
+                                    if _imgs:
+                                        _fwd_image_paths.extend(_imgs)
+                                        _t = (_t or "") + " [图片]"
+                                except Exception:
+                                    _t = (_t or "") + " [图片]"
+                            _uid = _fm.get("user_id") or _fm.get("sender", {}).get("user_id", "")
+                            _prefix = f"{_name}(QQ{_uid})" if _uid else _name
+                            _fwd_parts.append(f"{_prefix}: {_t[:80]}")
+                    break
+            if _fwd_parts:
+                _fwd_text = "[转发: " + " | ".join(_fwd_parts) + "]"
+                print(f"[ONEBOT-DEBUG] Extracted forward: {len(_fwd_parts)} msgs, {len(_fwd_image_paths)} images", flush=True)
+            # Clean CQ codes — use forward text if available, otherwise raw text
+            _clean_text = _fwd_text if _fwd_text else self._cq_to_readable(raw_text)
+            # Inject downloaded forward images into buffer so vision tool can process them
+            if _fwd_image_paths:
+                _clean_text += " [image:" + ",".join(_fwd_image_paths) + "]"
             if group_id not in self._group_buffer:
                 self._group_buffer[group_id] = []
             buf = self._group_buffer[group_id]
@@ -1326,13 +1703,29 @@ class OneBotAdapter(BasePlatformAdapter):
             buf.append({"name": sender_name, "text": m_text, "ts": time.time(), "uid": str(user_id)})
             # Persist to SQLite buffer — permanent archive, time-based window for context
             _msg_id = str(msg.get("message_id", ""))
-            self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id)
+            self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id,
+                                       content_raw=raw_text,
+                                       sender_card=sender.get("card", ""))
 
-            # Trigger: @mention only (no # prefix trigger)
+            # Spawn background investigation for card/share messages
+            if "[分享]" in _clean_text or "[卡片]" in _clean_text:
+                _script = str(Path.home() / ".hermes" / "subagents" / "investigate")
+                _raw = msg.get("raw_message", "")
+                subprocess.Popen(
+                    [_sys.executable, _script, _raw, _msg_id],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+
+            # Trigger: @mention → mandatory reply. Also allow smart-trigger for replies/wake-words.
             should_trigger = is_mentioned
             if not should_trigger:
-                logger.info("[OneBot] Group message without trigger, lurking")
-                return
+                decision_reason = self._get_trigger_reason(msg, raw_text)
+                if self._should_check(msg, group_id, user_id, raw_text):
+                    should_trigger = True
+                    msg["_decision_mode"] = decision_reason
+                else:
+                    logger.info("[OneBot] Group message without trigger, lurking")
+                    return
 
         # Multi-@mention batching: merge nearby @mentions into one agent run
         if msg_type == "group" and is_mentioned and not msg.get("_skip_mention_batch"):
@@ -1391,13 +1784,42 @@ class OneBotAdapter(BasePlatformAdapter):
                         # Enrich image references with vision model descriptions
                         if '[image:' in text:
                             _img_paths = re.findall(r'\[image:([^\]]+)\]', text)
-                            for path in _img_paths[:5]:  # Max 5 images per context window
+                            for path in _img_paths[:5]:
                                 desc = await self._describe_image(path)
                                 text = text.replace(f'[image:{path}]', f'[图片: {desc}]')
+                        # Transcribe voice messages with local faster-whisper
+                        if '[语音:' in text:
+                            _voice_paths = re.findall(r'\[语音:([^\]]+)\]', text)
+                            for path in _voice_paths[:3]:
+                                transcript = self._transcribe_voice(path)
+                                text = text.replace(f'[语音:{path}]', f'[语音: {transcript}]')
                         ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
                         raw_lines.append(f"[{ts}] {m['name']}({m.get('uid','')})" + (f": {text}" if text else ""))
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines)
+            # Inject pending investigation results for card/share messages
+            _inv_dir = Path.home() / ".hermes" / "investigations"
+            if _inv_dir.exists():
+                _inv_lines = []
+                _now = time.time()
+                for m in recent[-10:]:  # Check last 10 messages
+                    _txt = m.get("text", "")
+                    if "[分享]" in _txt or "[卡片]" in _txt:
+                        # Look for investigation results — match by timestamp proximity
+                        for _inv_f in sorted(_inv_dir.glob("*.json"), reverse=True):
+                            try:
+                                _inv_data = json.loads(_inv_f.read_text(encoding="utf-8"))
+                                _inv_ts = _inv_data.get("ts", 0)
+                                if abs(_inv_ts - m.get("ts", 0)) < 60:  # Within 60s of msg
+                                    _summary = _inv_data.get("summary", "")
+                                    if _summary and not _summary.startswith("[探索失败"):
+                                        _inv_lines.append(f"[内容探索] {_summary}")
+                                    _inv_f.unlink()  # Consume, don't repeat
+                                    break
+                            except Exception:
+                                pass
+                if _inv_lines:
+                    group_context = (group_context or "") + "\n\n" + "\n".join(_inv_lines)
             # API fallback (only when buffer is completely empty)
             if not group_context:
                 try:
@@ -1428,11 +1850,17 @@ class OneBotAdapter(BasePlatformAdapter):
             else:
                 _preview_text = self._cq_to_readable(self._get_raw_text(msg) or "")
             # Inject group chat context: identify WHO sent the message and WHAT they said
-            trigger_reason = "该用户@了你"
+            _dm_reason = msg.get("_decision_mode", "")
+            if _dm_reason:
+                trigger_reason = _dm_reason
+            else:
+                trigger_reason = "该用户@了你"
             msg_time = msg.get("time", 0)
             time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
+            _prefix = (f"[旁观模式] {trigger_reason}。" if _dm_reason
+                       else f"[群聊模式] {time_str} 来自「{sender_name}」：{_preview_text[:100]}。")
             channel_prompt = (
-                f"[群聊模式] {time_str} 来自「{sender_name}」：{_preview_text[:100]}。{trigger_reason}"
+                _prefix + trigger_reason
                 + (f"\n\n{group_context}" if group_context else "")
             )
             # Extract buffered image paths from group context so the AI can
@@ -1447,7 +1875,7 @@ class OneBotAdapter(BasePlatformAdapter):
             # Inject sender identity card for group messages
             identity = self._get_sender_identity(user_id_str, sender_name)
             if identity:
-                channel_prompt = identity
+                channel_prompt = (channel_prompt + "\n\n" + identity) if channel_prompt else identity
             recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
             if recall:
                 channel_prompt = (channel_prompt + "\n\n" + recall) if channel_prompt else recall
@@ -1486,7 +1914,7 @@ class OneBotAdapter(BasePlatformAdapter):
             if _recover_rid:
                 try:
                     import sqlite3
-                    db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
+                    db = sqlite3.connect(str(get_state_db_path()))
                     row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
                     db.close()
                     if row:
@@ -1499,14 +1927,16 @@ class OneBotAdapter(BasePlatformAdapter):
             reply_raw = {}
             try:
                 import sqlite3
-                db = sqlite3.connect(str(Path.home() / ".hermes" / "state.db"))
-                row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
+                db = sqlite3.connect(str(get_state_db_path()))
+                row = db.execute("SELECT sender_name, content, user_id FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
                 db.close()
                 if row:
                     reply_raw = {
                         "raw_message": row[1],
-                        "sender": {"nickname": row[0]},
+                        "sender": {"nickname": row[0], "user_id": row[2]},
                     }
+                    if not msg.get("_reply_sender_id"):
+                        msg["_reply_sender_id"] = row[2]
             except Exception:
                 pass
             # Try 2: NapCat get_msg API (for image download when DB doesn't have it)
@@ -1514,6 +1944,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 try:
                     reply_data = await self._send_action("get_msg", {"message_id": reply_msg_id})
                     reply_raw = reply_data.get("data", {}) or reply_raw
+                    # Store reply sender ID so standalone checks can see who was replied to
+                    if reply_raw and not msg.get("_reply_sender_id"):
+                        msg["_reply_sender_id"] = (reply_raw.get("sender", {}).get("user_id")
+                                                    or reply_raw.get("user_id"))
                 except Exception:
                     pass
 
@@ -1563,14 +1997,16 @@ class OneBotAdapter(BasePlatformAdapter):
             voice_path = await self._get_voice_file(msg)
             if voice_path:
                 logger.info("[OneBot] Voice message received, saved to: %s", voice_path)
-                # Buffer as [语音] so group context knows a voice msg was sent
+                # Buffer with path so context builder can transcribe it
                 if group_id not in self._group_buffer:
                     self._group_buffer[group_id] = []
                 self._group_buffer[group_id].append({
-                    "name": sender_name, "text": "[语音]", "ts": time.time(), "uid": str(user_id)
+                    "name": sender_name, "text": f"[语音: {voice_path}]", "ts": time.time(), "uid": str(user_id)
                 })
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
-                                           "[语音]", message_id=str(msg.get("message_id", "")))
+                                           "[语音]", message_id=str(msg.get("message_id", "")),
+                                           content_raw=self._get_raw_text(msg),
+                                           sender_card=sender.get("card", ""))
                 event = MessageEvent(
                     text="",
                     message_type=MessageType.VOICE,
@@ -1642,88 +2078,77 @@ class OneBotAdapter(BasePlatformAdapter):
         logger.info("[OneBot] Extracted text: %s", text[:200] if text else "(empty)")
 
         # Handle forwarded/merged messages (聊天记录合并转发)
+        # NapCat represents forwards as: type="forward"/type="node" in array format,
+        # or [CQ:forward,id=xxx,...] in CQ code format. Try all known patterns.
         segments = msg.get("message", [])
         forward_id = None
         for seg in segments if isinstance(segments, list) else []:
-            if seg.get("type") == "forward":
+            if seg.get("type") in ("forward", "node"):
                 forward_id = self._get_seg_data(seg, "id", "")
-                break
+                if forward_id:
+                    break
+        # Fallback: extract id from CQ code in raw_message
+        if not forward_id:
+            raw_text = self._get_raw_text(msg) or ""
+            fm = re.search(r'\[CQ:forward,id=(\d+)', raw_text)
+            if fm:
+                forward_id = fm.group(1)
         forward_image_paths = []
         if forward_id:
-            # Wait longer for NapCat to resolve forward content (can be slow with many messages)
-            await asyncio.sleep(3)
-            for param_key in ("message_id", "id"):
-                try:
-                    fwd_data = await self._send_action("get_forward_msg", {param_key: forward_id})
-                    fwd_msgs = fwd_data.get("data", {}).get("messages", [])
+            # Try 1: embedded content in segment data (most reliable, no API call)
+            fwd_msgs = None
+            for seg in segments if isinstance(segments, list) else []:
+                if seg.get("type") in ("forward", "node"):
+                    raw_content = seg.get("data", {}).get("content")
+                    if isinstance(raw_content, list):
+                        fwd_msgs = raw_content
+                    elif isinstance(raw_content, str):
+                        import json as _json
+                        try:
+                            fwd_msgs = _json.loads(raw_content)
+                        except Exception:
+                            pass
                     if fwd_msgs:
-                        parts = []
-                        for fm in fwd_msgs:
-                            name = fm.get("sender", {}).get("nickname", "")
-                            fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
-                            # Download images in forwarded messages for vision
-                            if self._has_image_message(fm):
-                                try:
-                                    _fwd_imgs = await self._get_image_files(fm)
-                                    if _fwd_imgs:
-                                        forward_image_paths.extend(_fwd_imgs)
-                                        fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
-                                except Exception:
-                                    pass
-                            # Clean CQ codes from text
-                            fwd_text = self._cq_to_readable(fwd_text or "")
-                            if fwd_text:
-                                parts.append(f"{name}: {fwd_text}")
-                        if parts:
-                            # Forwarded content goes into channel_prompt as context,
-                            # NOT into the main text — it must not override the live conversation.
-                            _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
-                            if len(_fwd_block) > 2000:
-                                _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
-                            # Inject into channel_prompt for this event (lower priority than live context)
-                            # Keep original text for the user's actual message
-                            if not hasattr(self, '_fwd_temp'):
-                                self._fwd_temp = {}
-                            self._fwd_temp[forward_id] = _fwd_block
-                            text = text or ""  # keep the actual trigger message separate
-                except Exception:
-                    continue
-            # If still empty, retry again after more delay
-            if not text.strip():
+                        break
+            # Try 2: get_forward_msg API (fallback for expired forwards)
+            if not fwd_msgs:
                 await asyncio.sleep(3)
                 for param_key in ("message_id", "id"):
                     try:
                         fwd_data = await self._send_action("get_forward_msg", {param_key: forward_id})
                         fwd_msgs = fwd_data.get("data", {}).get("messages", [])
                         if fwd_msgs:
-                            parts = []
-                            for fm in fwd_msgs:
-                                name = fm.get("sender", {}).get("nickname", "")
-                                fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
-                                if self._has_image_message(fm):
-                                    try:
-                                        _fwd_imgs = await self._get_image_files(fm)
-                                        if _fwd_imgs:
-                                            forward_image_paths.extend(_fwd_imgs)
-                                            fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
-                                    except Exception:
-                                        pass
-                                fwd_text = self._cq_to_readable(fwd_text or "")
-                                if fwd_text:
-                                    parts.append(f"{name}: {fwd_text}")
-                            if parts:
-                                _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
-                                if len(_fwd_block) > 2000:
-                                    _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
-                                if not hasattr(self, '_fwd_temp'):
-                                    self._fwd_temp = {}
-                                self._fwd_temp[forward_id] = _fwd_block
-                                logger.info("[OneBot] Retry extracted forward content: %d messages, %d images", len(parts), len(forward_image_paths))
-                                break
-                                logger.info("[OneBot] Retry extracted forward content: %d messages", len(parts))
-                                break
+                            break
                     except Exception:
                         continue
+            if fwd_msgs:
+                parts = []
+                for fm in fwd_msgs:
+                    name = fm.get("sender", {}).get("nickname", "")
+                    fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
+                    # Download images in forwarded messages for vision
+                    if self._has_image_message(fm):
+                        try:
+                            _fwd_imgs = await self._get_image_files(fm)
+                            if _fwd_imgs:
+                                forward_image_paths.extend(_fwd_imgs)
+                                fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
+                        except Exception:
+                            pass
+                    # Clean CQ codes from text
+                    fwd_text = self._cq_to_readable(fwd_text or "")
+                    if fwd_text:
+                        parts.append(f"{name}: {fwd_text}")
+                if parts:
+                    # Forwarded content goes into channel_prompt as context,
+                    # NOT into the main text
+                    _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
+                    if len(_fwd_block) > 2000:
+                        _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
+                    if not hasattr(self, '_fwd_temp'):
+                        self._fwd_temp = {}
+                    self._fwd_temp[forward_id] = _fwd_block
+                    text = text or ""
         if text.strip().startswith("[CQ:forward"):
             text = ""
         if not text.strip():
@@ -1876,6 +2301,45 @@ class OneBotAdapter(BasePlatformAdapter):
             if not content or not content.strip():
                 return SendResult(success=True, message_id=None)
         # ── 过滤结束 ──
+        # ── 报告→聊天重写：检测并转换 md/报告风格为自然对话 ──
+        if content and len(content) > 80:
+            _has_md = bool(re.search(r'\*\*|^[\d]+\.\s|^#{1,6}\s|^[-*]\s', content, re.MULTILINE))
+            _has_sections = content.count('\n\n') > 2
+            if _has_md or _has_sections:
+                try:
+                    import requests as _r
+                    # 加载 SOUL.md + config system_prompt 作为人设
+                    _persona = ""
+                    _soul_path = Path.home() / ".hermes" / "SOUL.md"
+                    if _soul_path.exists():
+                        _persona = _soul_path.read_text(encoding="utf-8")[:3000]
+                    _cfg_path = Path.home() / ".hermes" / "config.yaml"
+                    if _cfg_path.exists():
+                        import yaml as _y
+                        _cfg = _y.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}
+                        _sys = (_cfg.get("agent", {}) or {}).get("system_prompt", "") or ""
+                        if _sys:
+                            _persona += "\n\n" + _sys[:2000]
+                    _api_key = "{{DEEPSEEK_API_KEY}}"
+                    _resp = _r.post(
+                        "https://api.deepseek.com/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": "deepseek-v4-flash",
+                            "messages": [
+                                {"role": "system", "content": f"{_persona}\n\n【任务】把你收到的最后一条消息（一篇报告/分析）改写成你自己的说话风格。去掉所有markdown、列表、编号、分段标题。用日常口语，像普通女高中生聊天。保持原意但一句一句说，不要一口气说完。"},
+                                {"role": "user", "content": content},
+                            ],
+                            "max_tokens": min(len(content) * 2, 2000),
+                            "temperature": 0.7,
+                        },
+                        timeout=15,
+                    )
+                    _rewritten = _resp.json()["choices"][0]["message"]["content"].strip()
+                    if _rewritten and len(_rewritten) > 10:
+                        content = _rewritten
+                except Exception:
+                    pass  # Fall through with original content
         # ── 兜底：sticker路径走图片发送 ──
         if content and content.strip() in self._STICKER_PATHS:
             return await self.send_image(chat_id, content.strip(), reply_to=reply_to)
@@ -2050,190 +2514,14 @@ class OneBotAdapter(BasePlatformAdapter):
                 message.insert(0, {"type": "text", "data": {"text": caption}})
 
             if chat_id.startswith("group:"):
-                try:
-                    gid = int(chat_id.split(":", 1)[1])
-                except (ValueError, IndexError):
-                    logger.warning("[OneBot] Invalid group chat_id: %s", chat_id)
-                    return SendResult(success=False, error="Invalid group chat_id", retryable=False)
+                gid = int(chat_id.split(":", 1)[1])
                 result = await self._send_action("send_group_msg", {"group_id": gid, "message": message})
             else:
-                try:
-                    uid = int(chat_id)
-                except ValueError:
-                    logger.warning("[OneBot] Invalid private chat_id: %s", chat_id)
-                    return SendResult(success=False, error="Invalid private chat_id", retryable=False)
-                result = await self._send_action("send_private_msg", {"user_id": uid, "message": message})
-
-            msg_id = (result.get("data") or {}).get("message_id")
-            return SendResult(
-                success=True,
-                message_id=str(msg_id) if msg_id else None,
-                raw_response=result,
-            )
-        except Exception as e:
-            logger.error("[OneBot] Failed to send voice: %s", e)
-            return SendResult(success=False, error=str(e), retryable=True)
-
-    async def send_typing(self, chat_id: str, metadata=None) -> None:
-        """OneBot doesn't support typing indicators natively, so this is a no-op."""
-        pass
-
-    async def edit_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        content: str,
-        *,
-        finalize: bool = False,
-    ) -> SendResult:
-        """QQ doesn't support message editing — send a new message instead."""
-        return await self.send(chat_id, content, metadata=None)
-
-    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
-        """Get information about a QQ chat."""
-        try:
-            if chat_id.startswith("group:"):
-                gid = int(chat_id.split(":", 1)[1])
-                result = await self._send_action("get_group_info", {"group_id": gid})
-                data = result.get("data", {})
-                return {
-                    "name": data.get("group_name", f"Group {gid}"),
-                    "type": "group",
-                    "member_count": data.get("member_count", 0),
-                }
-            else:
                 uid = int(chat_id)
-                result = await self._send_action("get_stranger_info", {"user_id": uid})
-                data = result.get("data", {})
-                return {
-                    "name": data.get("nickname", f"User {uid}"),
-                    "type": "dm",
-                }
+                result = await self._send_action("send_private_msg", {"user_id": uid, "message": message})
+            if result and result.get("data"):
+                return SendResult(success=True, message_id=str(result["data"].get("message_id", "")))
+            return SendResult(success=True)
         except Exception as e:
-            return {"name": chat_id, "type": "dm"}
-
-    # ── Image extraction override: [sticker:xxx] → local path → image send ──
-
-    _STICKER_MAP = {
-        "tea":        "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
-        "excited":    "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
-        "sad":        "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
-        "speechless": "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
-        "clasp":      "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
-        "拜托":       "/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg",
-        "喝茶":       "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg",
-        "兴奋":       "/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif",
-        "难过":       "/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg",
-        "无语":       "/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg",
-    }
-    _STICKER_PATHS = list(set(_STICKER_MAP.values()))
-
-    # Legacy: CQ face ID → sticker path (for backward compat)
-    _FACE_TO_STICKER = {
-        '192': '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg',
-        '193': '/home/{{USERNAME}}/Pictures/soyo_chibi_sad.jpg',
-        '194': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
-        '195': '/home/{{USERNAME}}/Pictures/soyo_chibi_speechless.jpg',
-        '196': '/home/{{USERNAME}}/Pictures/soyo_chibi_clasp.jpg',
-        '197': '/home/{{USERNAME}}/Pictures/soyo_chibi_excited.gif',
-    }
-
-    @staticmethod
-    def extract_local_files(content: str):
-        """Override: replace [sticker:xxx] / [CQ:face,id=N] with local paths → extract as image.
-        
-        LLM outputs short codes like [sticker:tea], adapter maps to local file paths,
-        base class extracts paths and sends as images via send_image().
-        """
-        import re as _re
-        # ── [sticker:xxx] → local path（模糊匹配LLM编的名字）──
-        def _replace_sticker(m):
-            name = m.group(1).strip().lower()
-            # 精确匹配
-            if name in OneBotAdapter._STICKER_MAP:
-                return OneBotAdapter._STICKER_MAP[name]
-            # 模糊匹配：从名字里找情绪词
-            if any(w in name for w in ['excite','happy','开心','兴奋','激动','好','耶','wink','笑','乐']):
-                return OneBotAdapter._STICKER_MAP['excited']
-            if any(w in name for w in ['sad','cry','难过','伤心','哭','委屈','泪']):
-                return OneBotAdapter._STICKER_MAP['sad']
-            if any(w in name for w in ['speechless','无语','shy','尴尬','汗','...','……','害羞','脸红']):
-                return OneBotAdapter._STICKER_MAP['speechless']
-            if any(w in name for w in ['clasp','拜托','求','please','撒娇','嘛','讨']):
-                return OneBotAdapter._STICKER_MAP['clasp']
-            # 默认：喝茶
-            return OneBotAdapter._STICKER_MAP['tea']
-        content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content, flags=_re.IGNORECASE)
-        # Catch incomplete [sticker: without closing ] (model truncation)
-        if '[sticker:' in content and ']' not in content.split('[sticker:')[-1][:20]:
-            content = content.replace('[sticker:', '/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg')
-        # ── [CQ:face,id=N] → local path (legacy) ──
-        def _replace_face(m):
-            fid = _re.search(r'id=(\d+)', m.group(0))
-            return OneBotAdapter._FACE_TO_STICKER.get(fid.group(1), '') if fid else ''
-        content = _re.sub(r'\[CQ:face,id=\d+\]', _replace_face, content)
-        # ── Ensure paths are on their own line (fix CJK粘连) ──
-        content = _re.sub(r'([^\s/\n])(/home/{{USERNAME}}/Pictures/[\w.\-]+\.(?:jpg|gif|png))', r'\1\n\2', content)
-        # ── Pass to base class: extracts paths from text, sends as images ──
-        return BasePlatformAdapter.extract_local_files(content)
-
-    async def send_image_file(
-        self, chat_id: str, image_path: str,
-        caption: Optional[str] = None, reply_to: Optional[str] = None, **kwargs,
-    ) -> SendResult:
-        """Send a local image file via OneBot. Delegates to send_image."""
-        return await self.send_image(chat_id, image_path, caption=caption, reply_to=reply_to, **kwargs)
-
-    async def send_document(
-        self, chat_id: str, file_path: str,
-        caption: Optional[str] = None, file_name: Optional[str] = None,
-        reply_to: Optional[str] = None, **kwargs,
-    ) -> SendResult:
-        """OneBot does not support generic document send. Silently drop."""
-        logger.debug("[OneBot] send_document not supported, skipping: %s", file_path)
-        return SendResult(success=True, message_id=None)
-
-# ── Plugin Registration ──
-
-def _check_requirements():
-    try:
-        import websockets, httpx
-        return True
-    except ImportError:
-        return False
-
-def _validate_config(cfg):
-    extra = getattr(cfg, "extra", {}) or {}
-    return bool(extra.get("ws_url") or os.getenv("ONEBOT_WS_URL"))
-
-def _is_connected(cfg):
-    return _validate_config(cfg)
-
-def _env_enablement():
-    ws = os.getenv("ONEBOT_WS_URL", "")
-    token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
-    home = os.getenv("ONEBOT_HOME_CHANNEL", "")
-    if not ws:
-        return None
-    extra = {"ws_url": ws}
-    if token:
-        extra["access_token"] = token
-    hc = {"chat_id": home} if home else None
-    return {"extra": extra, "home_channel": hc}
-
-def register(ctx):
-    ctx.register_platform(
-        name="onebot",
-        label="OneBot (QQ)",
-        adapter_factory=lambda cfg: OneBotAdapter(cfg),
-        check_fn=_check_requirements,
-        validate_config=_validate_config,
-        is_connected=_is_connected,
-        required_env=["ONEBOT_WS_URL"],
-        install_hint="pip install websockets httpx",
-        env_enablement_fn=_env_enablement,
-        allowed_users_env="ONEBOT_ALLOWED_USERS",
-        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
-        emoji="🐧",
-        pii_safe=False,
-    )
+            return SendResult(success=False, error=str(e))
+   
