@@ -169,7 +169,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 self._group_buffer[group_id] = []
             buf = self._group_buffer[group_id]
             label = "[语音]" if is_voice else ""
-            buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0"})
+            buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0", "mid": ""})
             self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
             self._last_bot_reply[group_id] = (time.time(), text)
         else:
@@ -1470,7 +1470,8 @@ class OneBotAdapter(BasePlatformAdapter):
                     # Store full text — QQ messages are already size-limited by protocol
                     buf_text = text
                     buf = self._group_buffer.setdefault(group_id, [])
-                    buf.append({"name": sname, "text": buf_text, "ts": ts, "uid": str(sid)})
+                    _mid = str(m.get("real_id", m.get("message_id", "")))
+                    buf.append({"name": sname, "text": buf_text, "ts": ts, "uid": str(sid), "mid": _mid})
                     self._persist_chat_message(group_id, "group", int(sid or 0), sname, text,
                                                message_id=str(m.get("real_id", m.get("message_id", ""))),
                                                created_at=ts,
@@ -1699,10 +1700,9 @@ class OneBotAdapter(BasePlatformAdapter):
             if group_id not in self._group_buffer:
                 self._group_buffer[group_id] = []
             buf = self._group_buffer[group_id]
-            m_text = (_clean_text + _image_hint)  # full text — no truncation, model can handle it
-            buf.append({"name": sender_name, "text": m_text, "ts": time.time(), "uid": str(user_id)})
-            # Persist to SQLite buffer — permanent archive, time-based window for context
+            m_text = (_clean_text + _image_hint)
             _msg_id = str(msg.get("message_id", ""))
+            buf.append({"name": sender_name, "text": m_text, "ts": time.time(), "uid": str(user_id), "mid": _msg_id})
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id,
                                        content_raw=raw_text,
                                        sender_card=sender.get("card", ""))
@@ -1781,10 +1781,13 @@ class OneBotAdapter(BasePlatformAdapter):
                 for m in recent:
                     if m['ts'] >= cutoff_5m:
                         text = m.get('text', '')
-                        # Enrich image references with vision model descriptions
                         if '[image:' in text:
                             _img_paths = re.findall(r'\[image:([^\]]+)\]', text)
                             for path in _img_paths[:5]:
+                                for _p in path.split(","):
+                                    _p = _p.strip()
+                                    if _p and _p != "download_failed" and not _p.startswith("qq_face:") and _p not in context_image_paths:
+                                        context_image_paths.append(_p)
                                 desc = await self._describe_image(path)
                                 text = text.replace(f'[image:{path}]', f'[图片: {desc}]')
                         # Transcribe voice messages with local faster-whisper
@@ -1794,7 +1797,8 @@ class OneBotAdapter(BasePlatformAdapter):
                                 transcript = self._transcribe_voice(path)
                                 text = text.replace(f'[语音:{path}]', f'[语音: {transcript}]')
                         ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
-                        raw_lines.append(f"[{ts}] {m['name']}({m.get('uid','')})" + (f": {text}" if text else ""))
+                        _mid_tag = f"[mid:{m.get('mid','')}]" if m.get('mid') else ""
+                        raw_lines.append(f"{_mid_tag}[{ts}] {m['name']}({m.get('uid','')})" + (f": {text}" if text else ""))
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines)
             # Inject pending investigation results for card/share messages
@@ -1863,15 +1867,6 @@ class OneBotAdapter(BasePlatformAdapter):
                 _prefix + trigger_reason
                 + (f"\n\n{group_context}" if group_context else "")
             )
-            # Extract buffered image paths from group context so the AI can
-            # actually see them via vision enrichment (instead of raw path strings).
-            if "[image:" in group_context:
-                import re as _rc
-                for _m in _rc.finditer(r'\[image:([^\]]+)\]', group_context):
-                    for _p in _m.group(1).split(","):
-                        _p = _p.strip()
-                        if _p and _p != "download_failed" and not _p.startswith("qq_face:") and _p not in context_image_paths:
-                            context_image_paths.append(_p)
             # Inject sender identity card for group messages
             identity = self._get_sender_identity(user_id_str, sender_name)
             if identity:
@@ -1879,6 +1874,12 @@ class OneBotAdapter(BasePlatformAdapter):
             recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
             if recall:
                 channel_prompt = (channel_prompt + "\n\n" + recall) if channel_prompt else recall
+            channel_prompt = (channel_prompt or "") + (
+                "\n\n[工具] 你可以用以下标记控制行为：\n"
+                "- 不想回话就只输出 [SILENT]（无其他文字）\n"
+                "- 想引用某条消息就在回复里用 [reply:消息ID]（ID 来自上方 [mid:xxx]）\n"
+                "- 不写 [reply:xxx] 时默认不引用任何消息"
+            )
         else:
             session_key = f"onebot:{user_id}"
             chat_id = user_id_str
@@ -1956,7 +1957,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 if reply_text:
                     reply_sender = reply_raw.get("sender", {})
                     reply_name = reply_sender.get("nickname", "Unknown")
-                    reply_to_text = f"[引用 {reply_name} 的消息: {reply_text}]"
+                    reply_to_text = f"[引用 [mid:{reply_msg_id}] {reply_name} 的消息: {reply_text}]"
                 else:
                     # Fallback for non-text replies (stickers, files, etc.)
                     segments = reply_raw.get("message", [])
@@ -1990,7 +1991,7 @@ class OneBotAdapter(BasePlatformAdapter):
             inline = self._get_reply_inline_text(msg)
             if inline:
                 inline = self._cq_to_readable(inline)
-                reply_to_text = f"[引用: {inline[:300]}]"
+                reply_to_text = f"[引用 [mid:{reply_msg_id}]: {inline[:300]}]"
 
         # Check if this is a voice message
         if self._has_voice_message(msg):
@@ -2001,7 +2002,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 if group_id not in self._group_buffer:
                     self._group_buffer[group_id] = []
                 self._group_buffer[group_id].append({
-                    "name": sender_name, "text": f"[语音: {voice_path}]", "ts": time.time(), "uid": str(user_id)
+                    "name": sender_name, "text": f"[语音: {voice_path}]", "ts": time.time(), "uid": str(user_id),
+                    "mid": str(msg.get("message_id", "")),
                 })
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
                                            "[语音]", message_id=str(msg.get("message_id", "")),
@@ -2271,7 +2273,21 @@ class OneBotAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        """Send a text message to a QQ chat. Multi-paragraph content is split into separate messages (simulates human typing)."""
+        """Send a text message to a QQ chat."""
+        if chat_id.startswith("group:") and content:
+            logger.debug("[OneBot] send: chat_id=%s len=%d starts=%s", chat_id, len(content), content[:80])
+        if content and "[SILENT]" in content:
+            logger.info("[OneBot] LLM chose [SILENT], suppressing message")
+            return SendResult(success=True, message_id=None)
+
+        if content and chat_id.startswith("group:"):
+            m = re.search(r'\[reply:(\d+)\]', content)
+            if m:
+                reply_to = m.group(1)
+                logger.info("[OneBot] send: parsed [reply:%s] from content, setting reply_to", reply_to)
+                content = content[:m.start()] + content[m.end():]
+                content = content.strip()
+
         # ── QQ 最终防线：过滤系统提示词和括号动作描写 ──
         if content:
             # 保存原始内容用于括号删除后的表情包回退
