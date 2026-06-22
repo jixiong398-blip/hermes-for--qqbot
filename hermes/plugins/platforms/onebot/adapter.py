@@ -1096,8 +1096,8 @@ class OneBotAdapter(BasePlatformAdapter):
                     vis = cfg.get("auxiliary", {}).get("vision", {})
                     self._vision_config = {
                         "api_key": vis.get("api_key", ""),
-                        "base_url": vis.get("base_url", ""),
-                        "model": vis.get("model", ""),
+                        "base_url": vis.get("base_url", "https://api.xiaomimimo.com/v1"),
+                        "model": vis.get("model", "mimo-v2.5"),
                     }
             if not self._vision_config.get("api_key"):
                 self._image_descriptions[image_path] = "图片"
@@ -1371,12 +1371,12 @@ class OneBotAdapter(BasePlatformAdapter):
         msg = dict(last["msg"])
         msg["raw_message"] = f"[CQ:at,qq={{BOT_QQ_ID}}] {merged_text}"
         msg["message"] = [
-            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
+                {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Re-process without batching — include images in merged message
         merged_msg_arr = [
-            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
+                {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Attach original image/face/mface segments so _get_image_files can process them
@@ -1877,8 +1877,9 @@ class OneBotAdapter(BasePlatformAdapter):
             channel_prompt = (channel_prompt or "") + (
                 "\n\n[工具] 你可以用以下标记控制行为：\n"
                 "- 不想回话就只输出 [SILENT]（无其他文字）\n"
-                "- 想引用某条消息就在回复里用 [reply:消息ID]（ID 来自上方 [mid:xxx]）\n"
-                "- 不写 [reply:xxx] 时默认不引用任何消息"
+                "- 想引用某条消息就在回复里用 [reply:消息ID]，消息ID 必须是上方 [mid:xxx] 里出现过的数字，不能自己编\n"
+                "- 不写 [reply:xxx] 时默认不引用任何消息\n"
+                "- 只有在回应某条具体消息时才引用，闲聊时不引用"
             )
         else:
             session_key = f"onebot:{user_id}"
@@ -2283,8 +2284,22 @@ class OneBotAdapter(BasePlatformAdapter):
         if content and chat_id.startswith("group:"):
             m = re.search(r'\[reply:(\d+)\]', content)
             if m:
-                reply_to = m.group(1)
-                logger.info("[OneBot] send: parsed [reply:%s] from content, setting reply_to", reply_to)
+                _reply_id = m.group(1)
+                try:
+                    import sqlite3 as _sql
+                    _db = _sql.connect(str(get_state_db_path()), timeout=5)
+                    _exists = _db.execute(
+                        "SELECT 1 FROM chat_message_buffer WHERE message_id=? LIMIT 1",
+                        (str(_reply_id),)
+                    ).fetchone()
+                    _db.close()
+                    if _exists:
+                        reply_to = _reply_id
+                        logger.info("[OneBot] send: parsed [reply:%s] from content, validated OK", reply_to)
+                    else:
+                        logger.warning("[OneBot] send: [reply:%s] ID not found in buffer, ignoring", _reply_id)
+                except Exception:
+                    pass
                 content = content[:m.start()] + content[m.end():]
                 content = content.strip()
 
@@ -2336,7 +2351,7 @@ class OneBotAdapter(BasePlatformAdapter):
                         _sys = (_cfg.get("agent", {}) or {}).get("system_prompt", "") or ""
                         if _sys:
                             _persona += "\n\n" + _sys[:2000]
-                    _api_key = "{{DEEPSEEK_API_KEY}}"
+                    _api_key = "sk-396ff7870ebd4c5e91708a95300c54f2"
                     _resp = _r.post(
                         "https://api.deepseek.com/v1/chat/completions",
                         headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
@@ -2692,28 +2707,4 @@ def _is_connected(cfg):
 def _env_enablement():
     ws = os.getenv("ONEBOT_WS_URL", "")
     token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
-    home = os.getenv("ONEBOT_HOME_CHANNEL", "")
-    if not ws:
-        return None
-    extra = {"ws_url": ws}
-    if token:
-        extra["access_token"] = token
-    hc = {"chat_id": home} if home else None
-    return {"extra": extra, "home_channel": hc}
-
-def register(ctx):
-    ctx.register_platform(
-        name="onebot",
-        label="OneBot (QQ)",
-        adapter_factory=lambda cfg: OneBotAdapter(cfg),
-        check_fn=_check_requirements,
-        validate_config=_validate_config,
-        is_connected=_is_connected,
-        required_env=["ONEBOT_WS_URL"],
-        install_hint="pip install websockets httpx",
-        env_enablement_fn=_env_enablement,
-        allowed_users_env="ONEBOT_ALLOWED_USERS",
-        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
-        emoji="🐧",
-        pii_safe=False,
-    )
+    home = os.getenv

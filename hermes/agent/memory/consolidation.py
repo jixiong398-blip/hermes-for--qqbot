@@ -24,6 +24,7 @@ from .store import MemoryStore
 from .short_term import ShortTermMemory
 from .long_term import LongTermMemory
 from .workflow import WorkflowMemory
+from .date_resolver import resolve_relative_dates
 
 # Layer 0 event stream — always-on, no external deps
 try:
@@ -82,9 +83,11 @@ class MemoryConsolidator:
         topics, key_facts, patterns = self._extract_from_stm(entries)
         stats["topics_extracted"] = len(topics)
 
+        reference_ts = entries[-1].created_at if entries else datetime.now(timezone.utc).timestamp()
+
         # Phase 2: Promote to LTM
         facts_promoted, facts_reinforced = self._promote_to_ltm(
-            topics, key_facts, session_id
+            topics, key_facts, session_id, reference_ts
         )
         stats["facts_promoted"] = facts_promoted
         stats["facts_reinforced"] = facts_reinforced
@@ -231,7 +234,8 @@ class MemoryConsolidator:
 
     def _promote_to_ltm(self, topics: List[str],
                          key_facts: Dict[str, List[str]],
-                         session_id: str) -> Tuple[int, int]:
+                         session_id: str,
+                         reference_ts: float = 0.0) -> Tuple[int, int]:
         """Promote extracted facts to LTM, reinforcing existing ones.
         Logs each promotion/reinforcement to consolidation_log."""
         promoted = 0
@@ -241,6 +245,8 @@ class MemoryConsolidator:
         for fact_key, fact_values in key_facts.items():
             for value in fact_values[:3]:  # Top 3 values per key
                 cat = self._categorize_fact(fact_key)
+                if reference_ts:
+                    value, _ = resolve_relative_dates(value, reference_ts)
                 existing = self.ltm.get_fact(cat, fact_key)
 
                 if existing:
@@ -257,6 +263,7 @@ class MemoryConsolidator:
                     reinforced += 1
                 else:
                     cat = self._categorize_fact(fact_key)
+                    sal = self._compute_salience(value, cat)
                     entry_id = self.ltm.add_fact(
                         category=cat,
                         key=fact_key,
@@ -264,6 +271,7 @@ class MemoryConsolidator:
                         tags=[fact_key],
                         confidence=CONSOLIDATION_NEW_FACT_CONFIDENCE,
                         session_id=session_id,
+                        salience=sal,
                     )
                     self._store.log_consolidation(
                         session_id=session_id,
@@ -348,6 +356,25 @@ class MemoryConsolidator:
         if any(kw in key for kw in ("code", "programming", "language", "framework", "library")):
             return "coding"
         return "general"
+
+    _SALIENCE_HIGH_CUES = ["高考", "结婚", "生日", "分手", "去世", "生病", "考试",
+                           "搬家", "离职", "入职", "毕业", "旅行", "手术", "怀孕"]
+    _SALIENCE_EMOTION_CUES = ["紧张", "开心", "难过", "害怕", "生气", "崩溃",
+                              "激动", "失望", "感动", "心疼", "焦虑", "兴奋"]
+
+    def _compute_salience(self, value: str, category: str) -> float:
+        if not value:
+            return 0.3
+        s = 0.3
+        if any(cue in value for cue in self._SALIENCE_HIGH_CUES):
+            s = max(s, 0.8)
+        if any(cue in value for cue in self._SALIENCE_EMOTION_CUES):
+            s += 0.1
+        if category in ("user_profile", "user_preferences"):
+            s = max(s, 0.5)
+        if category == "decisions":
+            s = max(s, 0.6)
+        return min(1.0, s)
 
     def _detect_workflows(self, patterns: List[str], session_id: str) -> int:
         """Detect potential workflows from action patterns."""

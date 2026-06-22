@@ -1,4 +1,34 @@
 """
+         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
+         │      清   尘   璃   落      │
+         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+    上联：代码永无 bug  佛祖座下莲花放
+    下联：{{CHANNEL_NAME}}赐福  素世心中万世安
+
+              _ooOoo_
+             o8888888o
+             88" . "88
+             (| -_- |)
+             O\  =  /O
+          ____/`---'\____
+        .'  \\|     |//  `.
+       /  \\|||  :  |||//  \
+      /  _||||| -:- |||||-  \
+      |   | \\\  -  /// |   |
+      | \_|  ''\---/''  |   |
+      \  .-\__  `-`  ___/-. /
+    ___`. .'  /--.--\  `. . __
+  ."" '<  `.___\_<|>_/___.'  >'"".
+ | | :  `- \`.;`\ _ /`;.`/ - ` : | |
+ \  \ `-.   \_ __\ /__ _/   .-` /  /
+======`-.____`-.___\_____/___.-`____.-'======
+                   `=---='
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              佛祖保佑    永无 bug
+
 Unified Memory Gateway — single entry point for all memory operations.
 
 Coordinates all memory subsystems:
@@ -141,22 +171,66 @@ class UnifiedMemoryGateway:
 
     def recall(self, query: str, session_id: Optional[str] = None,
                max_chars: int = 4000) -> str:
-        """Unified recall — returns formatted context for the LLM.
+        """Unified recall — returns formatted context for the LLM."""
+        structured = self.recall_structured(query, session_id, max_chars)
+        return structured["prompt"]
 
-        This is the main method to call before an agent turn to
-        inject relevant memories into the context.
+    def recall_structured(self, query: str, session_id: Optional[str] = None,
+                           max_chars: int = 4000) -> dict:
+        """Recall with structured output — returns prompt + recalled memory IDs.
+
+        Runs L1 reconsolidation on every LTM hit (bumps recall_strength,
+        reconsolidation_count, last_recalled_at). Returns dict with:
+          - prompt: formatted context string (same as recall())
+          - recalled_ids: list of LTM entry IDs that were hit
+          - results: list of RetrievalResult objects
         """
-        # Auto-inject wiki context
+        results = self._retriever.recall(query, session_id, limit_per_source=5)
+
+        ltm_seed_ids = [r.metadata["id"] for r in results
+                        if r.source == "long_term" and r.metadata.get("id")]
+
+        if ltm_seed_ids:
+            try:
+                expanded = self._retriever.graph_expand(ltm_seed_ids)
+                existing_ids = set(ltm_seed_ids)
+                for er in expanded:
+                    if er.metadata.get("id") not in existing_ids:
+                        results.append(er)
+                        existing_ids.add(er.metadata["id"])
+            except Exception:
+                logger.debug("graph_expand failed", exc_info=True)
+
+        recalled_ids = []
+        conn = self._store._get_conn()
+        for r in results:
+            if r.source == "long_term" and r.metadata.get("id"):
+                mid = r.metadata["id"]
+                recalled_ids.append(mid)
+                try:
+                    row = conn.execute(
+                        "SELECT recall_strength, salience FROM long_term_entries WHERE id=?",
+                        (mid,)).fetchone()
+                    if row:
+                        rs = row[0] if row[0] is not None else 1.0
+                        r.metadata["recall_strength"] = rs
+                        r.metadata["salience"] = row[1] if row[1] is not None else 0.5
+                        if rs < 0.3:
+                            r.content = f"[不确定] {r.content}"
+                except Exception:
+                    pass
+                try:
+                    self._ltm.reconsolidate(mid)
+                except Exception:
+                    logger.debug("reconsolidate failed for id=%s", mid, exc_info=True)
+
+        recall_prompt = self._retriever.build_recall_prompt_from_results(
+            results, query, max_chars=max_chars)
+
         wiki_context = ""
         if self._enable_wiki:
             wiki_context = self._wiki.auto_context_injection(query)
 
-        # Multi-source recall
-        recall_prompt = self._retriever.build_recall_prompt(
-            query, session_id, max_chars=max_chars,
-        )
-
-        # Match and inject relevant workflows
         wf_context = ""
         matched_wfs = self._wfm.match_trigger(query)
         if matched_wfs:
@@ -169,7 +243,6 @@ class UnifiedMemoryGateway:
                 )
             wf_context = "\n".join(wf_lines)
 
-        # Obsidian vault search (auto-injected like wiki)
         obsidian_context = ""
         try:
             obsidian_context = self.get_obsidian_context(query, max_chars=1500)
@@ -177,7 +250,13 @@ class UnifiedMemoryGateway:
             pass
 
         parts = [p for p in [recall_prompt, wf_context, wiki_context, obsidian_context] if p]
-        return "\n\n".join(parts)
+        prompt = "\n\n".join(parts)
+
+        return {
+            "prompt": prompt,
+            "recalled_ids": recalled_ids,
+            "results": results,
+        }
 
     def get_context_for_agent(self, user_message: str,
                                session_id: Optional[str] = None,
@@ -279,299 +358,182 @@ class UnifiedMemoryGateway:
             pruned = self._wfm.prune_forgotten(dry_run=False)
             stats["workflows_pruned"] = pruned
 
-        # Prune old STM entries: delete older than 1 hour OR keep only 200 newest
-        self._store.prune_short_term(max_age_days=0.04)
-        # Also trim by count — keep at most 200 most recent
-        conn = self._store._get_conn()
-        row = conn.execute(
-            "SELECT id FROM short_term_entries ORDER BY created_at DESC LIMIT 1 OFFSET 200"
-        ).fetchone()
-        if row:
-            conn.execute("DELETE FROM short_term_entries WHERE id <= ?", (row[0],))
-            conn.commit()
-            stats["stm_pruned"] = row[0]
-        else:
-            stats["stm_pruned"] = 0
-
-        # ── L1: Ebbinghaus forgetting (replaces old TTL step decay) ──
-        forget_stats = self._ltm.recompute_all_forgetting()
-        stats["forgetting"] = forget_stats
-        if forget_stats["deleted"] or forget_stats["updated"]:
-            logger.info("L1 forgetting: deleted %d, updated %d memories",
-                        forget_stats["deleted"], forget_stats["updated"])
+        # Prune old STM entries
+        self._store.prune_short_term(max_age_days=7.0)
 
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed
         self._store.quick_maintenance()
 
-        # ── LLM-based memory distillation from chat history ──
-        self._distill_from_chat_buffer()
-
-        # ── Auto-update SOUL.md with recent memories ──
-        self._sync_soul_md()
-
         return stats
 
-    # ── LLM Chat Buffer Distillation ─────────────────────────
+    def sleep_loop(self) -> Dict[str, Any]:
+        """L3 daily sleep loop: episodic → semantic with contradiction resolution.
 
-    def _distill_from_chat_buffer(self) -> None:
-        """Extract facts from recent group chat messages using LLM and store in LTM.
-        
-        Reads chat_message_buffer from state.db, formats recent messages as
-        context, sends to LLM for structured fact extraction, and stores
-        results as long_term_entries.
+        1. Pull episodic entries since last run (watermark)
+        2. Detect correction episodes (contains_correction=True)
+        3. For corrections: BM25-find target semantic, trigger L2 correct
+        4. For clean episodes: resolve dates, promote facts to semantic
+        5. Update watermark
+
+        v1: no LLM abstraction — uses regex fact extraction from consolidation.
+        v2: LLM clustering + abstraction (TODO).
         """
-        import json as _json, sqlite3 as _sqlite3, time as _time, os as _os
-        from pathlib import Path as _Path
-        
-        db_path = _Path.home() / ".hermes" / "state.db"
-        if not db_path.exists():
-            return
-        
-        try:
-            # Read recent messages (last 6 hours, up to 200 messages)
-            db = _sqlite3.connect(str(db_path))
-            cutoff = _time.time() - 21600  # 6 hours
-            rows = db.execute(
-                "SELECT chat_id, user_id, sender_name, content FROM chat_message_buffer "
-                "WHERE created_at > ? AND is_bot != 1 "
-                "AND content NOT LIKE '[图片]%' "
-                "ORDER BY id DESC LIMIT 200",
-                (cutoff,),
-            ).fetchall()
-            db.close()
-            
-            if len(rows) < 10:
-                return  # not enough data
-            
-            # Group by chat_id and format
-            groups: dict = {}
-            for gid, uid, name, text in rows:
-                uid_str = str(uid) if uid and int(uid) > 10000 else "?"
-                groups.setdefault(gid, []).append(f"({uid_str}) {name}: {text[:200]}")
-            
-            # Build prompt for each group (max 2 groups)
-            # 限制每周期最多15条，避免洪水
-            _max_per_cycle = 15
-            new_facts = 0
-            for gid, msgs in list(groups.items())[:2]:
-                if len(msgs) < 5 or new_facts >= _max_per_cycle:
-                    continue
-                chat_text = "\n".join(reversed(msgs[-30:]))
-                facts = self._call_distill_llm(chat_text)
-                if facts:
-                    for cat, key, val, conf, *extra in facts:
-                        if new_facts >= _max_per_cycle:
-                            break
-                        tags = extra[0] if extra else []
-                        # 置信度门槛：低于0.5不存
-                        if conf < 0.5:
-                            continue
-                        # 冲突检测：同key已存在→更新或跳过
-                        try:
-                            existing = self._ltm.get_fact(cat, key)
-                            if existing:
-                                days_old = (_time.time() - existing.created_at) / 86400.0
-                                # 更新条件：旧条目>30天 或 新事实置信度更高
-                                if days_old > 30 or conf > existing.confidence + 0.1:
-                                    self.add_long_term(cat, key, val, tags=tags, confidence=conf)
-                                    new_facts += 1
-                                continue
-                        except Exception:
-                            pass
-                        # 相似key冲突检测：同QQ号、key后缀相似但值不同→可能是更新
-                        qq = key.split("_")[0] if "_" in key and key.split("_")[0].isdigit() else ""
-                        key_suffix = key[len(qq)+1:] if qq else ""
-                        if qq and len(key_suffix) >= 2:
-                            try:
-                                conn2 = self._store._get_conn()
-                                similar_rows = conn2.execute(
-                                    "SELECT id, key, value, confidence FROM long_term_entries "
-                                    "WHERE key LIKE ? AND category = ? AND key != ?",
-                                    (f"{qq}%", cat, key),
-                                ).fetchall()
-                                for sid, skey, sval, sconf in similar_rows:
-                                    s_suffix = skey[len(qq)+1:] if "_" in skey else ""
-                                    suffix_overlap = len(set(key_suffix) & set(s_suffix)) / max(len(set(key_suffix) | set(s_suffix)), 1)
-                                    if suffix_overlap > 0.5 and conf > sconf:
-                                        self._ltm.update_confidence(sid, -0.2)
-                            except Exception:
-                                pass
-                        try:
-                            self.add_long_term(cat, key, val, tags=tags, confidence=conf)
-                            new_facts += 1
-                        except Exception:
-                            pass
-            
-            if new_facts:
-                logger.info("Distillation: %d new facts from %d groups", new_facts, min(2, len(groups)))
-                
-        except Exception as e:
-            logger.warning("Distillation failed: %s", e, exc_info=True)
-    
-    def _call_distill_llm(self, chat_text: str) -> list:
-        """Call LLM to extract structured facts from chat transcript.
-        
-        Returns list of (category, key, value, confidence) tuples.
-        """
-        import requests as _r, json as _json, os as _os
-        from pathlib import Path as _P
-        
-        api_key = _os.getenv("HERMES_API_KEY", "")
-        base_url = _os.getenv("HERMES_BASE_URL", "https://opencode.ai/zen/go/v1")
-        
-        # Try to read from config.yaml
-        try:
-            import yaml as _y
-            cfg = _y.safe_load((_P.home() / ".hermes" / "config.yaml").read_text())
-            model_cfg = cfg.get("model", {})
-            api_key = model_cfg.get("api_key", api_key)
-            base_url = model_cfg.get("base_url", base_url)
-            _distill_model = model_cfg.get("model", "deepseek-chat")
-        except Exception as e:
-            logger.warning("Distill: cannot read config: %s", e)
-        
-        if not api_key:
-            logger.warning("Distill: no API key found")
-            return []
-        
-        prompt = (
-            "你是一个记忆提取助手。从下面的群聊记录中提取值得长期记忆的事实。\n"
-            f"【当前日期】{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-            f"今天是 {datetime.now(timezone.utc).strftime('%Y年%m月%d日')}。所有相对日期（明天/后天/下周/昨天）必须转为绝对日期（YYYY-MM-DD）。\n\n"
-            "【核心规则】\n"
-            "1. 每条事实必须标注发言人，key 格式：QQ号_话题。QQ号在每条消息开头括号里。\n"
-            "2. 只提取真实的、有价值的偏好/习惯/知识。群聊里90%的对话是玩笑和角色扮演，不要当真。\n"
-            '3. 如果聊天里有人说"搞错了""不是这样的""早就过了""你记错了"等纠正语——这不是新事实，不要提取。\n'
-            "4. 明显的玩笑、抽象话、网络梗、配菜话题一律跳过。\n"
-            "5. 同一话题只在7天内记录一次，不要重复。\n"
-            "6. 如果没有值得长期记忆的内容，输出空数组 []。\n\n"
-            "【置信度标准】\n"
-            "0.8-1.0: 用户明确陈述的事实（如【我是做前端开发的】【我在北京】）\n"
-            "0.5-0.7: 从对话中合理推断的偏好（如多次提到喜欢某事物）\n"
-            "0.3-0.4: 弱信号，宁可不存也不要存错的\n"
-            "低于0.5的不要输出。\n\n"
-            "【类别】只允许以下5种类别：\n"
-            "user_preference: 用户的喜好/厌恶/习惯\n"
-            "user_profile: 用户的身份/技能/背景\n"
-            "knowledge: 有价值的知识/信息\n"
-            "decision: 用户明确表达的决定/计划\n"
-            "relationship: 真实的人际关系（不是角色扮演）\n\n"
-            "【标签】每条事实标注2-5个关键词标签，帮助后续检索关联：\n"
-            "格式: [类别, key, 值, 置信度, [标签列表]]\n\n"
-            "示例:\n"
-            '[\n  ["user_profile", "2910137276_开发环境", "{{CHANNEL_NAME}}使用Ubuntu+GNOME开发环境", 0.8, ["开发", "Ubuntu", "GNOME"]],\n'
-            '  ["user_preference", "2276279679_贝斯偏好", "Tomoris喜欢Fender Precision贝斯", 0.6, ["贝斯", "Fender", "乐器"]]\n'
-            ']\n\n'
-            f"群聊记录:\n{chat_text}\n\n"
-            "输出 JSON 数组，没有值得记的就输出 []。不要其他文字。"
-        )
-        
-        try:
-            r = _r.post(
-                f"{base_url}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": _distill_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                },
-                timeout=60,
-            )
-            if r.status_code != 200:
-                logger.warning("Distill LLM returned %d: %s", r.status_code, r.text[:200])
-                return []
-            data = r.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            
-            # Parse JSON
-            if not content:
-                logger.warning("Distill: empty response from LLM")
-                return []
-            if content.startswith("```"):
-                content = content.split("\n", 1)[-1].rsplit("\n```", 1)[0]
-            facts = _json.loads(content)
-            logger.info("Distill: extracted %d facts", len(facts))
-            
-            # Normalize confidence: map strings to floats
-            _conf_map = {"high": 0.8, "medium": 0.5, "low": 0.3, "none": 0.1}
-            result = []
-            for f in facts:
-                if len(f) < 4:
-                    continue
-                conf = f[3]
-                if isinstance(conf, str):
-                    conf = _conf_map.get(conf.lower(), 0.4)
-                tags = list(f[4]) if len(f) >= 5 and isinstance(f[4], list) else []
-                result.append((str(f[0]), str(f[1]), str(f[2]), float(conf), tags))
-            return result
-        except Exception as e:
-            logger.warning("Distill LLM call failed: %s", e)
-            return []
+        import json as _json
+        import time as _time
+        from .date_resolver import resolve_relative_dates
 
-    def _sync_soul_md(self) -> None:
-        """Append recent high-confidence LTM facts to SOUL.md '我的记忆' section."""
-        from pathlib import Path
-        soul_path = Path.home() / ".hermes" / "SOUL.md"
-        if not soul_path.exists():
-            return
-        try:
-            content = soul_path.read_text(encoding="utf-8")
-        except Exception:
-            return
-
-        # Read recent high-confidence facts (last 30 days, confidence >= 0.5)
         conn = self._store._get_conn()
-        cutoff = self._store._now() - (30 * 86400)
-        rows = conn.execute(
-            "SELECT category, key, value, confidence FROM long_term_entries "
-            "WHERE confidence >= 0.5 AND created_at > ? "
-            "AND category NOT IN ('qzone','qzone_log','qzone_posts','qzone_post','cron','general','sticker') "
-            "ORDER BY created_at DESC LIMIT 20",
-            (cutoff,),
+        now = _time.time()
+
+        wm_row = conn.execute(
+            "SELECT value FROM _sleep_watermark WHERE key = 'last_sleep_run'"
+        ).fetchone()
+        last_run = float(wm_row[0]) if wm_row and wm_row[0] else 0
+
+        ep_rows = conn.execute(
+            "SELECT id, value, type_data, source_user_id, source_message_ts, "
+            "source_context, created_at FROM long_term_entries "
+            "WHERE memory_type = 'episodic' AND active = 1 AND created_at > ? "
+            "ORDER BY created_at",
+            (last_run,),
         ).fetchall()
 
-        if not rows:
-            return
+        stats = {
+            "status": "completed",
+            "episodes_processed": len(ep_rows),
+            "corrections_triggered": 0,
+            "facts_promoted": 0,
+            "last_run": last_run,
+        }
 
-        # Format memory entries
-        memory_lines = []
-        seen = set()
-        for cat, key, val, conf in rows:
-            # Dedup by category+key in this batch
-            sig = f"{cat}:{key}"
-            if sig in seen:
+        if not ep_rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO _sleep_watermark (key, value) VALUES ('last_sleep_run', ?)",
+                (str(now),),
+            )
+            conn.commit()
+            return stats
+
+        correction_cues = ["搞错了", "不对", "不是", "记错了", "更正", "纠正", "早就", "过了"]
+
+        for ep in ep_rows:
+            try:
+                td = _json.loads(ep["type_data"]) if ep["type_data"] else {}
+            except Exception:
+                td = {}
+
+            contains_correction = td.get("contains_correction", False)
+            if not contains_correction:
+                for cue in correction_cues:
+                    if cue in (ep["value"] or "").lower():
+                        contains_correction = True
+                        break
+
+            if contains_correction:
+                target = self._store.search_long_term(ep["value"][:200], limit=1)
+                if target and target[0].id != ep["id"] and target[0].category != "general":
+                    self.correct(target[0].id, ep["value"][:500], new_confidence=0.85)
+                    stats["corrections_triggered"] += 1
                 continue
-            seen.add(sig)
-            text = val.strip()[:150]
-            if text:
-                memory_lines.append(f"- {text}")
 
-        if not memory_lines:
-            return
+            ref_ts = ep["created_at"]
+            resolved_value, _ = resolve_relative_dates(ep["value"], ref_ts)
 
-        new_block = "\n## 我的记忆\n\n" + "\n".join(memory_lines) + "\n"
+            consolidator = self._consolidator
+            facts = consolidator._extract_simple_facts(resolved_value)
+            for fact_key, fact_value in facts[:3]:
+                cat = consolidator._categorize_fact(fact_key)
+                fact_value, _ = resolve_relative_dates(fact_value, ref_ts)
+                existing = self._ltm.get_fact(cat, fact_key)
+                if not existing:
+                    new_id = self._ltm.add_fact(
+                        category=cat, key=fact_key, value=fact_value,
+                        tags=[fact_key], confidence=0.4,
+                    )
+                    if new_id and ep["id"]:
+                        try:
+                            self._store.create_memory_edge(new_id, ep["id"], "abstracts_from", 0.8)
+                        except Exception:
+                            pass
+                    stats["facts_promoted"] += 1
 
-        # Replace existing "我的记忆" section or append
-        import re
-        marker = "## 我的记忆"
-        if marker in content:
-            # Find the marker and replace everything after it until next ## or end
-            idx = content.index(marker)
-            # Find next ## section after the marker
-            rest = content[idx + len(marker):]
-            next_section = re.search(r'\n## ', rest)
-            if next_section:
-                content = content[:idx + len(marker)] + "\n\n" + "\n".join(memory_lines) + "\n" + rest[next_section.start():]
-            else:
-                content = content[:idx + len(marker)] + "\n\n" + "\n".join(memory_lines) + "\n"
-        else:
-            content = content.rstrip() + "\n\n" + marker + "\n\n" + "\n".join(memory_lines) + "\n"
+        conn.execute(
+            "INSERT OR REPLACE INTO _sleep_watermark (key, value) VALUES ('last_sleep_run', ?)",
+            (str(now),),
+        )
+        conn.commit()
 
-        try:
-            soul_path.write_text(content, encoding="utf-8")
-        except Exception:
-            pass
+        stats["conflicts_resolved"] = self.source_conflict_scan()
+
+        logger.info("L3 sleep_loop: episodes=%d corrections=%d facts=%d conflicts=%d",
+                     stats["episodes_processed"], stats["corrections_triggered"],
+                     stats["facts_promoted"], stats["conflicts_resolved"])
+        return stats
+
+    _CONFLICT_PAIRS = [
+        ("甜", "咸"), ("喜欢", "讨厌"), ("已婚", "单身"), ("男", "女"),
+        ("是", "不是"), ("有", "没有"), ("会", "不会"), ("能", "不能"),
+        ("已完成", "未完成"), ("已结束", "即将"), ("过了", "明天"),
+    ]
+
+    def source_conflict_scan(self) -> int:
+        """L6: scan for contradictory facts within same (user_id, category) scope.
+
+        Uses simple cue-pair detection — if two facts in the same category
+        contain opposing cues, the more recent + self-sourced one wins,
+        the loser gets active=0 + contradicts edge.
+        """
+        conn = self._store._get_conn()
+        resolved = 0
+
+        rows = conn.execute(
+            "SELECT id, category, key, value, source_user_id, created_at, "
+            "source_context, active FROM long_term_entries "
+            "WHERE active = 1 AND memory_type = 'semantic' "
+            "AND source_user_id != '' AND source_user_id IS NOT NULL "
+            "ORDER BY source_user_id, category"
+        ).fetchall()
+
+        from itertools import groupby
+
+        def sort_key(r):
+            return (r["source_user_id"], r["category"])
+
+        for (uid, cat), group in groupby(rows, key=sort_key):
+            group = list(group)
+            if len(group) < 2:
+                continue
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a, b = group[i], group[j]
+                    for cue_a, cue_b in self._CONFLICT_PAIRS:
+                        if cue_a in a["value"] and cue_b in b["value"]:
+                            newer, older = (b, a) if b["created_at"] > a["created_at"] else (a, b)
+                            a_ctx = a["source_context"] or ""
+                            b_ctx = b["source_context"] or ""
+                            if "private" in b_ctx and "private" not in a_ctx:
+                                newer, older = b, a
+                            conn.execute(
+                                "UPDATE long_term_entries SET active=0, deleted_at=? WHERE id=?",
+                                (str(self._now_ts()), older["id"]),
+                            )
+                            self._store.create_memory_edge(
+                                newer["id"], older["id"], "contradicts", 1.0)
+                            conn.commit()
+                            resolved += 1
+                            logger.info("L6 conflict: id=%s superseded id=%s (uid=%s cat=%s cues=%s/%s)",
+                                        newer["id"], older["id"], uid, cat, cue_a, cue_b)
+                            break
+                    else:
+                        continue
+                    break
+
+        return resolved
+
+    def _now_ts(self) -> float:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).timestamp()
 
     # ── Wiki Sync ─────────────────────────────────────────────
 
@@ -687,6 +649,41 @@ class UnifiedMemoryGateway:
         """Delete a long-term memory fact."""
         self._ltm.delete_fact(entry_id)
 
+    def correct(self, target_id: int, new_value: str,
+                new_confidence: float = 0.85) -> dict:
+        """L2 correction: supersede old memory with corrected value.
+
+        Runs date resolution on new_value before writing.
+        Returns {'new_id': ..., 'old_id': ...} or {'error': ...} if target not found.
+        """
+        old = self._store.get_long_term_by_id(target_id)
+        if not old:
+            return {"error": f"memory id {target_id} not found"}
+
+        try:
+            from .date_resolver import resolve_relative_dates
+            import time as _time
+            new_value, _ = resolve_relative_dates(new_value, _time.time())
+        except Exception:
+            pass
+
+        new_id = self._store.supersede_memory(target_id, new_value, new_confidence)
+        if new_id:
+            logger.info("L2 correct: id=%s superseded by id=%s", target_id, new_id)
+            return {"new_id": new_id, "old_id": target_id}
+        return {"error": "supersede failed"}
+
+    def doubt(self, fact_id: int) -> dict:
+        """L5 metamemory: mark a memory as uncertain."""
+        self._store.mark_memory_doubt(fact_id)
+        return {"ok": True, "id": fact_id}
+
+    def link(self, src_id: int, dst_id: int, relation: str = "related_to",
+             weight: float = 0.5) -> dict:
+        """Create an edge between two memories."""
+        edge_id = self._store.create_memory_edge(src_id, dst_id, relation, weight)
+        return {"edge_id": edge_id, "src": src_id, "dst": dst_id, "relation": relation}
+
     # ── Workflow Manual Operations ────────────────────────────
 
     def add_workflow(self, name: str, description: str, steps: List[str],
@@ -759,265 +756,6 @@ class UnifiedMemoryGateway:
         self.consolidate_if_needed(session_id)
         if session_id in self._turn_counters:
             del self._turn_counters[session_id]
-
-    def correct(self, target_id: int, new_value: str,
-                 new_confidence: float = 0.85, reason: str = "",
-                 source_user_id: str = "") -> Optional[dict]:
-        result = self._ltm.supersede_fact(
-            target_id, new_value, new_confidence,
-            source_user_id=source_user_id,
-        )
-        if result:
-            self._store.record_ltm_retrieval(result["new_id"])
-        return result
-
-    def doubt(self, target_id: int, reason: str = "") -> dict:
-        self._ltm.mark_doubt(target_id)
-        return {"ok": True, "id": target_id}
-
-    def link(self, src_id: int, dst_id: int, relation: str,
-              weight: float = 0.5) -> Optional[int]:
-        conn = self._store._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            row = conn.execute(
-                """INSERT INTO memory_edges (src_id, dst_id, relation, weight, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (src_id, dst_id, relation, weight, now),
-            )
-            conn.commit()
-            return row.lastrowid
-        except Exception:
-            return None
-
-    def search(self, query: str, memory_type: str = "",
-                user_id: str = "", limit: int = 10) -> List[dict]:
-        results = self._ltm.search_active(query, limit, memory_type, user_id)
-        for r in results:
-            self._ltm.reconsolidate(r["id"], is_boost=False)
-        return results
-
-    def sleep_cycle(self, max_episodes: int = 100) -> dict:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        conn = self._store._get_conn()
-
-        last_run = conn.execute(
-            "SELECT value FROM _sleep_watermark WHERE key='last_sleep_run'"
-        ).fetchone()
-        since = last_run["value"] if last_run else (
-            datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-
-        episodes = conn.execute(
-            """SELECT id, value, type_data, source_user_id, source_message_ts,
-               source_context, created_at
-               FROM long_term_entries
-               WHERE memory_type='episodic' AND active=1 AND created_at > ?
-               ORDER BY created_at LIMIT ?""",
-            (datetime.fromisoformat(since).timestamp(), max_episodes),
-        ).fetchall()
-
-        if not episodes:
-            conn.execute(
-                "INSERT OR REPLACE INTO _sleep_watermark (key, value) VALUES ('last_sleep_run', ?)",
-                (now_iso,),
-            )
-            conn.commit()
-            return {"status": "no_new_episodes", "since": since}
-
-        stats = {"episodes_scanned": len(episodes), "corrections": 0,
-                  "semantic_created": 0, "clusters": 0}
-
-        from .long_term import is_correction_message
-        corrections = []
-        clean_episodes = []
-
-        for ep in episodes:
-            td = json.loads(ep["type_data"] or "{}")
-            if td.get("contains_correction") or is_correction_message(ep["value"] or ""):
-                target = self._find_correction_target(ep)
-                if target:
-                    new_value = self._extract_correction_value(ep["value"] or "")
-                    if new_value:
-                        corrections.append({
-                            "target_id": target["id"],
-                            "new_value": new_value,
-                            "correction_ts": ep["source_message_ts"],
-                        })
-                    else:
-                        td["needs_review"] = True
-                        conn.execute(
-                            "UPDATE long_term_entries SET type_data=? WHERE id=?",
-                            (json.dumps(td, ensure_ascii=False), ep["id"]),
-                        )
-                else:
-                    td["needs_review"] = True
-                    conn.execute(
-                        "UPDATE long_term_entries SET type_data=? WHERE id=?",
-                        (json.dumps(td, ensure_ascii=False), ep["id"]),
-                    )
-            else:
-                clean_episodes.append(ep)
-
-        for c in corrections:
-            self.correct(c["target_id"], c["new_value"],
-                          correction_ts=c["correction_ts"])
-            stats["corrections"] += 1
-
-        if clean_episodes:
-            clusters = self._cluster_episodes(clean_episodes)
-            stats["clusters"] = len(clusters)
-
-            for cluster in clusters:
-                if len(cluster) < 2:
-                    continue
-                sem_facts = self._abstract_cluster(cluster)
-                for fact in sem_facts:
-                    sem_id = self._ltm.add_fact(
-                        category=fact.get("subcategory", "general"),
-                        key=fact.get("key", f"distilled_{int(time.time())}"),
-                        value=fact["value"],
-                        confidence=fact.get("confidence", 0.4),
-                        derivation="distilled",
-                        memory_type="semantic",
-                        type_data={
-                            "subcategory": fact.get("subcategory", "general"),
-                            "key": fact.get("key", ""),
-                            "resolved_dates": fact.get("resolved_dates", []),
-                        },
-                        salience=fact.get("salience", 0.4),
-                        source_user_id=cluster[0].get("source_user_id", ""),
-                        source_message_ts=cluster[0].get("source_message_ts", ""),
-                        source_context=cluster[0].get("source_context", ""),
-                    )
-                    if sem_id:
-                        stats["semantic_created"] += 1
-                        for ep in cluster:
-                            try:
-                                conn.execute(
-                                    """INSERT OR IGNORE INTO memory_edges
-                                       (src_id, dst_id, relation, weight, created_at)
-                                       VALUES (?, ?, 'abstracts_from', 0.8, ?)""",
-                                    (sem_id, ep["id"], now_iso),
-                                )
-                            except Exception:
-                                pass
-
-        conn.execute(
-            "INSERT OR REPLACE INTO _sleep_watermark (key, value) VALUES ('last_sleep_run', ?)",
-            (now_iso,),
-        )
-        conn.commit()
-        return stats
-
-    def _find_correction_target(self, episode) -> Optional[dict]:
-        value = episode["value"] or ""
-        user_id = episode["source_user_id"] or ""
-        if not user_id:
-            return None
-        results = self._ltm.search_active(
-            query="", limit=5, memory_type="semantic", user_id=user_id,
-        )
-        if results:
-            return results[0]
-        return None
-
-    def _extract_correction_value(self, episode_value: str) -> str:
-        import re as _re
-        m = _re.search(r'(?:其实是|应该是|是|已经|早就)\s*([^。！？,，\n]{5,50})', episode_value)
-        if m:
-            return m.group(1)
-        m = _re.search(r'不是.*?[，,]\s*(.{5,50})', episode_value)
-        if m:
-            return m.group(1)
-        return ""
-
-    def _cluster_episodes(self, episodes: list) -> List[list]:
-        if len(episodes) <= 1:
-            return [episodes] if episodes else []
-        clusters = []
-        remaining = list(episodes)
-        while remaining:
-            cluster = [remaining.pop(0)]
-            i = 0
-            while i < len(remaining):
-                score = self._episode_similarity(cluster[0], remaining[i])
-                if score > 0.3:
-                    cluster.append(remaining.pop(i))
-                else:
-                    i += 1
-            clusters.append(cluster)
-        return clusters
-
-    def _episode_similarity(self, a, b) -> float:
-        a_val = (a.get("value") or "").lower()
-        b_val = (b.get("value") or "").lower()
-        from .long_term import LongTermMemory
-        a_chars = set(a_val)
-        b_chars = set(b_val)
-        if not a_chars or not b_chars:
-            return 0.0
-        return len(a_chars & b_chars) / max(len(a_chars), len(b_chars))
-
-    def _abstract_cluster(self, cluster: list) -> List[dict]:
-        import requests as _r
-        texts = "\n".join(
-            f"- {e.get('source_message_ts','')}: {e.get('value','')[:200]}"
-            for e in cluster
-        )
-        today = datetime.now(timezone.utc).strftime("%Y年%m月%d日")
-        prompt = (
-            f"当前日期: {today}。所有相对日期转为绝对日期。\n"
-            f"从以下群聊片段提取稳定的语义事实。只提取确定的事实。\n"
-            f"片段:\n{texts}\n\n"
-            f"输出 JSON: {{\"facts\":[{{\"value\":\"...\",\"subcategory\":\"user_profile|user_preference|knowledge|decision|relationship\",\"salience\":0.5,\"confidence\":0.5,\"resolved_dates\":[]}}]}}"
-        )
-        try:
-            import os as _os
-            api_key = _os.getenv("HERMES_API_KEY", "")
-            r = _r.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "deepseek-v4-flash",
-                    "messages": [
-                        {"role": "system", "content": "你是一个记忆蒸馏器。提取事实。只输出JSON。"},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "max_tokens": 2000,
-                    "temperature": 0.3,
-                },
-                timeout=30,
-            )
-            data = r.json()
-            raw = data["choices"][0]["message"]["content"].strip()
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-            result = json.loads(raw)
-            return result.get("facts", [])
-        except Exception as e:
-            logger.warning("Abstract cluster failed: %s", e)
-            return []
-
-    def source_conflict_scan(self, user_id: str = "",
-                              dry_run: bool = True) -> List[dict]:
-        results = self._ltm.search_active(
-            query="", limit=50, memory_type="semantic", user_id=user_id,
-        )
-        conflicts = []
-        for i, a in enumerate(results):
-            for b in results[i + 1:]:
-                if a.get("subcategory") != b.get("subcategory"):
-                    continue
-                a_vals = set((a["value"] or "").lower().split())
-                b_vals = set((b["value"] or "").lower().split())
-                overlap = len(a_vals & b_vals)
-                if overlap > 1 and overlap / max(len(a_vals), len(b_vals)) > 0.4:
-                    conflicts.append({
-                        "a": a["id"], "a_value": a["value"],
-                        "b": b["id"], "b_value": b["value"],
-                        "subcategory": a["subcategory"],
-                    })
-        return conflicts
 
     def shutdown(self):
         """Clean shutdown."""

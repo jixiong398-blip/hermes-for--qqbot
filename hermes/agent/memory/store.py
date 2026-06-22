@@ -1,4 +1,41 @@
 """
+                   _                                   _
+                  | |                                 | |
+   _____  ___  ___| |_   _____  ___  ___  ___  ___  ___| |_
+  / _ \ \/ _ \/ __| __| / _ \ \/ / / __|/ __|/ __|/ __| __|
+ |  __/>  __>\\__ \ |_ |  __/>  <  \__ \ (__| (__| (__| |_
+  \___/_/\___|___/\__| \___/_/\_\ |___/\___|\___|\___|\__|
+
+         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
+         │      清   尘   璃   落      │
+         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+    上联：代码永无 bug  佛祖座下莲花放
+    下联：{{CHANNEL_NAME}}赐福  素世心中万世安
+
+              _ooOoo_
+             o8888888o
+             88" . "88
+             (| -_- |)
+             O\  =  /O
+          ____/`---'\____
+        .'  \\|     |//  `.
+       /  \\|||  :  |||//  \
+      /  _||||| -:- |||||-  \
+      |   | \\\  -  /// |   |
+      | \_|  ''\---/''  |   |
+      \  .-\__  `-`  ___/-. /
+    ___`. .'  /--.--\  `. . __
+  ."" '<  `.___\_<|>_/___.'  >'"".
+ | | :  `- \`.;`\ _ /`;.`/ - ` : | |
+ \  \ `-.   \_ __\ /__ _/   .-` /  /
+======`-.____`-.___\_____/___.-`____.-'======
+                   `=---='
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+         }  }  }  }  莲花台  {  {  {  {
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              佛祖保佑    永无 bug
+
 Unified Memory Store — SQLite backend for all memory subsystems.
 
 Tables:
@@ -7,6 +44,8 @@ Tables:
   - workflow_entries: procedural patterns with usage-based decay
   - wiki_entries: Karpathy LLM Wiki knowledge chunks
   - consolidation_log: audit trail of STM->LTM/WFM promotions
+  - corpus_messages: permanent training corpus (never pruned)
+  - groups_registry: minimal group registration
 """
 
 from __future__ import annotations
@@ -20,12 +59,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermes_constants import get_hermes_home
+from hermes_constants import get_hermes_home, get_memory_db_path
 
 
 def _memory_db_path() -> Path:
-    home = get_hermes_home()
-    return home / "memory_store.db"
+    return get_memory_db_path()
 
 
 SCHEMA_SQL = """
@@ -58,7 +96,6 @@ CREATE TABLE IF NOT EXISTS long_term_entries (
     source_session_ids TEXT DEFAULT '[]',
     retrieval_count INTEGER DEFAULT 0,
     last_retrieved REAL DEFAULT 0.0,
-    ttl_days INTEGER DEFAULT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     UNIQUE(category, key)
@@ -220,7 +257,6 @@ class LongTermEntry:
     source_session_ids: List[str] = field(default_factory=list)
     retrieval_count: int = 0
     last_retrieved: float = 0.0
-    ttl_days: Optional[int] = None
     created_at: float = 0.0
     updated_at: float = 0.0
 
@@ -285,10 +321,6 @@ class MemoryStore:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_message_buffer)")}
         if "message_id" not in cols:
             conn.execute("ALTER TABLE chat_message_buffer ADD COLUMN message_id TEXT DEFAULT ''")
-        # Migration: add ttl_days column for memory expiration
-        lte_cols = {r[1] for r in conn.execute("PRAGMA table_info(long_term_entries)")}
-        if "ttl_days" not in lte_cols:
-            conn.execute("ALTER TABLE long_term_entries ADD COLUMN ttl_days INTEGER DEFAULT NULL")
         conn.commit()
 
     def close(self):
@@ -449,70 +481,43 @@ class MemoryStore:
             entry.created_at = now
         entry.updated_at = now
 
-        try:
-            row = conn.execute(
-                """INSERT INTO long_term_entries
-                   (category, key, value, tags, confidence, source_session_ids,
-                    ttl_days, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(category, key) DO UPDATE SET
-                   value=excluded.value,
-                   tags=excluded.tags,
-                   confidence=excluded.confidence,
-                   ttl_days=excluded.ttl_days,
-                   source_session_ids=(
-                       SELECT json_group_array(val) FROM (
-                           SELECT value AS val FROM json_each(
-                               COALESCE(long_term_entries.source_session_ids, '[]')
-                           )
-                           UNION
-                           SELECT value AS val FROM json_each(
-                               COALESCE(excluded.source_session_ids, '[]')
-                           )
-                       )
-                   ),
-                   updated_at=excluded.updated_at""",
-                (
-                    entry.category, entry.key, entry.value,
-                    json.dumps(entry.tags, ensure_ascii=False),
-                    entry.confidence,
-                    json.dumps(entry.source_session_ids, ensure_ascii=False),
-                    entry.ttl_days,
-                    entry.created_at, entry.updated_at,
-                ),
+        existing = conn.execute(
+            "SELECT id, source_session_ids FROM long_term_entries "
+            "WHERE category = ? AND key = ? AND active = 1 ORDER BY updated_at DESC LIMIT 1",
+            (entry.category, entry.key),
+        ).fetchone()
+
+        if existing:
+            try:
+                prior_ids = json.loads(existing["source_session_ids"] or "[]")
+            except Exception:
+                prior_ids = []
+            merged = list(dict.fromkeys(prior_ids + entry.source_session_ids))
+            conn.execute(
+                """UPDATE long_term_entries SET value=?, tags=?, confidence=?,
+                   source_session_ids=?, updated_at=? WHERE id=?""",
+                (entry.value,
+                 json.dumps(entry.tags, ensure_ascii=False),
+                 entry.confidence,
+                 json.dumps(merged, ensure_ascii=False),
+                 entry.updated_at, existing["id"]),
             )
             conn.commit()
-            return row.lastrowid
-        except sqlite3.IntegrityError:
-            existing = conn.execute(
-                "SELECT id FROM long_term_entries WHERE category = ? AND key = ?",
-                (entry.category, entry.key),
-            ).fetchone()
-            if existing:
-                # Merge source_session_ids
-                prior_ids = json.loads(
-                    conn.execute(
-                        "SELECT source_session_ids FROM long_term_entries WHERE id = ?",
-                        (existing["id"],),
-                    ).fetchone()["source_session_ids"] or "[]"
-                )
-                merged = list(dict.fromkeys(prior_ids + entry.source_session_ids))
-                conn.execute(
-                    """UPDATE long_term_entries SET value=?, tags=?, confidence=?,
-                       ttl_days=?, source_session_ids=?, updated_at=? WHERE id=?""",
-                    (
-                        entry.value,
-                        json.dumps(entry.tags, ensure_ascii=False),
-                        entry.confidence,
-                        entry.ttl_days,
-                        json.dumps(merged, ensure_ascii=False),
-                        entry.updated_at,
-                        existing["id"],
-                    ),
-                )
-                conn.commit()
-                return existing["id"]
-            raise
+            return existing["id"]
+
+        row = conn.execute(
+            """INSERT INTO long_term_entries
+               (category, key, value, tags, confidence, source_session_ids,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (entry.category, entry.key, entry.value,
+             json.dumps(entry.tags, ensure_ascii=False),
+             entry.confidence,
+             json.dumps(entry.source_session_ids, ensure_ascii=False),
+             entry.created_at, entry.updated_at),
+        )
+        conn.commit()
+        return row.lastrowid
 
     def get_long_term(self, category: Optional[str] = None, limit: int = 50) -> List[LongTermEntry]:
         conn = self._get_conn()
@@ -527,6 +532,104 @@ class MemoryStore:
                 (limit,),
             ).fetchall()
         return [_row_to_long_term(r) for r in rows]
+
+    def get_long_term_by_id(self, entry_id: int) -> Optional[LongTermEntry]:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM long_term_entries WHERE id = ?", (entry_id,)
+        ).fetchone()
+        return _row_to_long_term(row) if row else None
+
+    def create_memory_edge(self, src_id: int, dst_id: int,
+                           relation: str, weight: float = 0.5) -> int:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO memory_edges (src_id, dst_id, relation, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (src_id, dst_id, relation, weight, self._now()),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id FROM memory_edges WHERE src_id=? AND dst_id=? AND relation=?",
+            (src_id, dst_id, relation),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def supersede_memory(self, old_id: int, new_value: str,
+                         new_confidence: float, reason: str = "user_correction") -> int:
+        """L2 supersede: mark old active=0, clone with new value, link via corrected_by edge.
+
+        Returns new entry id. Caller responsible for date resolution on new_value.
+        """
+        conn = self._get_conn()
+        old = conn.execute(
+            "SELECT * FROM long_term_entries WHERE id = ?", (old_id,)
+        ).fetchone()
+        if not old:
+            return 0
+
+        now = self._now()
+        conn.execute(
+            "UPDATE long_term_entries SET active = 0, deleted_at = ? WHERE id = ?",
+            (str(now), old_id),
+        )
+
+        import json as _json
+        old_type_data = old["type_data"] if "type_data" in old.keys() else "{}"
+        try:
+            td = _json.loads(old_type_data) if isinstance(old_type_data, str) else dict(old_type_data)
+        except Exception:
+            td = {}
+        td["previous"] = old["value"]
+        td["correction_reason"] = reason
+
+        cursor = conn.execute(
+            """INSERT INTO long_term_entries
+               (category, key, value, tags, confidence, source_session_ids,
+                retrieval_count, last_retrieved, created_at, updated_at,
+                memory_type, type_data, salience, recall_strength,
+                reconsolidation_count, last_recalled_at,
+                source_user_id, source_message_ts, source_context,
+                derivation, supersedes_id, active)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1.0, 0, NULL, ?, ?, ?, 'corrected', ?, 1)""",
+            (old["category"], old["key"], new_value, old["tags"],
+             new_confidence, old["source_session_ids"],
+             now, now,
+             old["memory_type"] if "memory_type" in old.keys() else "semantic",
+             _json.dumps(td, ensure_ascii=False),
+             max(old["salience"] if "salience" in old.keys() else 0.5, 0.8),
+             old["source_user_id"] if "source_user_id" in old.keys() else "",
+             old["source_message_ts"] if "source_message_ts" in old.keys() else "",
+             old["source_context"] if "source_context" in old.keys() else "",
+             old_id),
+        )
+        new_id = cursor.lastrowid
+        conn.execute(
+            "INSERT OR IGNORE INTO memory_edges (src_id, dst_id, relation, weight, created_at) "
+            "VALUES (?, ?, 'corrected_by', 1.0, ?)",
+            (new_id, old_id, now),
+        )
+        conn.commit()
+        return new_id
+
+    def mark_memory_doubt(self, entry_id: int):
+        """L5 metamemory: mark a memory as uncertain (needs_review)."""
+        conn = self._get_conn()
+        import json as _json
+        row = conn.execute(
+            "SELECT type_data FROM long_term_entries WHERE id = ?", (entry_id,)
+        ).fetchone()
+        if row:
+            try:
+                td = _json.loads(row[0]) if row[0] else {}
+            except Exception:
+                td = {}
+            td["metamemory_doubt"] = True
+            conn.execute(
+                "UPDATE long_term_entries SET type_data = ? WHERE id = ?",
+                (_json.dumps(td, ensure_ascii=False), entry_id),
+            )
+            conn.commit()
 
     def search_long_term(self, query: str, limit: int = 10) -> List[LongTermEntry]:
         conn = self._get_conn()
