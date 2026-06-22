@@ -559,11 +559,11 @@ def _handle_link(gw, src_id: int, dst_id: int, relation: str) -> str:
     return json.dumps({"error": "link failed"})
 
 def _handle_search(gw, query: str, memory_type: str, user_id: str, limit: int) -> str:
-    results = gw.search(query, memory_type=memory_type, user_id=user_id, limit=limit)
+    results = gw.search_long_term(query, limit)
     return json.dumps({"results": results}, ensure_ascii=False)
 
 def _handle_self_audit(gw, user_id: str, limit: int) -> str:
-    conflicts = gw.source_conflict_scan(user_id=user_id, dry_run=True)
+    conflicts = gw.source_conflict_scan()
     return json.dumps({"conflicts": conflicts, "note": "v1: log only, no auto-correct"}, ensure_ascii=False)
 
 
@@ -593,4 +593,9 @@ registry.register(
         dst_id=args.get("dst_id", 0),
         memory_type=args.get("memory_type", ""),
         user_id=args.get("user_id", ""),
-        workflow_name=args.get("workflo
+        workflow_name=args.get("workflow_name", ""),
+        limit=args.get("limit", 10),
+    ),
+    check_fn=check_requirements,
+    emoji="🧠",
+)

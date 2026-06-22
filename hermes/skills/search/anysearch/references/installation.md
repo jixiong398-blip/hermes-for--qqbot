@@ -20,7 +20,7 @@
       "type": "remote",
       "url": "https://api.anysearch.com/mcp",
       "headers": {
-        "Authorization": "Bearer as_sk_fa89133f38499c61450b89a2a46fde4a"
+        "Authorization": "Bearer {{ANYSEARCH_API_KEY}}"
       }
     }
   }
@@ -56,7 +56,7 @@ mcp_servers:
   anysearch:
     url: "https://api.anysearch.com/mcp"
     headers:
-      Authorization: "Bearer as_sk_fa89133f38499c61450b89a2a46fde4a"
+      Authorization: "Bearer {{ANYSEARCH_API_KEY}}"
 ```
 
 Tools will auto-discover as `mcp_anysearch_*` on next Gateway restart.
@@ -69,6 +69,6 @@ Tools will auto-discover as `mcp_anysearch_*` on next Gateway restart.
 
 ## API Key
 
-- **Key**: `as_sk_fa89133f38499c61450b89a2a46fde4a`
+- **Key**: `{{ANYSEARCH_API_KEY}}`
 - **Scope**: OpenCode SKILL .env + Hermes MCP headers in config.yaml
 - **Type**: Authenticated (not anonymous — has higher rate limits)

@@ -16,13 +16,16 @@ the message pipeline.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger("hooks.memory_maintenance")
 
 _MAINTENANCE_INTERVAL_HOURS = 1
+_SLEEP_HOUR = 3
 _MAINTENANCE_TASK = None
 _MEMORY_GW = None
 _GW_LOCK = None
+_last_sleep_date = None
 
 
 def _get_gateway():
@@ -185,6 +188,7 @@ async def _on_gateway_startup(context: dict) -> None:
         return
 
     async def _maintenance_loop():
+        global _last_sleep_date
         await asyncio.sleep(120)  # initial delay
         while True:
             try:
@@ -198,6 +202,21 @@ async def _on_gateway_startup(context: dict) -> None:
                             "Memory maintenance: pruned=%d STM, %d workflows decayed",
                             pruned, decayed,
                         )
+
+                    now = datetime.now(timezone.utc)
+                    today_str = now.strftime("%Y-%m-%d")
+                    if _last_sleep_date != today_str and now.hour >= _SLEEP_HOUR:
+                        try:
+                            sleep_stats = gw.sleep_loop()
+                            _last_sleep_date = today_str
+                            logger.info(
+                                "L3 sleep loop: episodes=%d corrections=%d facts=%d",
+                                sleep_stats.get("episodes_processed", 0),
+                                sleep_stats.get("corrections_triggered", 0),
+                                sleep_stats.get("facts_promoted", 0),
+                            )
+                        except Exception as e:
+                            logger.debug("Sleep loop failed: %s", e)
             except Exception as e:
                 logger.debug("Maintenance cycle failed: %s", e)
             await asyncio.sleep(_MAINTENANCE_INTERVAL_HOURS * 3600)

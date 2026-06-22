@@ -2198,9 +2198,10 @@ class OneBotAdapter(BasePlatformAdapter):
         # Build text message event
         _all_media_urls = list(reply_media_urls) if reply_media_urls else []
         _all_media_types = list(reply_media_types) if reply_media_types else []
-        # NOTE: context_image_paths intentionally NOT added to media_urls —
-        # they belong to OTHER senders and are already attributed in channel_prompt.
-        # Adding them here would make vision analysis confuse who sent which image.
+        for _p in context_image_paths:
+            if _p not in _all_media_urls:
+                _all_media_urls.append(_p)
+                _all_media_types.append("image/jpeg")
         # Include images from forwarded messages for vision analysis
         if forward_id and forward_image_paths:
             for _p in forward_image_paths:
@@ -2351,7 +2352,17 @@ class OneBotAdapter(BasePlatformAdapter):
                         _sys = (_cfg.get("agent", {}) or {}).get("system_prompt", "") or ""
                         if _sys:
                             _persona += "\n\n" + _sys[:2000]
-                    _api_key = "sk-396ff7870ebd4c5e91708a95300c54f2"
+                    _api_key = os.getenv("DEEPSEEK_API_KEY", "")
+                    if not _api_key:
+                        try:
+                            import yaml as _y2
+                            _cfg2 = _y2.safe_load((_cfg_path if '_cfg_path' in dir() else Path.home() / ".hermes" / "config.yaml").read_text(encoding="utf-8")) or {}
+                            _api_key = (_cfg2.get("agent", {}) or {}).get("api_key", "") or os.getenv("OPENAI_API_KEY", "")
+                        except Exception:
+                            pass
+                    if not _api_key:
+                        logger.warning("[OneBot] No API key for report rewrite, skipping")
+                        raise RuntimeError("no api key")
                     _resp = _r.post(
                         "https://api.deepseek.com/v1/chat/completions",
                         headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},

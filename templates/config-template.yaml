@@ -103,7 +103,7 @@ mcp_servers:
   anysearch:
     url: "https://api.anysearch.com/mcp"
     headers:
-      Authorization: "Bearer as_sk_fa89133f38499c61450b89a2a46fde4a"
+      Authorization: "Bearer {{ANYSEARCH_API_KEY}}"
 stt:
   enabled: true
   provider: local
