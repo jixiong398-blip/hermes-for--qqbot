@@ -156,6 +156,7 @@ class MemoryRetriever:
                 relevance=relevance,
                 content=f"[{entry.category}] {entry.key}: {entry.value[:300]}",
                 metadata={
+                    "id": entry.id,
                     "category": entry.category,
                     "key": entry.key,
                     "confidence": entry.confidence,
@@ -257,6 +258,99 @@ class MemoryRetriever:
 
         return "\n\n".join(prompt_parts) if prompt_parts else ""
 
+    def build_recall_prompt_from_results(self, results: List[RetrievalResult],
+                                          query: str,
+                                          max_chars: Optional[int] = None) -> str:
+        """Build recall prompt from already-retrieved results (no re-query)."""
+        budget = max_chars or self.context_budget
+        if not results:
+            return ""
+
+        sections: Dict[str, List[str]] = {
+            "short_term": [],
+            "long_term": [],
+            "workflow": [],
+            "wiki": [],
+        }
+        section_labels = {
+            "short_term": "### Recent Context",
+            "long_term": "### Relevant Knowledge",
+            "workflow": "### Available Workflows",
+            "wiki": "### Wiki Reference",
+        }
+
+        total_chars = 0
+        for r in results:
+            source_section = sections.get(r.source, [])
+            if not source_section:
+                source_section.append(section_labels.get(r.source, f"### {r.source}"))
+            chunk = f"- {r.content}"
+            if total_chars + len(chunk) > budget:
+                break
+            source_section.append(chunk)
+            sections[r.source] = source_section
+            total_chars += len(chunk)
+
+        prompt_parts = []
+        for source, lines in sections.items():
+            if len(lines) > 1:
+                prompt_parts.append("\n".join(lines))
+        return "\n\n".join(prompt_parts) if prompt_parts else ""
+
     def quick_recall(self, query: str, session_id: Optional[str] = None) -> List[RetrievalResult]:
         """Fast recall with tight limits for real-time use."""
         return self.recall(query, session_id, limit_per_source=3)
+
+    def graph_expand(self, seed_ids: List[int],
+                     traversable_relations: Optional[List[str]] = None) -> List[RetrievalResult]:
+        """1-hop graph walk expansion from BM25 seed memory IDs.
+
+        Traverses edges (related_to, supports, abstracts_from) to find
+        adjacent memories not in the seed set. Skips corrected_by/contradicts
+        (those point to outdated/superseded memories).
+        """
+        if not seed_ids:
+            return []
+
+        if traversable_relations is None:
+            traversable_relations = ["related_to", "supports", "abstracts_from"]
+
+        conn = self._store._get_conn()
+        placeholders = ",".join("?" * len(seed_ids))
+        rel_placeholders = ",".join("?" * len(traversable_relations))
+
+        rows = conn.execute(
+            f"""SELECT DISTINCT me.dst_id, me.relation, me.weight,
+                      le.id, le.category, le.key, le.value, le.confidence
+               FROM memory_edges me
+               JOIN long_term_entries le ON me.dst_id = le.id
+               WHERE me.src_id IN ({placeholders})
+               AND me.relation IN ({rel_placeholders})
+               AND le.active = 1
+               AND me.dst_id NOT IN ({placeholders})""",
+            seed_ids + traversable_relations + seed_ids,
+        ).fetchall()
+
+        results = []
+        seen = set(seed_ids)
+        for row in rows:
+            if row[3] in seen:
+                continue
+            seen.add(row[3])
+            score = (row[2] or 0.5) * 0.6 + (row[6] or 0.5) * 0.4
+            results.append(RetrievalResult(
+                source="long_term",
+                relevance=score,
+                content=f"[{row[4]}] {row[5]}: {row[6][:300]}",
+                metadata={
+                    "id": row[3],
+                    "category": row[4],
+                    "key": row[5],
+                    "confidence": row[6],
+                    "edge_relation": row[1],
+                    "edge_weight": row[2],
+                    "graph_expanded": True,
+                },
+            ))
+        results.sort(key=lambda r: -r.relevance)
+        return results[:5]

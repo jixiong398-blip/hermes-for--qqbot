@@ -91,7 +91,7 @@ for root, dirs, files in os.walk("."):
     for f in files:
         if f.endswith((".py",".md",".yaml",".json")):
             text = open(os.path.join(root,f), encoding="utf-8").read()
-            for pattern in ["{{BOT_QQ_ID}}", "{{ONEBOT_TOKEN}}", "sk-CfBJRQ8u",
+            for pattern in ["{{BOT_QQ_ID}}", "{{ONEBOT_TOKEN}}", "{{DEEPSEEK_API_KEY}}",
                            "{{CHANNEL_NAME}}", "{{USERNAME}}", "{{HOME_CHANNEL}}",
                            "/home/{{USERNAME}}/", "E:/ai/"]:
                 if pattern in text and f != "AGENTS.md":
