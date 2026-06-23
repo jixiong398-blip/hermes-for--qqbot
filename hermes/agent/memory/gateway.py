@@ -359,7 +359,7 @@ class UnifiedMemoryGateway:
             stats["workflows_pruned"] = pruned
 
         # Prune old STM entries
-        self._store.prune_short_term(max_age_days=7.0)
+        self._store.prune_short_term(max_age_days=1.0)
 
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed

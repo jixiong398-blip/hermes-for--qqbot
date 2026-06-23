@@ -143,6 +143,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Smart trigger: LLM decides whether to join conversation
         self._wake_words = {"soyo", "素世", "soyo酱", "そよ", "長崎", "爽世", "清尘", "清塵"}
         self._last_bot_reply: Dict[str, tuple] = {}  # group_id → (timestamp, text)
+        self._attentive_groups: Dict[str, dict] = {}  # group_id → {active, silent_count, last_active_ts, last_reply}
         self._checked_messages: set = set()
 
         # Async persist queue: decouple SQLite writes from message processing
@@ -172,6 +173,8 @@ class OneBotAdapter(BasePlatformAdapter):
             buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0", "mid": ""})
             self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
             self._last_bot_reply[group_id] = (time.time(), text)
+            self._record_replied(group_id, text)
+            logger.info("[OneBot] add_bot_reply_to_buffer: group=%s _last_bot_reply set, text=%d chars", group_id, len(text))
         else:
             # DM reply: persist to DB so LLM can see its own messages
             self._persist_chat_message(chat_id, "private", 0, "bot", text, is_bot=1)
@@ -846,21 +849,61 @@ class OneBotAdapter(BasePlatformAdapter):
         if any(w in text_lower for w in self._wake_words):
             return True
 
-        # 3. Bot recently spoke and the topic might be ongoing — but skip
-        #    pure cards/shares (they have no user-generated text content)
+        # 3. Bot recently spoke and the topic might be ongoing
         _clean = self._cq_to_readable(raw_text) if raw_text else ""
         _is_card = not _clean.strip() or _clean.strip() in ("[分享]", "[卡片]", "[文件]", "[聊天记录]", "")
         if _is_card:
             return False
         last = self._last_bot_reply.get(group_id)
         if last and time.time() - last[0] < 300:
+            logger.info("[OneBot] _should_check: topic continuation, group=%s, last_reply_age=%.1fs", group_id, time.time() - last[0])
             return True
+
+        if last:
+            logger.info("[OneBot] _should_check: no continuation, group=%s, last_reply_age=%.1fs (>300s)", group_id, time.time() - last[0])
+        else:
+            logger.info("[OneBot] _should_check: no _last_bot_reply for group=%s", group_id)
 
         # Episode boundary: bot hasn't spoken in >5min → archive previous segment
         if last and time.time() - last[0] >= 300:
             self._write_episodic_segment(group_id)
 
         return False
+
+    # ── Attentive State ────────────────────────────────────────
+
+    def _enter_attentive(self, group_id: str, reply_text: str = ""):
+        self._attentive_groups[group_id] = {
+            "active": True,
+            "silent_count": 0,
+            "last_active_ts": time.time(),
+            "last_reply": reply_text,
+        }
+
+    def _is_attentive(self, group_id: str) -> bool:
+        state = self._attentive_groups.get(group_id)
+        if not state or not state.get("active"):
+            return False
+        if time.time() - state["last_active_ts"] > 600:
+            state["active"] = False
+            return False
+        if state["silent_count"] >= 3:
+            state["active"] = False
+            return False
+        return True
+
+    def _record_silent(self, group_id: str):
+        state = self._attentive_groups.get(group_id)
+        if state and state.get("active"):
+            state["silent_count"] += 1
+
+    def _record_replied(self, group_id: str, reply_text: str = ""):
+        state = self._attentive_groups.get(group_id)
+        if state:
+            state["silent_count"] = 0
+            state["last_active_ts"] = time.time()
+            state["last_reply"] = reply_text
+            state["active"] = True
 
     # ── STM → Episodic Interface ─────────────────────────────────
 
@@ -1371,12 +1414,12 @@ class OneBotAdapter(BasePlatformAdapter):
         msg = dict(last["msg"])
         msg["raw_message"] = f"[CQ:at,qq={{BOT_QQ_ID}}] {merged_text}"
         msg["message"] = [
-                {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
+            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Re-process without batching — include images in merged message
         merged_msg_arr = [
-                {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
+            {"type": "at", "data": {"qq": "{{BOT_QQ_ID}}"}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Attach original image/face/mface segments so _get_image_files can process them
@@ -1550,7 +1593,7 @@ class OneBotAdapter(BasePlatformAdapter):
     async def _process_message(self, msg: dict) -> None:
         """Process an incoming message event."""
         user_id = msg.get("user_id")
-        group_id = msg.get("group_id")
+        group_id = str(msg.get("group_id", ""))
         msg_type = msg.get("message_type", "")
         self_id = msg.get("self_id")
 
@@ -1582,7 +1625,7 @@ class OneBotAdapter(BasePlatformAdapter):
     async def _process_message_impl(self, msg: dict) -> None:
         """Inner message processing — called under group lock for group messages."""
         user_id = msg.get("user_id")
-        group_id = msg.get("group_id")
+        group_id = str(msg.get("group_id", ""))
         msg_type = msg.get("message_type", "")
         self_id = msg.get("self_id")
 
@@ -1727,6 +1770,11 @@ class OneBotAdapter(BasePlatformAdapter):
                     logger.info("[OneBot] Group message without trigger, lurking")
                     return
 
+            if should_trigger:
+                _dm = msg.get("_decision_mode", "")
+                if is_mentioned or "提到了" in _dm or "回复你" in _dm:
+                    self._enter_attentive(group_id)
+
         # Multi-@mention batching: merge nearby @mentions into one agent run
         if msg_type == "group" and is_mentioned and not msg.get("_skip_mention_batch"):
             key = f"mention:{group_id}"
@@ -1855,16 +1903,31 @@ class OneBotAdapter(BasePlatformAdapter):
                 _preview_text = self._cq_to_readable(self._get_raw_text(msg) or "")
             # Inject group chat context: identify WHO sent the message and WHAT they said
             _dm_reason = msg.get("_decision_mode", "")
-            if _dm_reason:
+            _attentive = self._is_attentive(group_id)
+            _att_state = self._attentive_groups.get(group_id, {})
+
+            if _dm_reason and not _attentive:
                 trigger_reason = _dm_reason
+                _mode = "[旁观模式]"
+            elif _attentive:
+                trigger_reason = "你在关注这段对话"
+                _mode = "[对话模式]"
+                _silent = _att_state.get("silent_count", 0)
+                _last_reply = _att_state.get("last_reply", "")
+                _mins = int((time.time() - _att_state.get("last_active_ts", time.time())) / 60)
+                if _silent > 0:
+                    trigger_reason += f"（你已沉默{_silent}次，但话题回到你身上时自然接话就好）"
+                if _last_reply:
+                    trigger_reason += f"（你上次说: '{_last_reply[:60]}'，{_mins}分钟前）"
             else:
                 trigger_reason = "该用户@了你"
+                _mode = "[对话模式]"
+
             msg_time = msg.get("time", 0)
             time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
-            _prefix = (f"[旁观模式] {trigger_reason}。" if _dm_reason
-                       else f"[群聊模式] {time_str} 来自「{sender_name}」：{_preview_text[:100]}。")
+            _prefix = f"{_mode} {trigger_reason}。{time_str} 来自「{sender_name}」：{_preview_text[:100]}。"
             channel_prompt = (
-                _prefix + trigger_reason
+                _prefix
                 + (f"\n\n{group_context}" if group_context else "")
             )
             # Inject sender identity card for group messages
@@ -1876,7 +1939,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 channel_prompt = (channel_prompt + "\n\n" + recall) if channel_prompt else recall
             channel_prompt = (channel_prompt or "") + (
                 "\n\n[工具] 你可以用以下标记控制行为：\n"
-                "- 不想回话就只输出 [SILENT]（无其他文字）\n"
+                "- 不想回话就只输出 [SILENT]（无其他文字），下次有人说话你还可以接\n"
+                "- 觉得话题跟你完全没关系了、想安静潜水就输出 [QUIET]（无其他文字），之后不再被叫到就不说话\n"
                 "- 想引用某条消息就在回复里用 [reply:消息ID]，消息ID 必须是上方 [mid:xxx] 里出现过的数字，不能自己编\n"
                 "- 不写 [reply:xxx] 时默认不引用任何消息\n"
                 "- 只有在回应某条具体消息时才引用，闲聊时不引用"
@@ -2202,7 +2266,6 @@ class OneBotAdapter(BasePlatformAdapter):
             if _p not in _all_media_urls:
                 _all_media_urls.append(_p)
                 _all_media_types.append("image/jpeg")
-        # Include images from forwarded messages for vision analysis
         if forward_id and forward_image_paths:
             for _p in forward_image_paths:
                 if _p not in _all_media_urls:
@@ -2232,7 +2295,7 @@ class OneBotAdapter(BasePlatformAdapter):
         """Process notice events (group increase, file upload, etc.)."""
         notice_type = msg.get("notice_type", "")
         if notice_type == "group_increase":
-            group_id = msg.get("group_id")
+            group_id = str(msg.get("group_id", ""))
             user_id = msg.get("user_id")
             logger.info("[OneBot] User %s joined group %s", user_id, group_id)
         elif notice_type == "group_upload":
@@ -2278,8 +2341,19 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send a text message to a QQ chat."""
         if chat_id.startswith("group:") and content:
             logger.debug("[OneBot] send: chat_id=%s len=%d starts=%s", chat_id, len(content), content[:80])
+        if content and "[QUIET]" in content:
+            _gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
+            logger.info("[OneBot] LLM chose [QUIET], going silent, group=%s", _gid)
+            if _gid:
+                state = self._attentive_groups.get(_gid)
+                if state:
+                    state["active"] = False
+                self._last_bot_reply.pop(_gid, None)
+            return SendResult(success=True, message_id=None)
         if content and "[SILENT]" in content:
             logger.info("[OneBot] LLM chose [SILENT], suppressing message")
+            if chat_id.startswith("group:"):
+                self._record_silent(chat_id.split(":", 1)[1])
             return SendResult(success=True, message_id=None)
 
         if content and chat_id.startswith("group:"):
@@ -2298,11 +2372,14 @@ class OneBotAdapter(BasePlatformAdapter):
                         reply_to = _reply_id
                         logger.info("[OneBot] send: parsed [reply:%s] from content, validated OK", reply_to)
                     else:
+                        reply_to = None
                         logger.warning("[OneBot] send: [reply:%s] ID not found in buffer, ignoring", _reply_id)
                 except Exception:
-                    pass
+                    reply_to = None
                 content = content[:m.start()] + content[m.end():]
                 content = content.strip()
+            else:
+                reply_to = None
 
         # ── QQ 最终防线：过滤系统提示词和括号动作描写 ──
         if content:
