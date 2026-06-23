@@ -129,22 +129,15 @@ class OneBotAdapter(BasePlatformAdapter):
         self._mention_flush_tasks: Dict[str, asyncio.Task] = {}
         self._mention_batch_delay = 3.0  # seconds to wait for more @mentions
 
-        # Group message buffer: store recent messages per group for context
-        # Pure 5-minute time window — no count limit. Messages outside the window
-        # stay in DB (chat_message_buffer) for permanent storage and can be
-        # reloaded via recall/buffer_search when needed.
-        self._group_buffer: Dict[str, list] = {}  # group_id → [{name, text, ts}, ...]
+        from .group_state import GroupStateRegistry
+        self._group_states = GroupStateRegistry()
 
         # Image description cache: avoid re-calling vision API for same image
         self._image_descriptions: Dict[str, str] = {}
         self._voice_transcripts: Dict[str, str] = {}
         self._vision_config: Dict[str, str] = {}
 
-        # Smart trigger: LLM decides whether to join conversation
-        self._wake_words = {"soyo", "素世", "soyo酱", "そよ", "長崎", "爽世", "清尘", "清塵"}
-        self._last_bot_reply: Dict[str, tuple] = {}  # group_id → (timestamp, text)
-        self._attentive_groups: Dict[str, dict] = {}  # group_id → {active, silent_count, last_active_ts, last_reply}
-        self._checked_messages: set = set()
+        self._last_bot_reply: Dict[str, tuple] = {}
 
         # Async persist queue: decouple SQLite writes from message processing
         self._persist_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
@@ -162,50 +155,41 @@ class OneBotAdapter(BasePlatformAdapter):
         self._ws_reconnect_interval: int = int(os.getenv("ONEBOT_RECONNECT_INTERVAL", "10"))
 
     def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False):
-        """Add the bot's own reply to the group buffer so the LLM can see it in context.
-        Also persists to DB with is_bot=1 so auto-join can detect recent activity."""
         if chat_id.startswith("group:"):
             group_id = chat_id.split(":", 1)[1]
-            if group_id not in self._group_buffer:
-                self._group_buffer[group_id] = []
-            buf = self._group_buffer[group_id]
             label = "[语音]" if is_voice else ""
-            buf.append({"name": "bot", "text": f"{label}{text}", "ts": time.time(), "uid": "0", "mid": ""})
             self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
             self._last_bot_reply[group_id] = (time.time(), text)
-            self._record_replied(group_id, text)
-            logger.info("[OneBot] add_bot_reply_to_buffer: group=%s _last_bot_reply set, text=%d chars", group_id, len(text))
+            try:
+                from .group_state import BufferedMessage
+                _gs = self._group_states.get(group_id)
+                _gs.append_message(
+                    BufferedMessage(mid="", ts=time.time(), uid="0", name="bot",
+                                    text=f"{label}{text}", is_bot=True)
+                )
+                _gs.record_reply(text)
+            except Exception:
+                pass
+            logger.info("[OneBot] add_bot_reply_to_buffer: group=%s text=%d chars", group_id, len(text))
         else:
-            # DM reply: persist to DB so LLM can see its own messages
             self._persist_chat_message(chat_id, "private", 0, "bot", text, is_bot=1)
 
     def get_group_buffer_snapshot(self, group_id: str, window_seconds: int = 300) -> list:
-        """Export current group buffer for external consumers (e.g., auto-join).
-        
-        Returns messages within the time window, newest last.
-        Each entry: {name, text, ts}
-        """
-        buf = self._group_buffer.get(group_id, [])
-        if not buf:
-            return []
-        cutoff = time.time() - window_seconds
-        return [m for m in buf if m.get("ts", 0) >= cutoff]
+        gs = self._group_states.get(group_id)
+        msgs = gs.get_recent(window_seconds=window_seconds)
+        return [{"name": m.name, "text": m.text, "ts": m.ts, "uid": m.uid, "mid": m.mid}
+                for m in msgs]
 
     def _persist_chat_message(self, group_id: str, chat_type: str, user_id: int,
                                sender_name: str, content: str, message_id: str = "",
                                created_at: float = None, is_bot: int = 0,
                                *, content_raw: str = "", sender_card: str = "",
-                               group_name: str = ""):
-        """Queue a chat message for async SQLite persistence (non-blocking).
-        
-        If created_at is None, uses current time. Set to the original message
-        timestamp for recovered/historical messages to avoid time-window pollution.
-        is_bot: 1 if this is the bot's own message (for auto-join dedup).
-        """
+                               group_name: str = "", image_descriptions: list = None):
         try:
             self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name,
                                             content, message_id, created_at, is_bot,
-                                            content_raw, sender_card, group_name))
+                                            content_raw, sender_card, group_name,
+                                            image_descriptions or []))
         except asyncio.QueueFull:
             pass
 
@@ -218,7 +202,8 @@ class OneBotAdapter(BasePlatformAdapter):
         while True:
             try:
                 (group_id, chat_type, user_id, sender_name, content, message_id,
-                 created_at, is_bot, content_raw, sender_card, group_name) = await self._persist_queue.get()
+                 created_at, is_bot, content_raw, sender_card, group_name,
+                 image_descs) = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
                 _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
@@ -277,10 +262,22 @@ class OneBotAdapter(BasePlatformAdapter):
                                     left_at REAL,
                                     activity_level REAL DEFAULT 0.5,
                                     wake_sensitivity REAL DEFAULT 1.0,
-                                    notes TEXT DEFAULT ''
+                                    notes TEXT DEFAULT '',
+                                    topic_summary TEXT DEFAULT '',
+                                    topic_keywords TEXT DEFAULT '[]',
+                                    topic_updated_at REAL DEFAULT 0
                                 );
                             """)
                             _corpus_inited = True
+                            try:
+                                existing_cols = {r[1] for r in db.execute("PRAGMA table_info(groups_registry)")}
+                                for _col, _def in [("topic_summary", "TEXT DEFAULT ''"),
+                                                   ("topic_keywords", "TEXT DEFAULT '[]'"),
+                                                   ("topic_updated_at", "REAL DEFAULT 0")]:
+                                    if _col not in existing_cols:
+                                        db.execute(f"ALTER TABLE groups_registry ADD COLUMN {_col} {_def}")
+                            except Exception:
+                                pass
                         db.execute(
                             "INSERT INTO chat_message_buffer (chat_id, chat_type, user_id, sender_name, content, message_id, created_at, is_bot) VALUES (?,?,?,?,?,?,?,?)",
                             (cid, chat_type, str(user_id), sender_name, content, str(message_id), _ts, is_bot),
@@ -296,6 +293,12 @@ class OneBotAdapter(BasePlatformAdapter):
                              user_id, sender_name, sender_card,
                              content_raw, content, is_bot, _ts),
                         )
+                        if image_descs:
+                            import json as _ijd
+                            db.execute(
+                                "UPDATE corpus_messages SET image_descriptions = ? WHERE message_id = ? AND created_at = ?",
+                                (_ijd.dumps(image_descs, ensure_ascii=False), str(message_id), _ts),
+                            )
                         if chat_type == "group" and group_id:
                             db.execute(
                                 "INSERT OR IGNORE INTO groups_registry (group_id, group_name, joined_at) VALUES (?, ?, ?)",
@@ -329,144 +332,34 @@ class OneBotAdapter(BasePlatformAdapter):
     def name(self) -> str:
         return "OneBot (QQ)"
 
-    def _get_sender_identity(self, user_id: str, sender_name: str) -> str:
-        """Query LTM for a sender's profile and return a compact identity card.
-
-        Returns empty string if no relevant entries found or query fails.
-        """
+    def _recall_context(self, message_text: str, sender_id: str,
+                        sender_name: str, session_id: str = "") -> str:
         try:
             from agent.memory.gateway import UnifiedMemoryGateway
             gw = UnifiedMemoryGateway.get_instance()
-            if not gw:
-                return ""
-            conn = gw._store._get_conn()
-            rows = conn.execute(
-                "SELECT category, key, value FROM long_term_entries "
-                "WHERE key LIKE ? AND confidence >= 0.5 "
-                "AND category IN ('user_profile', 'user_preference') "
-                "ORDER BY category, confidence DESC LIMIT 8",
-                (f"{user_id}%",),
-            ).fetchall()
-            if not rows:
+            if not gw or not message_text or len(message_text.strip()) < 3:
                 return ""
 
-            lines = []
-            for cat, key, value in rows:
-                text = value.strip()[:80]
-                if text:
-                    lines.append(text)
+            structured = gw.recall_structured(message_text, session_id=session_id, max_chars=3000)
 
-            if not lines:
-                return ""
+            parts = []
+            if structured.get("prompt"):
+                parts.append(structured["prompt"])
 
-            return f"[关于 {sender_name}] " + "；".join(lines)
-        except Exception:
-            return ""
+            sender_matches = gw._ltm.search(sender_id, limit=5) if sender_id else []
+            if not sender_matches and sender_name:
+                sender_matches = gw._ltm.search(sender_name, limit=5)
+            if sender_matches:
+                profile_lines = []
+                seen = set()
+                for r in sender_matches:
+                    if r.value and r.value.strip() and r.value not in seen:
+                        seen.add(r.value)
+                        profile_lines.append(r.value.strip()[:100])
+                if profile_lines:
+                    parts.append(f"[关于 {sender_name}] " + "；".join(profile_lines[:5]))
 
-    def _auto_recall(self, message_text: str, exclude_qq: str = "") -> str:
-        """Search LTM for memories relevant to the current message using FTS.
-
-        Returns formatted recall results or empty string if nothing found.
-        Excludes entries already shown in the sender's identity card.
-        """
-        if not message_text or len(message_text.strip()) < 3:
-            return ""
-        try:
-            from agent.memory.gateway import UnifiedMemoryGateway
-            gw = UnifiedMemoryGateway.get_instance()
-            if not gw:
-                return ""
-            conn = gw._store._get_conn()
-
-            # Extract meaningful keywords: Chinese bigrams + English words
-            import re as _re
-            cjk_chars = _re.findall(r'[\u4e00-\u9fff]', message_text)
-            bigrams = {"".join(cjk_chars[i:i+2]) for i in range(len(cjk_chars)-1)}
-            eng_words = _re.findall(r'[a-zA-Z]{3,}', message_text)
-            words = list(bigrams)[:12] + eng_words[:5]
-            if not words:
-                return ""
-
-            # LIKE query: OR multiple keywords, order by confidence DESC
-            clauses = " OR ".join(["value LIKE ?" for _ in words[:8]])
-            params = [f"%{w}%" for w in words[:8]]
-            rows = conn.execute(
-                f"SELECT value, category, key, id, recall_strength FROM long_term_entries "
-                f"WHERE ({clauses}) AND confidence >= 0.4 "
-                f"AND active = 1 "
-                f"AND category NOT IN ('sticker') "
-                f"ORDER BY confidence DESC LIMIT 5",
-                params,
-            ).fetchall()
-
-            if not rows:
-                return ""
-
-            # L1 reconsolidate: each recall hit strengthens the memory
-            gw._ltm.reconsolidate(rows[0][3])
-
-            # Tag-based expansion: for each hit, pull entries sharing tags
-            import json as _json
-            seen_keys = {row[2] for row in rows}
-            expanded = list(rows)
-            for value, cat, key, rid, rstrength in rows[:3]:  # Expand from top 3 hits only
-                tag_row = conn.execute(
-                    "SELECT tags FROM long_term_entries WHERE key = ?", (key,)
-                ).fetchone()
-                if not tag_row or not tag_row[0] or tag_row[0] == "[]":
-                    continue
-                try:
-                    entry_tags = _json.loads(tag_row[0])
-                except Exception:
-                    continue
-                for tag in entry_tags[:4]:
-                    if len(expanded) >= 8:
-                        break
-                        sub = conn.execute(
-                            "SELECT value, category, key, id, recall_strength FROM long_term_entries "
-                            "WHERE tags LIKE ? AND key != ? "
-                            "AND active = 1 "
-                            "AND confidence >= 0.4 AND key NOT IN ({}) "
-                            "LIMIT 2".format(",".join("?" * len(seen_keys))),
-                            [f"%{tag}%", key] + list(seen_keys),
-                        ).fetchall()
-                        for v, c, k, rid, rstrength in sub:
-                            if k not in seen_keys:
-                                expanded.append((v, c, k, rid, rstrength))
-                                seen_keys.add(k)
-
-            lines = []
-            for row in expanded[:5]:  # Limit total to 5
-                value, cat, key, rid, rstrength = row
-                # Skip entries from the sender (already in identity card)
-                if exclude_qq and key.startswith(f"{exclude_qq}_"):
-                    continue
-                text = value.strip()[:100]
-                if text:
-                    # L5: mark uncertain memories
-                    if rstrength is not None and rstrength < 0.3:
-                        text = f"[不确定] {text}"
-                    lines.append(text)
-
-            if not lines:
-                return ""
-
-            result = "[相关记忆] " + "；".join(lines)
-
-            try:
-                matched_wfs = gw._wfm.match_trigger(message_text)
-                if matched_wfs:
-                    wf_hints = []
-                    for wf in matched_wfs[:2]:
-                        if wf.current_weight > 0.15:
-                            steps_preview = " → ".join(wf.steps[:3]) if wf.steps else ""
-                            wf_hints.append(f"{wf.name}({wf.current_weight:.2f}): {steps_preview}")
-                    if wf_hints:
-                        result += "\n[可用行为模式] " + " | ".join(wf_hints)
-            except Exception:
-                pass
-
-            return result
+            return "\n\n".join(parts) if parts else ""
         except Exception:
             return ""
 
@@ -792,21 +685,7 @@ class OneBotAdapter(BasePlatformAdapter):
                         return val.strip()
         return None
 
-    @staticmethod
-    def _cq_to_readable(text: str) -> str:
-        """Convert CQ codes in raw_message to human-readable text.
-        
-        - [CQ:at,qq=xxx] → @QQxxx
-        - [CQ:at,qq=all] → @全体成员
-        - [CQ:reply,id=xxx] → [回复消息]
-        - [CQ:image,...] → [图片]
-        - [CQ:face,...] → [动画表情]
-        - [CQ:video,...] → [视频]
-        - [CQ:file,...] → [文件]
-        - [CQ:json,...] → [分享: 标题] / [分享]
-        - [CQ:xml,...]  → [卡片: 标题] / [卡片]
-        - All others → removed
-        """
+    def _cq_to_readable(self, text: str) -> str:
         if not text:
             return ""
         text = re.sub(r'\[CQ:at,qq=(\d+)\]', r'@QQ\1', text)
@@ -816,94 +695,53 @@ class OneBotAdapter(BasePlatformAdapter):
         text = re.sub(r'\[CQ:face,[^\]]*\]', '[动画表情]', text)
         text = re.sub(r'\[CQ:video,[^\]]*\]', '[视频]', text)
         text = re.sub(r'\[CQ:file,[^\]]*\]', '[文件]', text)
-        # Card/share messages: extract title if available, preserve as marker
-        text = re.sub(r'\[CQ:json,[^\]]*\]', lambda m: f'[分享]', text)
-        text = re.sub(r'\[CQ:xml,[^\]]*\]', lambda m: f'[卡片]', text)
+        text = re.sub(r'\[CQ:json,([^\]]*)\]', self._parse_json_card, text)
+        text = re.sub(r'\[CQ:xml,([^\]]*)\]', self._parse_xml_card, text)
         text = re.sub(r'\[CQ:[^\]]+\]', '', text)
         return text.strip()
 
-    def _is_reply_to_bot(self, msg: dict) -> bool:
-        """Check if this message is a reply to one of the bot's own messages."""
-        sid = msg.get("_reply_sender_id")
-        return sid and str(sid) == str(self._self_id)
+    @staticmethod
+    def _parse_json_card(m: re.Match) -> str:
+        raw = m.group(1) or ""
+        if not raw:
+            return "[分享]"
+        try:
+            import json as _j
+            import urllib.parse as _u
+            decoded = _u.unquote(raw)
+            data = _j.loads(decoded)
+            title = data.get("title", "") or data.get("prompt", "")
+            desc = data.get("desc", "") or data.get("summary", "")
+            url = data.get("jumpUrl", "") or data.get("url", "")
+            parts = ["[分享]"]
+            if title:
+                parts.append(title[:60])
+            if desc and desc != title:
+                parts.append(desc[:80])
+            if url:
+                parts.append(url[:120])
+            return " ".join(parts) if len(parts) > 1 else "[分享]"
+        except Exception:
+            return "[分享]"
 
-    def _should_check(self, msg: dict, group_id: str, user_id, raw_text: str) -> bool:
-        """Determine whether the LLM should decide if it wants to join the conversation.
-
-        Returns True for: reply to bot, wake word, or recent bot activity in the group.
-        """
-        # Dedup: don't check the same message twice
-        msg_id = str(msg.get("message_id", ""))
-        if msg_id in self._checked_messages:
-            return False
-        self._checked_messages.add(msg_id)
-        if len(self._checked_messages) > 500:
-            self._checked_messages.clear()
-
-        # 1. Someone replied to the bot
-        if self._is_reply_to_bot(msg):
-            return True
-
-        # 2. Message contains a wake word
-        text_lower = raw_text.lower() if raw_text else ""
-        if any(w in text_lower for w in self._wake_words):
-            return True
-
-        # 3. Bot recently spoke and the topic might be ongoing
-        _clean = self._cq_to_readable(raw_text) if raw_text else ""
-        _is_card = not _clean.strip() or _clean.strip() in ("[分享]", "[卡片]", "[文件]", "[聊天记录]", "")
-        if _is_card:
-            return False
-        last = self._last_bot_reply.get(group_id)
-        if last and time.time() - last[0] < 300:
-            logger.info("[OneBot] _should_check: topic continuation, group=%s, last_reply_age=%.1fs", group_id, time.time() - last[0])
-            return True
-
-        if last:
-            logger.info("[OneBot] _should_check: no continuation, group=%s, last_reply_age=%.1fs (>300s)", group_id, time.time() - last[0])
-        else:
-            logger.info("[OneBot] _should_check: no _last_bot_reply for group=%s", group_id)
-
-        # Episode boundary: bot hasn't spoken in >5min → archive previous segment
-        if last and time.time() - last[0] >= 300:
-            self._write_episodic_segment(group_id)
-
-        return False
-
-    # ── Attentive State ────────────────────────────────────────
-
-    def _enter_attentive(self, group_id: str, reply_text: str = ""):
-        self._attentive_groups[group_id] = {
-            "active": True,
-            "silent_count": 0,
-            "last_active_ts": time.time(),
-            "last_reply": reply_text,
-        }
-
-    def _is_attentive(self, group_id: str) -> bool:
-        state = self._attentive_groups.get(group_id)
-        if not state or not state.get("active"):
-            return False
-        if time.time() - state["last_active_ts"] > 600:
-            state["active"] = False
-            return False
-        if state["silent_count"] >= 3:
-            state["active"] = False
-            return False
-        return True
-
-    def _record_silent(self, group_id: str):
-        state = self._attentive_groups.get(group_id)
-        if state and state.get("active"):
-            state["silent_count"] += 1
-
-    def _record_replied(self, group_id: str, reply_text: str = ""):
-        state = self._attentive_groups.get(group_id)
-        if state:
-            state["silent_count"] = 0
-            state["last_active_ts"] = time.time()
-            state["last_reply"] = reply_text
-            state["active"] = True
+    @staticmethod
+    def _parse_xml_card(m: re.Match) -> str:
+        raw = m.group(1) or ""
+        if not raw:
+            return "[卡片]"
+        try:
+            import urllib.parse as _u
+            decoded = _u.unquote(raw)
+            title_m = re.search(r'<title>([^<]*)</title>', decoded) or re.search(r'title="([^"]*)"', decoded)
+            desc_m = re.search(r'<desc>([^<]*)</desc>', decoded) or re.search(r'desc="([^"]*)"', decoded)
+            parts = ["[卡片]"]
+            if title_m:
+                parts.append(title_m.group(1)[:60])
+            if desc_m and desc_m.group(1) != (title_m.group(1) if title_m else ""):
+                parts.append(desc_m.group(1)[:80])
+            return " ".join(parts) if len(parts) > 1 else "[卡片]"
+        except Exception:
+            return "[卡片]"
 
     # ── STM → Episodic Interface ─────────────────────────────────
 
@@ -930,9 +768,9 @@ class OneBotAdapter(BasePlatformAdapter):
             state_db = str(get_state_db_path())
             sdb = _sqlite3.connect(state_db, timeout=10)
             raw_msgs = sdb.execute(
-                """SELECT sender_name, content, is_bot, created_at, user_id
-                   FROM chat_message_buffer
-                   WHERE chat_id = ? AND created_at > ? AND created_at <= ?
+                """SELECT sender_name, content_readable, is_bot, created_at, user_id
+                   FROM corpus_messages
+                   WHERE group_id = ? AND created_at > ? AND created_at <= ?
                    ORDER BY created_at ASC LIMIT 50""",
                 (group_id, since_ts, time.time()),
             ).fetchall()
@@ -994,15 +832,49 @@ class OneBotAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.warning("[OneBot] Episode write failed: %s", e)
 
-    def _get_trigger_reason(self, msg: dict, raw_text: str) -> str:
-        """Explain why the bot is being asked to decide whether to reply."""
-        if self._is_reply_to_bot(msg):
-            return "有人在回复你"
-        text_lower = raw_text.lower() if raw_text else ""
-        for w in self._wake_words:
-            if w in text_lower:
-                return f"有人提到了'{w}'"
-        return "你最近在这个群说过话，话题可能在延续"
+    def _generate_group_topic_summary(self, group_id: str):
+        try:
+            import sqlite3 as _sql
+            import json as _json
+            state_db = str(get_state_db_path())
+            sdb = _sql.connect(state_db, timeout=10)
+            rows = sdb.execute(
+                """SELECT sender_name, content_readable, created_at
+                   FROM corpus_messages
+                   WHERE group_id = ? AND created_at > ?
+                   ORDER BY created_at ASC LIMIT 100""",
+                (group_id, time.time() - 3600),
+            ).fetchall()
+            sdb.close()
+            if len(rows) < 3:
+                return
+            from collections import Counter
+            import re as _re
+            all_text = " ".join(r[1] or "" for r in rows)
+            cjk = _re.findall(r'[\u4e00-\u9fff]{2,4}', all_text)
+            keywords = [w for w, c in Counter(cjk).most_common(10) if c >= 2]
+            summary_parts = []
+            seen = set()
+            for r in rows[-20:]:
+                name = r[0]
+                text = (r[1] or "")[:60]
+                if text and text not in seen:
+                    seen.add(text)
+                    summary_parts.append(f"{name}: {text}")
+            summary = "\n".join(summary_parts[:10])
+            sdb = _sql.connect(state_db, timeout=10)
+            sdb.execute(
+                "UPDATE groups_registry SET topic_summary = ?, topic_keywords = ?, topic_updated_at = ? WHERE group_id = ?",
+                (_json.dumps(summary, ensure_ascii=False)[:2000],
+                 _json.dumps(keywords, ensure_ascii=False),
+                 time.time(), group_id),
+            )
+            sdb.commit()
+            sdb.close()
+            logger.info("[OneBot] Topic summary for %s: %d keywords, %d chars",
+                        group_id, len(keywords), len(summary))
+        except Exception as e:
+            logger.debug("[OneBot] Topic summary failed: %s", e)
 
     # ------------------------------------------------------------------
     # Message processing
@@ -1081,11 +953,16 @@ class OneBotAdapter(BasePlatformAdapter):
         return any(seg.get("type") in ("record", "voice") for seg in segments)
 
     def _has_image_message(self, msg: dict) -> bool:
-        """Check if the message contains an image, face emoji, or sticker segment."""
         segments = msg.get("message", [])
         if not isinstance(segments, list):
             return False
         return any(seg.get("type") in ("image", "face", "mface") for seg in segments)
+
+    def _has_sticker_message(self, msg: dict) -> bool:
+        segments = msg.get("message", [])
+        if not isinstance(segments, list):
+            return False
+        return any(seg.get("type") == "mface" for seg in segments)
 
     @staticmethod
     def _get_seg_data(seg: dict, key: str, default=""):
@@ -1130,18 +1007,12 @@ class OneBotAdapter(BasePlatformAdapter):
             return "图片"
 
         try:
-            # Load vision config once
             if not self._vision_config:
-                import yaml as _y
-                cfg_path = Path.home() / ".hermes" / "config.yaml"
-                if cfg_path.exists():
-                    cfg = _y.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                    vis = cfg.get("auxiliary", {}).get("vision", {})
-                    self._vision_config = {
-                        "api_key": vis.get("api_key", ""),
-                        "base_url": vis.get("base_url", "https://api.xiaomimimo.com/v1"),
-                        "model": vis.get("model", "mimo-v2.5"),
-                    }
+                self._vision_config = {
+                    "api_key": os.getenv("MIMO_API_KEY", ""),
+                    "base_url": os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
+                    "model": os.getenv("MIMO_MODEL", "mimo-v2.5"),
+                }
             if not self._vision_config.get("api_key"):
                 self._image_descriptions[image_path] = "图片"
                 return "图片"
@@ -1445,7 +1316,7 @@ class OneBotAdapter(BasePlatformAdapter):
         except Exception:
             pass
         # Get known groups: in-memory first, then SQLite fallback
-        groups = list(self._group_buffer.keys())
+        groups = list(self._group_states.get_all().keys())
         if not groups:
             try:
                 from agent.memory.gateway import UnifiedMemoryGateway
@@ -1512,23 +1383,27 @@ class OneBotAdapter(BasePlatformAdapter):
                     ts = float(msg_time) if msg_time > 1000000 else now
                     # Store full text — QQ messages are already size-limited by protocol
                     buf_text = text
-                    buf = self._group_buffer.setdefault(group_id, [])
                     _mid = str(m.get("real_id", m.get("message_id", "")))
-                    buf.append({"name": sname, "text": buf_text, "ts": ts, "uid": str(sid), "mid": _mid})
+                    try:
+                        from .group_state import BufferedMessage
+                        self._group_states.get(group_id).append_message(
+                            BufferedMessage(mid=_mid, ts=ts, uid=str(sid), name=sname, text=buf_text)
+                        )
+                    except Exception:
+                        pass
                     self._persist_chat_message(group_id, "group", int(sid or 0), sname, text,
                                                message_id=str(m.get("real_id", m.get("message_id", ""))),
                                                created_at=ts,
                                                content_raw=text,
                                                sender_card=sender.get("card", ""))
-                    # Only respond to real @mentions within 3 minutes of last activity
                     if m.get("_is_placeholder"):
                         continue
                     if self._is_mentioned(m, self._self_id or 0):
-                        # Check if conversation is still "alive" — look at last non-bot message
                         last_other_ts = 0
-                        for bm in reversed(buf[:-1]):  # skip current (just appended)
-                            if bm.get("name") != "bot":
-                                last_other_ts = bm.get("ts", 0)
+                        _gs = self._group_states.get(group_id)
+                        for bm in reversed(_gs.buffer[:-1]):
+                            if bm.name != "bot":
+                                last_other_ts = bm.ts
                                 break
                         age = now - ts
                         gap_since_last = now - last_other_ts if last_other_ts else 999
@@ -1672,11 +1547,23 @@ class OneBotAdapter(BasePlatformAdapter):
 
             # Pre-download images in group messages for context (even if lurking)
             _image_hint = ""
+            _image_descs = []
             if self._has_image_message(msg):
                 try:
                     _img_paths = await self._get_image_files(msg)
                     if _img_paths:
                         _image_hint = " [image:" + ",".join(_img_paths) + "]"
+                        _is_sticker = self._has_sticker_message(msg)
+                        for _ip in _img_paths[:5]:
+                            for _p in _ip.split(","):
+                                _p = _p.strip()
+                                if _p and _p != "download_failed":
+                                    try:
+                                        _d = await self._describe_image(_p)
+                                        _tag = "表情包" if _is_sticker else "图片"
+                                        _image_descs.append(f"[{_tag}: {_d}]")
+                                    except Exception:
+                                        pass
                     else:
                         _image_hint = " [image:download_failed]"
                 except Exception:
@@ -1740,15 +1627,24 @@ class OneBotAdapter(BasePlatformAdapter):
             # Inject downloaded forward images into buffer so vision tool can process them
             if _fwd_image_paths:
                 _clean_text += " [image:" + ",".join(_fwd_image_paths) + "]"
-            if group_id not in self._group_buffer:
-                self._group_buffer[group_id] = []
-            buf = self._group_buffer[group_id]
             m_text = (_clean_text + _image_hint)
+            if _image_descs:
+                m_text += " " + " ".join(_image_descs)
             _msg_id = str(msg.get("message_id", ""))
-            buf.append({"name": sender_name, "text": m_text, "ts": time.time(), "uid": str(user_id), "mid": _msg_id})
+            _msg_type = "sticker" if self._has_sticker_message(msg) else ("image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"))
+            try:
+                from .group_state import BufferedMessage
+                self._group_states.get(group_id).append_message(
+                    BufferedMessage(mid=_msg_id, ts=time.time(), uid=str(user_id),
+                                    name=sender_name, text=m_text, msg_type=_msg_type,
+                                    descriptions=_image_descs)
+                )
+            except Exception:
+                pass
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id,
                                        content_raw=raw_text,
-                                       sender_card=sender.get("card", ""))
+                                       sender_card=sender.get("card", ""),
+                                       image_descriptions=_image_descs)
 
             # Spawn background investigation for card/share messages
             if "[分享]" in _clean_text or "[卡片]" in _clean_text:
@@ -1759,21 +1655,76 @@ class OneBotAdapter(BasePlatformAdapter):
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
 
-            # Trigger: @mention → mandatory reply. Also allow smart-trigger for replies/wake-words.
-            should_trigger = is_mentioned
-            if not should_trigger:
-                decision_reason = self._get_trigger_reason(msg, raw_text)
-                if self._should_check(msg, group_id, user_id, raw_text):
+            should_trigger = False
+            decision_reason = ""
+            _judge_result = None
+            if self._has_voice_message(msg):
+                _preview_text = "[语音消息]"
+            elif self._has_image_message(msg):
+                _preview_text = "[图片消息]"
+            else:
+                _preview_text = self._cq_to_readable(self._get_raw_text(msg) or "")
+            try:
+                from .semantic_judge import semantic_judge as _sj
+                _gs = self._group_states.get(group_id)
+                _attentive = _gs.is_attentive()
+                _att_state_str = "对话态" if _attentive else ("旁观态" if _gs.is_episode_active() else "潜水")
+                _last_reply_text = _gs.last_reply[1] if _gs.last_reply else ""
+                _mins = (time.time() - _gs.last_reply[0]) / 60.0 if _gs.last_reply else 0.0
+                _ep_dur = (time.time() - _gs.episode_start) / 60.0 if _gs.episode_start else 0.0
+                _recent = _gs.get_recent()
+                _recent_dicts = [
+                    {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
+                     "name": m.name, "text": m.text[:200], "is_bot": m.is_bot}
+                    for m in _recent[-10:]
+                ]
+                _cur_dict = {
+                    "ts_str": time.strftime('%m-%d %H:%M', time.localtime(msg.get("time", 0) or time.time())),
+                    "name": sender_name, "text": _preview_text[:300],
+                    "msg_type": "image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"),
+                    "is_at": is_mentioned,
+                }
+                _judge_result = await _sj(
+                    recent_messages=_recent_dicts,
+                    current_msg=_cur_dict,
+                    group_name=group_name if 'group_name' in dir() else "",
+                    attentive_state=_att_state_str,
+                    last_reply=_last_reply_text,
+                    mins_since_reply=_mins,
+                    episode_duration=_ep_dur,
+                    reply_count=_gs.reply_count,
+                )
+                if _judge_result.get("should_reply"):
                     should_trigger = True
+                    if is_mentioned:
+                        decision_reason = "该用户@了你"
+                    elif _judge_result.get("reason"):
+                        decision_reason = _judge_result["reason"][:30]
+                    else:
+                        decision_reason = "语义判定需要回复"
+                    msg["_decision_mode"] = decision_reason
+                elif _judge_result.get("should_end") or _judge_result.get("is_loop"):
+                    _gs.end_episode()
+                    self._write_episodic_segment(group_id)
+                    self._generate_group_topic_summary(group_id)
+                    logger.info("[OneBot] Semantic judge ended episode + distillation: %s", _judge_result.get("reason", "")[:60])
+                    return
+                else:
+                    logger.info("[OneBot] Semantic judge: no reply. %s", _judge_result.get("reason", "")[:60])
+                    return
+            except Exception as e:
+                logger.warning("[OneBot] Semantic judge failed: %s, degrade to @-only trigger", e)
+                if is_mentioned:
+                    should_trigger = True
+                    decision_reason = "该用户@了你"
                     msg["_decision_mode"] = decision_reason
                 else:
-                    logger.info("[OneBot] Group message without trigger, lurking")
                     return
 
             if should_trigger:
                 _dm = msg.get("_decision_mode", "")
-                if is_mentioned or "提到了" in _dm or "回复你" in _dm:
-                    self._enter_attentive(group_id)
+                if is_mentioned or "提到了" in _dm or "回复你" in _dm or "语义判定" in _dm:
+                    _gs.enter_attentive()
 
         # Multi-@mention batching: merge nearby @mentions into one agent run
         if msg_type == "group" and is_mentioned and not msg.get("_skip_mention_batch"):
@@ -1813,22 +1764,20 @@ class OneBotAdapter(BasePlatformAdapter):
             # Silence breakpoint separates topics; messages outside window stay in DB
             group_context = ""
             now = time.time()
-            # Priority 1: in-memory buffer with time filtering
-            buf = self._group_buffer.get(group_id, [])
+            _gs = self._group_states.get(group_id)
+            buf = _gs.buffer
             if buf:
-                # Detect silence breakpoint (>5 min gap = new topic)
                 cut_idx = 0
                 for i in range(len(buf) - 1, 0, -1):
-                    if buf[i]['ts'] - buf[i-1]['ts'] > 300:
+                    if buf[i].ts - buf[i-1].ts > 300:
                         cut_idx = i
                         break
-                recent = buf[cut_idx:-1] if len(buf) > 1 else []  # exclude current msg
-                # Within 5 min = full context, beyond = drop (stored in DB, only fetched on reply)
+                recent = buf[cut_idx:-1] if len(buf) > 1 else []
                 cutoff_5m = now - 300
                 raw_lines = []
                 for m in recent:
-                    if m['ts'] >= cutoff_5m:
-                        text = m.get('text', '')
+                    if m.ts >= cutoff_5m:
+                        text = m.text
                         if '[image:' in text:
                             _img_paths = re.findall(r'\[image:([^\]]+)\]', text)
                             for path in _img_paths[:5]:
@@ -1836,33 +1785,52 @@ class OneBotAdapter(BasePlatformAdapter):
                                     _p = _p.strip()
                                     if _p and _p != "download_failed" and not _p.startswith("qq_face:") and _p not in context_image_paths:
                                         context_image_paths.append(_p)
-                                desc = await self._describe_image(path)
-                                text = text.replace(f'[image:{path}]', f'[图片: {desc}]')
-                        # Transcribe voice messages with local faster-whisper
-                        if '[语音:' in text:
+                        if '[语音:' in text and '[语音转写' not in text:
                             _voice_paths = re.findall(r'\[语音:([^\]]+)\]', text)
                             for path in _voice_paths[:3]:
                                 transcript = self._transcribe_voice(path)
-                                text = text.replace(f'[语音:{path}]', f'[语音: {transcript}]')
-                        ts = time.strftime('%m-%d %H:%M', time.localtime(m['ts']))
-                        _mid_tag = f"[mid:{m.get('mid','')}]" if m.get('mid') else ""
-                        raw_lines.append(f"{_mid_tag}[{ts}] {m['name']}({m.get('uid','')})" + (f": {text}" if text else ""))
+                                text = text.replace(f'[语音:{path}]', f'[语音:{path}] [语音转写: {transcript}]')
+                        ts = time.strftime('%m-%d %H:%M', time.localtime(m.ts))
+                        _mid_tag = f"[mid:{m.mid}]" if m.mid else ""
+                        raw_lines.append(f"{_mid_tag}[{ts}] {m.name}({m.uid})" + (f": {text}" if text else ""))
                 if raw_lines:
                     group_context = "[群聊上下文]\n" + "\n".join(raw_lines)
+                if not raw_lines and _gs.is_episode_active() and _gs.episode_start > 0:
+                    try:
+                        import sqlite3 as _esql
+                        _edb = _esql.connect(str(get_state_db_path()), timeout=5)
+                        _ep_rows = _edb.execute(
+                            """SELECT sender_name, content_readable, created_at, message_id, is_bot
+                               FROM corpus_messages
+                               WHERE group_id = ? AND created_at >= ?
+                               ORDER BY created_at ASC LIMIT 50""",
+                            (group_id, _gs.episode_start),
+                        ).fetchall()
+                        _edb.close()
+                        if len(_ep_rows) >= 2:
+                            _ep_lines = []
+                            for _r in _ep_rows[:-1]:
+                                _ep_ts = time.strftime('%m-%d %H:%M', time.localtime(_r[2]))
+                                _ep_mid = f"[mid:{_r[3]}]" if _r[3] and _r[3] != '0' else ""
+                                _ep_name = "bot" if _r[4] else _r[0]
+                                _ep_lines.append(f"{_ep_mid}[{_ep_ts}] {_ep_name}" + (f": {(_r[1] or '')[:100]}" if _r[1] else ""))
+                            if _ep_lines:
+                                group_context = "[群聊上下文(回溯)]\n" + "\n".join(_ep_lines)
+                    except Exception:
+                        pass
             # Inject pending investigation results for card/share messages
             _inv_dir = Path.home() / ".hermes" / "investigations"
             if _inv_dir.exists():
                 _inv_lines = []
                 _now = time.time()
-                for m in recent[-10:]:  # Check last 10 messages
-                    _txt = m.get("text", "")
+                for m in recent[-10:]:
+                    _txt = m.text
                     if "[分享]" in _txt or "[卡片]" in _txt:
-                        # Look for investigation results — match by timestamp proximity
                         for _inv_f in sorted(_inv_dir.glob("*.json"), reverse=True):
                             try:
                                 _inv_data = json.loads(_inv_f.read_text(encoding="utf-8"))
                                 _inv_ts = _inv_data.get("ts", 0)
-                                if abs(_inv_ts - m.get("ts", 0)) < 60:  # Within 60s of msg
+                                if abs(_inv_ts - m.ts) < 60:
                                     _summary = _inv_data.get("summary", "")
                                     if _summary and not _summary.startswith("[探索失败"):
                                         _inv_lines.append(f"[内容探索] {_summary}")
@@ -1893,18 +1861,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 except Exception as e:
                     logger.info("[OneBot] Failed to fetch group context: %s", e)
 
-            # Extract text for channel_prompt (need it before MessageEvent creation)
-            _preview_text = ""
-            if self._has_voice_message(msg):
-                _preview_text = "[语音消息]"
-            elif self._has_image_message(msg):
-                _preview_text = "[图片消息]"
-            else:
-                _preview_text = self._cq_to_readable(self._get_raw_text(msg) or "")
-            # Inject group chat context: identify WHO sent the message and WHAT they said
             _dm_reason = msg.get("_decision_mode", "")
-            _attentive = self._is_attentive(group_id)
-            _att_state = self._attentive_groups.get(group_id, {})
+            _gs = self._group_states.get(group_id)
+            _attentive = _gs.is_attentive()
+            _att_meta = _gs.get_attentive_meta()
 
             if _dm_reason and not _attentive:
                 trigger_reason = _dm_reason
@@ -1912,15 +1872,15 @@ class OneBotAdapter(BasePlatformAdapter):
             elif _attentive:
                 trigger_reason = "你在关注这段对话"
                 _mode = "[对话模式]"
-                _silent = _att_state.get("silent_count", 0)
-                _last_reply = _att_state.get("last_reply", "")
-                _mins = int((time.time() - _att_state.get("last_active_ts", time.time())) / 60)
+                _silent = _att_meta.get("silent_count", 0)
+                _last_reply = _att_meta.get("last_reply", "")
+                _mins = _att_meta.get("mins_since_active", 0)
                 if _silent > 0:
                     trigger_reason += f"（你已沉默{_silent}次，但话题回到你身上时自然接话就好）"
                 if _last_reply:
                     trigger_reason += f"（你上次说: '{_last_reply[:60]}'，{_mins}分钟前）"
             else:
-                trigger_reason = "该用户@了你"
+                trigger_reason = _dm_reason or "该用户@了你"
                 _mode = "[对话模式]"
 
             msg_time = msg.get("time", 0)
@@ -1930,13 +1890,32 @@ class OneBotAdapter(BasePlatformAdapter):
                 _prefix
                 + (f"\n\n{group_context}" if group_context else "")
             )
-            # Inject sender identity card for group messages
-            identity = self._get_sender_identity(user_id_str, sender_name)
-            if identity:
-                channel_prompt = (channel_prompt + "\n\n" + identity) if channel_prompt else identity
-            recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
-            if recall:
-                channel_prompt = (channel_prompt + "\n\n" + recall) if channel_prompt else recall
+            recall_ctx = self._recall_context(raw_text, user_id_str, sender_name,
+                                               session_id=f"onebot:group:{group_id}")
+            if recall_ctx:
+                channel_prompt = (channel_prompt + "\n\n" + recall_ctx) if channel_prompt else recall_ctx
+            try:
+                from agent.memory.store import MemoryStore
+                _core_prompt = MemoryStore().load_core_memories_prompt()
+                if _core_prompt:
+                    channel_prompt = (channel_prompt + "\n\n" + _core_prompt) if channel_prompt else _core_prompt
+            except Exception:
+                pass
+            try:
+                import sqlite3 as _tsql
+                _sdb = _tsql.connect(str(get_state_db_path()), timeout=5)
+                _trow = _sdb.execute(
+                    "SELECT topic_summary, topic_keywords FROM groups_registry WHERE group_id = ?",
+                    (group_id,),
+                ).fetchone()
+                _sdb.close()
+                if _trow and _trow[0]:
+                    import json as _tjson
+                    _kw = _tjson.loads(_trow[1]) if _trow[1] else []
+                    _topic_line = f"[群近期话题] 关键词：{', '.join(_kw[:5])}"
+                    channel_prompt += f"\n\n{_topic_line}"
+            except Exception:
+                pass
             channel_prompt = (channel_prompt or "") + (
                 "\n\n[工具] 你可以用以下标记控制行为：\n"
                 "- 不想回话就只输出 [SILENT]（无其他文字），下次有人说话你还可以接\n"
@@ -1962,12 +1941,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
                 f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
             )
-            identity = self._get_sender_identity(user_id_str, sender_name)
-            if identity:
-                channel_prompt += f"\n{identity}"
-            recall = self._auto_recall(raw_text, exclude_qq=user_id_str)
-            if recall:
-                channel_prompt += f"\n{recall}"
+            recall_ctx = self._recall_context(raw_text, user_id_str, sender_name,
+                                               session_id=f"onebot:dm:{user_id_str}")
+            if recall_ctx:
+                channel_prompt += f"\n{recall_ctx}"
 
         # Check for reply context (skip for recovered messages — historical data, API will fail)
         reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
@@ -1981,7 +1958,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 try:
                     import sqlite3
                     db = sqlite3.connect(str(get_state_db_path()))
-                    row = db.execute("SELECT sender_name, content FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
+                    row = db.execute("SELECT sender_name, content_readable FROM corpus_messages WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
                     db.close()
                     if row:
                         reply_to_text = f"[引用 {row[0]} 的消息: {row[1][:200]}]"
@@ -1994,7 +1971,7 @@ class OneBotAdapter(BasePlatformAdapter):
             try:
                 import sqlite3
                 db = sqlite3.connect(str(get_state_db_path()))
-                row = db.execute("SELECT sender_name, content, user_id FROM chat_message_buffer WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
+                row = db.execute("SELECT sender_name, content_readable, user_id FROM corpus_messages WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
                 db.close()
                 if row:
                     reply_raw = {
@@ -2063,13 +2040,16 @@ class OneBotAdapter(BasePlatformAdapter):
             voice_path = await self._get_voice_file(msg)
             if voice_path:
                 logger.info("[OneBot] Voice message received, saved to: %s", voice_path)
-                # Buffer with path so context builder can transcribe it
-                if group_id not in self._group_buffer:
-                    self._group_buffer[group_id] = []
-                self._group_buffer[group_id].append({
-                    "name": sender_name, "text": f"[语音: {voice_path}]", "ts": time.time(), "uid": str(user_id),
-                    "mid": str(msg.get("message_id", "")),
-                })
+                _vmid = str(msg.get("message_id", ""))
+                try:
+                    from .group_state import BufferedMessage
+                    self._group_states.get(group_id).append_message(
+                        BufferedMessage(mid=_vmid, ts=time.time(), uid=str(user_id),
+                                        name=sender_name, text=f"[语音: {voice_path}]",
+                                        msg_type="voice")
+                    )
+                except Exception:
+                    pass
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
                                            "[语音]", message_id=str(msg.get("message_id", "")),
                                            content_raw=self._get_raw_text(msg),
@@ -2319,12 +2299,15 @@ class OneBotAdapter(BasePlatformAdapter):
             return
 
         size_kb = file_size // 1024
-        self._group_buffer.setdefault(group_id, []).append({
-            "name": f"[文件] {user_name}",
-            "text": f"[群文件上传: {user_name} 上传了 {file_name} ({size_kb}KB). 用 qq-group-file list {group_id} 查看，序号下载]",
-            "ts": time.time(),
-            "uid": str(msg.get("user_id", "")),
-        })
+        _file_text = f"[群文件上传: {user_name} 上传了 {file_name} ({size_kb}KB). 用 qq-group-file list {group_id} 查看，序号下载]"
+        try:
+            from .group_state import BufferedMessage
+            self._group_states.get(group_id).append_message(
+                BufferedMessage(mid="", ts=time.time(), uid=str(msg.get("user_id", "")),
+                                name=f"[文件] {user_name}", text=_file_text, msg_type="file")
+            )
+        except Exception:
+            pass
         logger.info("[OneBot] Buffered group file metadata: %s", file_name)
 
     # ------------------------------------------------------------------
@@ -2345,15 +2328,20 @@ class OneBotAdapter(BasePlatformAdapter):
             _gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
             logger.info("[OneBot] LLM chose [QUIET], going silent, group=%s", _gid)
             if _gid:
-                state = self._attentive_groups.get(_gid)
-                if state:
-                    state["active"] = False
                 self._last_bot_reply.pop(_gid, None)
+                try:
+                    self._group_states.get(_gid).go_quiet()
+                except Exception:
+                    pass
             return SendResult(success=True, message_id=None)
         if content and "[SILENT]" in content:
             logger.info("[OneBot] LLM chose [SILENT], suppressing message")
             if chat_id.startswith("group:"):
-                self._record_silent(chat_id.split(":", 1)[1])
+                _sgid = chat_id.split(":", 1)[1]
+                try:
+                    self._group_states.get(_sgid).record_silent()
+                except Exception:
+                    pass
             return SendResult(success=True, message_id=None)
 
         if content and chat_id.startswith("group:"):
@@ -2364,7 +2352,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     import sqlite3 as _sql
                     _db = _sql.connect(str(get_state_db_path()), timeout=5)
                     _exists = _db.execute(
-                        "SELECT 1 FROM chat_message_buffer WHERE message_id=? LIMIT 1",
+                        "SELECT 1 FROM corpus_messages WHERE message_id=? LIMIT 1",
                         (str(_reply_id),)
                     ).fetchone()
                     _db.close()
@@ -2430,21 +2418,16 @@ class OneBotAdapter(BasePlatformAdapter):
                         if _sys:
                             _persona += "\n\n" + _sys[:2000]
                     _api_key = os.getenv("DEEPSEEK_API_KEY", "")
-                    if not _api_key:
-                        try:
-                            import yaml as _y2
-                            _cfg2 = _y2.safe_load((_cfg_path if '_cfg_path' in dir() else Path.home() / ".hermes" / "config.yaml").read_text(encoding="utf-8")) or {}
-                            _api_key = (_cfg2.get("agent", {}) or {}).get("api_key", "") or os.getenv("OPENAI_API_KEY", "")
-                        except Exception:
-                            pass
+                    _ds_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+                    _ds_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
                     if not _api_key:
                         logger.warning("[OneBot] No API key for report rewrite, skipping")
                         raise RuntimeError("no api key")
                     _resp = _r.post(
-                        "https://api.deepseek.com/v1/chat/completions",
+                        f"{_ds_base}/chat/completions",
                         headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
                         json={
-                            "model": "deepseek-v4-flash",
+                            "model": _ds_model,
                             "messages": [
                                 {"role": "system", "content": f"{_persona}\n\n【任务】把你收到的最后一条消息（一篇报告/分析）改写成你自己的说话风格。去掉所有markdown、列表、编号、分段标题。用日常口语，像普通女高中生聊天。保持原意但一句一句说，不要一口气说完。"},
                                 {"role": "user", "content": content},

@@ -39,7 +39,9 @@ GATEWAY_SCHEMA = {
         "Creative works: MyGO fan fiction 14.5万字, 落日余烬 6.9万字). "
         "Recall context, manage facts/workflows, search wiki and Obsidian knowledge base.\n"
         "Actions: recall, remember, forget, list_facts, list_workflows, use_workflow, suggest_skill, "
-        "wiki_search, obsidian_search, obsidian_read, stats, consolidate, decay_report, timeline."
+        "wiki_search, obsidian_search, obsidian_read, stats, consolidate, decay_report, timeline, "
+        "core_remember (write your own core memory, first person), core_forget (soft delete by id), "
+        "core_list (list your core memories)."
     ),
     "parameters": {
         "type": "object",
@@ -53,6 +55,7 @@ GATEWAY_SCHEMA = {
                     "wiki_search", "obsidian_search", "obsidian_read",
                     "stats", "consolidate", "decay_report",
                     "timeline", "self_audit",
+                    "core_remember", "core_forget", "core_list",
                 ],
                 "description": "The memory action to perform.",
             },
@@ -181,6 +184,15 @@ def memory_gateway_tool(
 
         elif action == "timeline":
             return _handle_timeline(gw, query, limit)
+
+        elif action == "core_remember":
+            return _handle_core_remember(gw, category, value)
+
+        elif action == "core_forget":
+            return _handle_core_forget(gw, fact_id or 0)
+
+        elif action == "core_list":
+            return _handle_core_list(gw, category)
 
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
@@ -553,9 +565,11 @@ def _handle_doubt(gw, fact_id: int) -> str:
 def _handle_link(gw, src_id: int, dst_id: int, relation: str) -> str:
     if not src_id or not dst_id:
         return json.dumps({"error": "src_id and dst_id required for link"})
-    edge_id = gw.link(src_id, dst_id, relation or "related_to")
-    if edge_id:
-        return json.dumps({"edge_id": edge_id}, ensure_ascii=False)
+    result = gw.link(src_id, dst_id, relation or "related_to")
+    if isinstance(result, dict) and result.get("edge_id"):
+        return json.dumps(result, ensure_ascii=False)
+    if isinstance(result, int) and result:
+        return json.dumps({"edge_id": result}, ensure_ascii=False)
     return json.dumps({"error": "link failed"})
 
 def _handle_search(gw, query: str, memory_type: str, user_id: str, limit: int) -> str:
@@ -565,6 +579,28 @@ def _handle_search(gw, query: str, memory_type: str, user_id: str, limit: int) -
 def _handle_self_audit(gw, user_id: str, limit: int) -> str:
     conflicts = gw.source_conflict_scan()
     return json.dumps({"conflicts": conflicts, "note": "v1: log only, no auto-correct"}, ensure_ascii=False)
+
+
+def _handle_core_remember(gw, category: str, value: str) -> str:
+    if not value:
+        return json.dumps({"error": "value is required for core_remember"})
+    cat = category or "general"
+    mem_id = gw._store.add_core_memory(
+        category=cat, content=value, source="self_write"
+    )
+    return json.dumps({"success": True, "core_memory_id": mem_id, "category": cat})
+
+
+def _handle_core_forget(gw, fact_id: int) -> str:
+    if not fact_id:
+        return json.dumps({"error": "fact_id is required for core_forget"})
+    ok = gw._store.soft_delete_core_memory(fact_id)
+    return json.dumps({"success": ok, "soft_deleted": ok, "fact_id": fact_id})
+
+
+def _handle_core_list(gw, category: str) -> str:
+    rows = gw._store.list_core_memories(category=category or None)
+    return json.dumps({"core_memories": rows, "count": len(rows)}, ensure_ascii=False)
 
 
 def check_requirements() -> bool:
