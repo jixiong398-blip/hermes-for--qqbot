@@ -135,7 +135,6 @@ class OneBotAdapter(BasePlatformAdapter):
         # Image description cache: avoid re-calling vision API for same image
         self._image_descriptions: Dict[str, str] = {}
         self._voice_transcripts: Dict[str, str] = {}
-        self._vision_config: Dict[str, str] = {}
 
         self._last_bot_reply: Dict[str, tuple] = {}
 
@@ -184,26 +183,30 @@ class OneBotAdapter(BasePlatformAdapter):
                                sender_name: str, content: str, message_id: str = "",
                                created_at: float = None, is_bot: int = 0,
                                *, content_raw: str = "", sender_card: str = "",
-                               group_name: str = "", image_descriptions: list = None):
+                               group_name: str = "", image_descriptions: list = None,
+                               reply_to_id: str = "", reply_to_text: str = "",
+                               at_targets: list = None):
         try:
             self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name,
                                             content, message_id, created_at, is_bot,
                                             content_raw, sender_card, group_name,
-                                            image_descriptions or []))
+                                            image_descriptions or [],
+                                            reply_to_id, reply_to_text,
+                                            at_targets or []))
         except asyncio.QueueFull:
-            pass
+            logger.warning("[OneBot] Persist queue full, dropping message from %s", sender_name)
 
     async def _persist_worker(self):
         """Background worker: drain persist queue → write to SQLite with retry.
         Dual-write: chat_message_buffer (runtime, prunable) + corpus_messages (permanent, training)."""
-        import sqlite3, time as _time
+        import sqlite3, time as _time, json as _json
         db_path = str(get_state_db_path())
         _corpus_inited = False
         while True:
             try:
                 (group_id, chat_type, user_id, sender_name, content, message_id,
                  created_at, is_bot, content_raw, sender_card, group_name,
-                 image_descs) = await self._persist_queue.get()
+                 image_descs, reply_to_id, reply_to_text, at_targets) = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
                 _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
@@ -286,19 +289,18 @@ class OneBotAdapter(BasePlatformAdapter):
                             """INSERT INTO corpus_messages
                                (message_id, chat_id, chat_type, group_id, user_id,
                                 sender_name, sender_card, content_raw, content_readable,
+                                image_descriptions, at_targets, reply_to_id, reply_to_text,
                                 is_bot, created_at)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (str(message_id), cid, chat_type,
                              group_id if chat_type == "group" else "",
                              user_id, sender_name, sender_card,
-                             content_raw, content, is_bot, _ts),
+                             content_raw, content,
+                             _json.dumps(image_descs, ensure_ascii=False) if image_descs else "[]",
+                             _json.dumps(at_targets, ensure_ascii=False) if at_targets else "[]",
+                             reply_to_id, reply_to_text,
+                             is_bot, _ts),
                         )
-                        if image_descs:
-                            import json as _ijd
-                            db.execute(
-                                "UPDATE corpus_messages SET image_descriptions = ? WHERE message_id = ? AND created_at = ?",
-                                (_ijd.dumps(image_descs, ensure_ascii=False), str(message_id), _ts),
-                            )
                         if chat_type == "group" and group_id:
                             db.execute(
                                 "INSERT OR IGNORE INTO groups_registry (group_id, group_name, joined_at) VALUES (?, ?, ?)",
@@ -340,7 +342,7 @@ class OneBotAdapter(BasePlatformAdapter):
             if not gw or not message_text or len(message_text.strip()) < 3:
                 return ""
 
-            structured = gw.recall_structured(message_text, session_id=session_id, max_chars=3000)
+            structured = gw.recall_structured(message_text, session_id=session_id, max_chars=5000)
 
             parts = []
             if structured.get("prompt"):
@@ -360,7 +362,8 @@ class OneBotAdapter(BasePlatformAdapter):
                     parts.append(f"[关于 {sender_name}] " + "；".join(profile_lines[:5]))
 
             return "\n\n".join(parts) if parts else ""
-        except Exception:
+        except Exception as e:
+            logger.warning("[OneBot] _recall_context failed: %s", e, exc_info=True)
             return ""
 
     def _load_config(self) -> None:
@@ -596,9 +599,6 @@ class OneBotAdapter(BasePlatformAdapter):
             raise RuntimeError("OneBot HTTP client not initialized")
 
         try:
-            # Debug: log reply_message_id if present
-            rid = params.get("reply_message_id", "NOT SET")
-            print(f"[ONEBOT-SEND] action={action} reply_message_id={rid} msg_len={len(str(params.get('message','')))}", flush=True)
             response = await self._http_client.post(action, json=params)
             result = response.json()
             if result.get("retcode") != 0:
@@ -1007,13 +1007,10 @@ class OneBotAdapter(BasePlatformAdapter):
             return "图片"
 
         try:
-            if not self._vision_config:
-                self._vision_config = {
-                    "api_key": os.getenv("MIMO_API_KEY", ""),
-                    "base_url": os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
-                    "model": os.getenv("MIMO_MODEL", "mimo-v2.5"),
-                }
-            if not self._vision_config.get("api_key"):
+            api_key = os.getenv("XIAOMI_API_KEY", "")
+            api_base = os.getenv("XIAOMI_BASE_URL", "https://api.xiaomimimo.com/v1")
+            api_model = os.getenv("XIAOMI_MODEL", "mimo-v2.5")
+            if not api_key:
                 self._image_descriptions[image_path] = "图片"
                 return "图片"
 
@@ -1025,13 +1022,13 @@ class OneBotAdapter(BasePlatformAdapter):
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
                 resp = await client.post(
-                    f"{self._vision_config['base_url']}/chat/completions",
+                    f"{api_base}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {self._vision_config['api_key']}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": self._vision_config["model"],
+                        "model": api_model,
                         "messages": [{
                             "role": "user",
                             "content": [
@@ -1042,12 +1039,16 @@ class OneBotAdapter(BasePlatformAdapter):
                         "max_tokens": 80,
                     },
                 )
+                resp.raise_for_status()
                 data = resp.json()
                 desc = data["choices"][0]["message"]["content"].strip()
         except Exception as e:
             logger.warning("[OneBot] Image description failed for %s: %s", image_path, e)
             desc = "图片"
 
+        if len(self._image_descriptions) > 500:
+            _oldest = next(iter(self._image_descriptions))
+            del self._image_descriptions[_oldest]
         self._image_descriptions[image_path] = desc
         return desc
 
@@ -1537,6 +1538,35 @@ class OneBotAdapter(BasePlatformAdapter):
         # Get sender info early (needed for buffer below)
         sender = msg.get("sender", {})
         sender_name = sender.get("card") or sender.get("nickname") or f"QQ{user_id}"
+
+        _early_reply_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
+        _early_reply_text = ""
+        if _early_reply_id:
+            try:
+                import sqlite3 as _ersql
+                _erdb = _ersql.connect(str(get_state_db_path()), timeout=5)
+                _errow = _erdb.execute(
+                    "SELECT sender_name, content_readable FROM corpus_messages WHERE message_id=? LIMIT 1",
+                    (str(_early_reply_id),),
+                ).fetchone()
+                _erdb.close()
+                if _errow:
+                    _early_reply_text = f"[引用 {_errow[0]} 的消息: {_errow[1][:200]}]"
+            except Exception:
+                pass
+            if not _early_reply_text:
+                _inline = self._get_reply_inline_text(msg)
+                if _inline:
+                    _inline = self._cq_to_readable(_inline)
+                    _early_reply_text = f"[引用 [mid:{_early_reply_id}]: {_inline[:300]}]"
+
+        _at_targets = []
+        for _seg in (msg.get("message", []) if isinstance(msg.get("message"), list) else []):
+            if _seg.get("type") == "at":
+                _qq = _seg.get("data", {}).get("qq", "")
+                if _qq:
+                    _at_targets.append(str(_qq))
+
         if msg_type == "group" and effective_self_id:
             is_mentioned = self._is_mentioned(msg, effective_self_id)
             raw_text = self._get_raw_text(msg).strip()
@@ -1574,15 +1604,12 @@ class OneBotAdapter(BasePlatformAdapter):
             _fwd_text = ""
             _segments = msg.get("message", [])
             _seg_types = [s.get("type","?") for s in _segments] if isinstance(_segments, list) else []
-            print(f"[ONEBOT-DEBUG] msg_id={msg.get('message_id')} raw_len={len(raw_text or '')} seg_count={len(_segments)} types={_seg_types}", flush=True)
-            # For forwards, the segment data may be CQ-encoded stub — always fetch via API
             if "forward" in _seg_types or "node" in _seg_types or "CQ:forward" in (raw_text or ""):
                 try:
                     _full = await self._send_action("get_forward_msg", {"message_id": msg.get("message_id")})
-                    _segments = (_full.get("data", {}) or {}).get("messages", [])  # API returns "messages", not "message"
-                    print(f"[ONEBOT-DEBUG] get_forward_msg returned {len(_segments)} messages", flush=True)
+                    _segments = (_full.get("data", {}) or {}).get("messages", [])
                 except Exception as e:
-                    print(f"[ONEBOT-DEBUG] get_forward_msg failed: {e}", flush=True)
+                    logger.debug("[OneBot] get_forward_msg failed: %s", e)
             # Build forward text from either segment data.content or API messages
             _fwd_parts = []
             _fwd_image_paths = []
@@ -1621,7 +1648,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     break
             if _fwd_parts:
                 _fwd_text = "[转发: " + " | ".join(_fwd_parts) + "]"
-                print(f"[ONEBOT-DEBUG] Extracted forward: {len(_fwd_parts)} msgs, {len(_fwd_image_paths)} images", flush=True)
+                logger.debug("[OneBot] Extracted forward: %d msgs, %d images", len(_fwd_parts), len(_fwd_image_paths))
             # Clean CQ codes — use forward text if available, otherwise raw text
             _clean_text = _fwd_text if _fwd_text else self._cq_to_readable(raw_text)
             # Inject downloaded forward images into buffer so vision tool can process them
@@ -1630,6 +1657,8 @@ class OneBotAdapter(BasePlatformAdapter):
             m_text = (_clean_text + _image_hint)
             if _image_descs:
                 m_text += " " + " ".join(_image_descs)
+            if _early_reply_text:
+                m_text = _early_reply_text + " " + m_text
             _msg_id = str(msg.get("message_id", ""))
             _msg_type = "sticker" if self._has_sticker_message(msg) else ("image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"))
             try:
@@ -1644,7 +1673,10 @@ class OneBotAdapter(BasePlatformAdapter):
             self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id,
                                        content_raw=raw_text,
                                        sender_card=sender.get("card", ""),
-                                       image_descriptions=_image_descs)
+                                       image_descriptions=_image_descs,
+                                       reply_to_id=str(_early_reply_id) if _early_reply_id else "",
+                                       reply_to_text=_early_reply_text,
+                                       at_targets=_at_targets)
 
             # Spawn background investigation for card/share messages
             if "[分享]" in _clean_text or "[卡片]" in _clean_text:
@@ -1947,32 +1979,17 @@ class OneBotAdapter(BasePlatformAdapter):
                 channel_prompt += f"\n{recall_ctx}"
 
         # Check for reply context (skip for recovered messages — historical data, API will fail)
-        reply_msg_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
-        reply_to_text = None
+        reply_msg_id = _early_reply_id if not msg.get("_skip_reply_context") else None
+        reply_to_text = _early_reply_text or None
         reply_media_urls = []
-        if not reply_msg_id and msg.get("_skip_reply_context"):
-            # Recovered message: try to find reply context from local buffer
-            # instead of calling get_msg API (which fails for old messages)
-            _recover_rid = self._get_reply_message_id(msg)
-            if _recover_rid:
-                try:
-                    import sqlite3
-                    db = sqlite3.connect(str(get_state_db_path()))
-                    row = db.execute("SELECT sender_name, content_readable FROM corpus_messages WHERE message_id=? LIMIT 1", (str(_recover_rid),)).fetchone()
-                    db.close()
-                    if row:
-                        reply_to_text = f"[引用 {row[0]} 的消息: {row[1][:200]}]"
-                except Exception:
-                    pass
         reply_media_types = []
         if reply_msg_id:
-            # Try 1: local SQLite buffer (always has text, faster, no NapCat dependency)
             reply_raw = {}
             try:
-                import sqlite3
-                db = sqlite3.connect(str(get_state_db_path()))
-                row = db.execute("SELECT sender_name, content_readable, user_id FROM corpus_messages WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
-                db.close()
+                import sqlite3 as _rsql
+                _rdb = _rsql.connect(str(get_state_db_path()), timeout=5)
+                row = _rdb.execute("SELECT sender_name, content_readable, user_id FROM corpus_messages WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
+                _rdb.close()
                 if row:
                     reply_raw = {
                         "raw_message": row[1],
@@ -1982,26 +1999,24 @@ class OneBotAdapter(BasePlatformAdapter):
                         msg["_reply_sender_id"] = row[2]
             except Exception:
                 pass
-            # Try 2: NapCat get_msg API (for image download when DB doesn't have it)
+            # NapCat get_msg API (for image download when DB doesn't have it)
             if not reply_media_urls or not reply_raw.get("raw_message"):
                 try:
                     reply_data = await self._send_action("get_msg", {"message_id": reply_msg_id})
                     reply_raw = reply_data.get("data", {}) or reply_raw
-                    # Store reply sender ID so standalone checks can see who was replied to
                     if reply_raw and not msg.get("_reply_sender_id"):
                         msg["_reply_sender_id"] = (reply_raw.get("sender", {}).get("user_id")
                                                     or reply_raw.get("user_id"))
                 except Exception:
                     pass
 
-            if reply_raw:
+            if reply_raw and not reply_to_text:
                 reply_text = self._get_raw_text(reply_raw)
                 if reply_text:
                     reply_sender = reply_raw.get("sender", {})
                     reply_name = reply_sender.get("nickname", "Unknown")
                     reply_to_text = f"[引用 [mid:{reply_msg_id}] {reply_name} 的消息: {reply_text}]"
                 else:
-                    # Fallback for non-text replies (stickers, files, etc.)
                     segments = reply_raw.get("message", [])
                     if isinstance(segments, list):
                         for seg in segments:
@@ -2013,23 +2028,20 @@ class OneBotAdapter(BasePlatformAdapter):
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的文件: {fname}]"
                             elif t == "video":
                                 reply_to_text = f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的视频]"
-                # Download replied images so the bot can see them
-                if self._has_image_message(reply_raw):
-                    try:
-                        reply_images = await self._get_image_files(reply_raw)
-                        if reply_images:
-                            for _p in reply_images:
-                                if _p not in reply_media_urls:
-                                    reply_media_urls.append(_p)
-                                    reply_media_types.append("image/jpeg")
-                            _img_note = f"\n[附带 {len(reply_images)} 张图片]" if reply_to_text else ""
-                            reply_to_text = (reply_to_text or f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的图片消息]") + _img_note
-                    except Exception:
-                        pass
+            if reply_raw and self._has_image_message(reply_raw):
+                try:
+                    reply_images = await self._get_image_files(reply_raw)
+                    if reply_images:
+                        for _p in reply_images:
+                            if _p not in reply_media_urls:
+                                reply_media_urls.append(_p)
+                                reply_media_types.append("image/jpeg")
+                        _img_note = f"\n[附带 {len(reply_images)} 张图片]" if reply_to_text else ""
+                        reply_to_text = (reply_to_text or f"[引用 {reply_raw.get('sender', {}).get('nickname', 'Unknown')} 的图片消息]") + _img_note
+                except Exception:
+                    pass
 
-        # Fallback: inline reply text from the segment itself
-        # Many OneBot implementations embed the quoted text directly in data.text/message
-        if not reply_to_text:
+        if not reply_to_text and not _early_reply_text and reply_msg_id:
             inline = self._get_reply_inline_text(msg)
             if inline:
                 inline = self._cq_to_readable(inline)
@@ -2053,7 +2065,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
                                            "[语音]", message_id=str(msg.get("message_id", "")),
                                            content_raw=self._get_raw_text(msg),
-                                           sender_card=sender.get("card", ""))
+                                           sender_card=sender.get("card", ""),
+                                           reply_to_id=str(_early_reply_id) if _early_reply_id else "",
+                                           reply_to_text=_early_reply_text,
+                                           at_targets=_at_targets)
                 event = MessageEvent(
                     text="",
                     message_type=MessageType.VOICE,
