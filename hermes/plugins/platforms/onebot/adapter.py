@@ -351,6 +351,12 @@ class OneBotAdapter(BasePlatformAdapter):
             sender_matches = gw._ltm.search(sender_id, limit=5) if sender_id else []
             if not sender_matches and sender_name:
                 sender_matches = gw._ltm.search(sender_name, limit=5)
+            if not sender_matches and sender_id:
+                try:
+                    from agent.memory.store import MemoryStore
+                    sender_matches = MemoryStore().search_by_user_id(sender_id, limit=5)
+                except Exception:
+                    pass
             if sender_matches:
                 profile_lines = []
                 seen = set()
