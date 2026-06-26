@@ -1775,7 +1775,44 @@ async def _send_qqbot(pconfig, chat_id, message):
     Uses the QQ Bot Open Platform REST endpoints to get an access token
     and post a message. Supports guild channels, C2C (private) chats,
     and group chats by trying the appropriate endpoints.
+
+    When OneBot (NapCat) is available, routes through it instead —
+    the official QQ Bot API only works for verified bots, while NapCat
+    uses the OneBot v11 HTTP API which works for personal QQ accounts.
     """
+    onebot_http = os.getenv("ONEBOT_HTTP_URL", "")
+    if onebot_http:
+        try:
+            import httpx
+        except ImportError:
+            return _error("OneBot send requires httpx. Run: pip install httpx")
+        token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            uid = int(chat_id)
+        except (ValueError, TypeError):
+            return _error(f"OneBot: invalid user_id: {chat_id}")
+        payload = {"user_id": uid, "message": message[:4000]}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{onebot_http.rstrip('/')}/send_private_msg",
+                    json=payload,
+                    headers=headers,
+                )
+                data = resp.json()
+                if data.get("retcode") == 0:
+                    mid = data.get("data", {}).get("message_id")
+                    return {"success": True, "platform": "onebot",
+                            "chat_id": chat_id,
+                            "message_id": str(mid) if mid else ""}
+                return _error(f"OneBot send_private_msg failed: {data.get('wording', data)}")
+        except Exception as e:
+            return _error(f"OneBot send failed: {e}")
+
+    # Fallback: official QQ Bot REST API
     try:
         import httpx
     except ImportError:
@@ -1833,51 +1870,4 @@ async def _send_qqbot(pconfig, chat_id, message):
             if resp_group.status_code in (200, 201):
                 data = resp_group.json()
                 return {"success": True, "platform": "qqbot", "chat_id": chat_id,
-                        "message_id": data.get("id")}
-
-            # All endpoints failed — return the most informative error
-            return _error(f"QQBot send failed: channel={resp.status_code} c2c={resp_c2c.status_code} group={resp_group.status_code}")
-    except Exception as e:
-        return _error(f"QQBot send failed: {e}")
-
-
-async def _send_yuanbao(chat_id, message, media_files=None):
-    """Send via Yuanbao using the running gateway adapter's WebSocket connection.
-
-    Yuanbao uses a persistent WebSocket — unlike HTTP-based platforms, we
-    cannot create a throwaway client.  We obtain the running singleton from
-    the adapter module itself (``get_active_adapter``).
-
-    chat_id format:
-      - Group: "group:<group_code>"
-      - DM:    "direct:<account_id>" or just "<account_id>"
-    """
-    try:
-        from gateway.platforms.yuanbao import get_active_adapter, send_yuanbao_direct
-    except ImportError:
-        return _error("Yuanbao adapter module not available.")
-
-    adapter = get_active_adapter()
-    if adapter is None:
-        return _error(
-            "Yuanbao adapter is not running. "
-            "Start the gateway with yuanbao platform enabled first."
-        )
-
-    try:
-        return await send_yuanbao_direct(adapter, chat_id, message, media_files=media_files)
-    except Exception as e:
-        return _error(f"Yuanbao send failed: {e}")
-
-
-# --- Registry ---
-from tools.registry import registry, tool_error
-
-registry.register(
-    name="send_message",
-    toolset="messaging",
-    schema=SEND_MESSAGE_SCHEMA,
-    handler=send_message_tool,
-    check_fn=_check_send_message,
-    emoji="📨",
-)
+                        "message_

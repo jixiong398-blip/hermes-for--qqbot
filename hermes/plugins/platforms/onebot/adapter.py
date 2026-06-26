@@ -1005,19 +1005,43 @@ class OneBotAdapter(BasePlatformAdapter):
         return "语音"
 
     async def _describe_image(self, image_path: str) -> str:
-        """Describe an image using the vision model (MiMo v2.5). Cached per path."""
+        """Describe an image. Local MiniCPM-V 4.6 first, cloud MiMo v2.5 as fallback.
+
+        Cache is per path, capped at 500 entries (FIFO eviction).
+        """
         if image_path in self._image_descriptions:
             return self._image_descriptions[image_path]
         if not os.path.exists(image_path):
             self._image_descriptions[image_path] = "图片"
             return "图片"
 
+        desc = await self._describe_image_local(image_path)
+        if not desc or desc == "图片":
+            desc = await self._describe_image_cloud(image_path)
+
+        if len(self._image_descriptions) > 500:
+            _oldest = next(iter(self._image_descriptions))
+            del self._image_descriptions[_oldest]
+        self._image_descriptions[image_path] = desc
+        return desc
+
+    async def _describe_image_local(self, image_path: str) -> str:
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path.home() / ".hermes" / "tools"))
+            from vision_local import describe_image
+            desc = await asyncio.to_thread(describe_image, image_path)
+            return desc or "图片"
+        except Exception as e:
+            logger.debug("[OneBot] Local vision failed for %s: %s, will try cloud", image_path, e)
+            return "图片"
+
+    async def _describe_image_cloud(self, image_path: str) -> str:
         try:
             api_key = os.getenv("XIAOMI_API_KEY", "")
-            api_base = os.getenv("XIAOMI_BASE_URL", "https://api.xiaomimimo.com/v1")
+            api_base = os.getenv("XIAOMI_BASE_URL", "https://opencode.ai/zen/go/v1")
             api_model = os.getenv("XIAOMI_MODEL", "mimo-v2.5")
             if not api_key:
-                self._image_descriptions[image_path] = "图片"
                 return "图片"
 
             import base64
@@ -1047,16 +1071,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                desc = data["choices"][0]["message"]["content"].strip()
+                return data["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            logger.warning("[OneBot] Image description failed for %s: %s", image_path, e)
-            desc = "图片"
-
-        if len(self._image_descriptions) > 500:
-            _oldest = next(iter(self._image_descriptions))
-            del self._image_descriptions[_oldest]
-        self._image_descriptions[image_path] = desc
-        return desc
+            logger.warning("[OneBot] Cloud image description failed for %s: %s", image_path, e)
+            return "图片"
 
     async def _get_image_files(self, msg: dict) -> list:
         """Download image(s) from OneBot message and return local file paths."""
@@ -2800,27 +2818,4 @@ def _env_enablement():
     ws = os.getenv("ONEBOT_WS_URL", "")
     token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
     home = os.getenv("ONEBOT_HOME_CHANNEL", "")
-    if not ws:
-        return None
-    extra = {"ws_url": ws}
-    if token:
-        extra["access_token"] = token
-    hc = {"chat_id": home} if home else None
-    return {"extra": extra, "home_channel": hc}
-
-def register(ctx):
-    ctx.register_platform(
-        name="onebot",
-        label="OneBot (QQ)",
-        adapter_factory=lambda cfg: OneBotAdapter(cfg),
-        check_fn=_check_requirements,
-        validate_config=_validate_config,
-        is_connected=_is_connected,
-        required_env=["ONEBOT_WS_URL"],
-        install_hint="pip install websockets httpx",
-        env_enablement_fn=_env_enablement,
-        allowed_users_env="ONEBOT_ALLOWED_USERS",
-        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
-        emoji="🐧",
-        pii_safe=False,
-    )
+    if n
