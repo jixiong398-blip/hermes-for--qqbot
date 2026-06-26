@@ -38,7 +38,17 @@
 | TTS 语音 | GPT-SoVITS 语音合成 |
 | 记忆系统 | 长期记忆 + 核心记忆 + 会话上下文 + 语义召回 |
 | 知识库检索 | RAG 全文搜索 + Obsidian 知识库 |
+| QQ 空间说说 | 自动发说说到 QZone（可选，需 NapCat） |
 | Web 控制面板 | :8899，服务启停 + 记忆搜索 + 日志查看 |
+
+### QZone 说说（可选）
+
+1. 确保 NapCat 已登录能上 QZone 的 QQ 号
+2. 将 `scripts\qzone-post.py` 中的 `ONEBOT_HTTP` 改为你的 NapCat HTTP 地址（默认 `http://127.0.0.1:3000`）
+3. 在 `.env` 中设置 `ONEBOT_ACCESS_TOKEN={{ONEBOT_TOKEN}}`
+4. 配置定时任务（cron/任务计划程序），调用 `python scripts/qzone-post.py "说说内容"`
+
+> Windows 下如果跑 cron 不方便，可以用任务计划程序 `taskschd.msc` 创建定时触发器。
 
 ## 支持的 LLM 供应商
 
@@ -63,6 +73,8 @@
 ├── python-installer.exe     ← Python 3.12 离线包
 ├── nodejs.zip               ← Node.js v22.11 内置包
 ├── build-release.ps1        ← 开发者发布构建脚本
+├── scripts/                  ← 辅助脚本
+│   └── qzone-post.py            ← QZone 说说发布脚本
 ├── hermes/                  ← 核心引擎
 ├── modules/                 ← Live2D / TTS / Dashboard
 ├── napcat/                  ← QQ 协议桥
