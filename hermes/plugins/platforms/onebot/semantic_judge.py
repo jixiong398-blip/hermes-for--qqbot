@@ -24,11 +24,11 @@ def _get_api_key() -> str:
 
 
 def _get_api_base() -> str:
-    return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    return os.getenv("DEEPSEEK_BASE_URL", "")
 
 
 def _get_api_model() -> str:
-    return os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    return os.getenv("DEEPSEEK_MODEL", "")
 
 
 JUDGE_SYSTEM_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 QQ 群聊里的 AI 参与者。
@@ -39,6 +39,8 @@ JUDGE_SYSTEM_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 Q
 Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 时才回复。
 宁可少说，不要多说。群聊里大部分消息都和 Soyo 无关，不需要插嘴。
 
+但注意：群聊是多人的，群友之间讨论同一个话题很正常。一个话题不会因为"群友之间在聊"就闭合——只要话题还在讨论同一件事，就还在活跃。
+
 ## 判定维度
 
 ### should_reply — Soyo 该不该说话
@@ -47,7 +49,8 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 - 有人直接 @Soyo 问问题或说话
 - 有人在消息里明确叫了 Soyo 的名字（"素世""soyo"）并在对 Soyo 说话
 - 有人用 QQ 回复功能回复了 Soyo 的消息
-- Soyo 刚说完话，对方直接在回应 Soyo 说的话（必须是直接回应，不是泛泛聊天）
+- Soyo 刚说完话，对方直接在回应 Soyo 说的话（即使没有@，只要明显是在对 Soyo 说话就算）
+- 之前的对话里 Soyo 正在被追问，即使换了一条消息但明显是同一个人在继续问
 
 不该回复的情况：
 - 纯闲聊，和 Soyo 无关（即使话题 Soyo 了解也不主动插嘴）
@@ -55,25 +58,25 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 - 有人在说"正在同步""别着急""你安静吧"之类的自言自语或对别人说的话
 - 恶意调戏或刷屏测试
 - 纯图片/卡片/链接分享且无文字引导 Soyo 参与的
-- 话题已经自然闭合（对方说"好的""谢谢""知道了""嗯"）
-- 群友之间在互相聊天，即使话题和 Soyo 之前说的有点关联
-- Soyo 之前说过话但当前消息不是在回应 Soyo，而是群友之间在聊
 - 检测到 bot 之间在循环对话
 - 检测到对话内容在空转趋同
 
 ### should_end — 话题该不该结束
 
-该结束的情况：
-- 对方明确表示结束（"好的""谢谢""知道了""嗯嗯""行了""你安静吧"）
-- 话题自然闭合
-- 话题被转移
-- bot 之间陷入循环对话
-- 对话内容空转趋同
+只有以下情况判 true，否则一律 false：
+- 对方明确要求结束对话（"你安静吧""行了别说了""够了"）
+- 两个 bot 陷入循环对话（互相说几乎一样的话）
+- 对话内容明显空转趋同（来回说废话没新信息）
 
-不该结束的情况：
-- 话题还在讨论中
+注意：群友之间混着聊天不算话题结束。即使话题被短暂岔开，
+只要没明确表示结束，就判 should_end=false。
+不要因为"群友之间在聊"就判话题结束。
+
+不该结束的情况（绝大多数情况都是 false）：
 - 对方在追问或补充信息
-- 有人 @Soyo 开启新话题
+- 群友在讨论同一话题但没在问 Soyo
+- 有人说"好的""嗯"但语气在继续而不是结束
+- 有人 @Soyo 开启新话题（这是新话题，不是旧话题结束）
 
 ### topic_active — 话题还在不在
 
@@ -144,11 +147,11 @@ async def semantic_judge(
     mins_since_reply: float = 0.0,
     episode_duration: float = 0.0,
     reply_count: int = 0,
-    timeout: float = 10.0,
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
     async with _get_semaphore():
         api_key = _get_api_key()
-        if not api_key:
+        if not api_key or not _get_api_base() or not _get_api_model():
             logger.warning("[SemanticJudge] No API key, defaulting to reply")
             return {"should_reply": True, "should_end": False, "topic_active": True, "is_loop": False, "reason": "no api key fallback"}
 
@@ -171,14 +174,22 @@ async def semantic_judge(
                         {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    "max_tokens": 300,
                     "temperature": 0.1,
                     "response_format": {"type": "json_object"},
                 },
                 timeout=timeout,
             )
             data = resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
+            msg = data["choices"][0]["message"]
+            content = (msg.get("content") or "").strip()
+            if not content:
+                reasoning = msg.get("reasoning_content") or ""
+                import re as _re
+                json_match = _re.search(r'\{[^{}]*\}', reasoning)
+                if json_match:
+                    content = json_match.group()
+            if not content:
+                raise ValueError("Empty content from LLM (reasoning ate all tokens?)")
             result = json.loads(content)
             result.setdefault("should_reply", True)
             result.setdefault("should_end", False)
@@ -194,9 +205,4 @@ async def semantic_judge(
 
         except asyncio.TimeoutError:
             logger.warning("[SemanticJudge] Timeout, defaulting to reply for @")
-            fallback_reply = current_msg.get("is_at", False)
-            return {"should_reply": fallback_reply, "should_end": False, "topic_active": True, "is_loop": False, "reason": "timeout fallback"}
-        except Exception as e:
-            logger.warning("[SemanticJudge] Error: %s, fallback", e)
-            fallback_reply = current_msg.get("is_at", False)
-            return {"should_reply": fallback_reply, "should_end": False, "topic_active": True, "is_loop": False, "reason": f"error fallback: {e}"}
+            fallback_r

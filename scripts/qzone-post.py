@@ -29,8 +29,24 @@ def get_gtk(skey):
         h += (h << 5) + ord(c)
     return h & 0x7fffffff
 
+def normalize(s):
+    """Strip whitespace, punctuation, emoji, brackets — compare semantic content only."""
+    import re
+    s = re.sub(r'[\s\u3000\xa0]+', '', s)
+    s = re.sub(r'[，。！？、…~～\[\]【】()（）{}「」『』""\'\'#*…—]', '', s)
+    s = re.sub(r'[\U0001f000-\U0001ffff]', '', s)
+    return s[:60]
+
 def is_duplicate(content):
-    """Check if same content was posted in last 24 hours."""
+    """Check if the same content was posted in last 24h.
+
+    Matches on normalized content: LLM may produce slightly different
+    punctuation/whitespace for the same semantic idea, so strip those
+    before comparison.
+    """
+    norm_new = normalize(content)
+    if len(norm_new) < 10:
+        return False
     try:
         db = sqlite3.connect(str(DB), timeout=5)
         cutoff = time.time() - 86400
@@ -40,11 +56,19 @@ def is_duplicate(content):
         ).fetchall()
         db.close()
         for (value,) in rows:
-            if value == content:
+            if normalize(value) == norm_new:
                 return True
+            if norm_new in normalize(value) or normalize(value) in norm_new:
+                return True
+            words_new = set(re.findall(r'[\u4e00-\u9fff]{2,}', content))
+            words_old = set(re.findall(r'[\u4e00-\u9fff]{2,}', value or ''))
+            if words_new and words_old:
+                overlap = len(words_new & words_old) / min(len(words_new), len(words_old))
+                if overlap > 0.8:
+                    return True
         return False
     except Exception:
-        return False  # If DB check fails, assume not duplicate
+        return False
 
 def write_to_db(content):
     """Write to LTM with retry on lock."""

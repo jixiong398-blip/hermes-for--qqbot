@@ -1005,43 +1005,19 @@ class OneBotAdapter(BasePlatformAdapter):
         return "语音"
 
     async def _describe_image(self, image_path: str) -> str:
-        """Describe an image. Local MiniCPM-V 4.6 first, cloud MiMo v2.5 as fallback.
-
-        Cache is per path, capped at 500 entries (FIFO eviction).
-        """
+        """Describe an image via cloud MiMo v2.5. Cached per path, 500 FIFO."""
         if image_path in self._image_descriptions:
             return self._image_descriptions[image_path]
         if not os.path.exists(image_path):
             self._image_descriptions[image_path] = "图片"
             return "图片"
 
-        desc = await self._describe_image_local(image_path)
-        if not desc or desc == "图片":
-            desc = await self._describe_image_cloud(image_path)
-
-        if len(self._image_descriptions) > 500:
-            _oldest = next(iter(self._image_descriptions))
-            del self._image_descriptions[_oldest]
-        self._image_descriptions[image_path] = desc
-        return desc
-
-    async def _describe_image_local(self, image_path: str) -> str:
-        try:
-            import sys as _sys
-            _sys.path.insert(0, str(Path.home() / ".hermes" / "tools"))
-            from vision_local import describe_image
-            desc = await asyncio.to_thread(describe_image, image_path)
-            return desc or "图片"
-        except Exception as e:
-            logger.debug("[OneBot] Local vision failed for %s: %s, will try cloud", image_path, e)
-            return "图片"
-
-    async def _describe_image_cloud(self, image_path: str) -> str:
         try:
             api_key = os.getenv("XIAOMI_API_KEY", "")
-            api_base = os.getenv("XIAOMI_BASE_URL", "https://opencode.ai/zen/go/v1")
-            api_model = os.getenv("XIAOMI_MODEL", "mimo-v2.5")
-            if not api_key:
+            api_base = os.getenv("XIAOMI_BASE_URL", "")
+            api_model = os.getenv("XIAOMI_MODEL", "")
+            if not api_key or not api_base or not api_model:
+                self._image_descriptions[image_path] = "图片"
                 return "图片"
 
             import base64
@@ -1050,7 +1026,7 @@ class OneBotAdapter(BasePlatformAdapter):
             ext = os.path.splitext(image_path)[1].lower()
             mime = self._mime_for_ext(ext)
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
                 resp = await client.post(
                     f"{api_base}/chat/completions",
                     headers={
@@ -1066,15 +1042,133 @@ class OneBotAdapter(BasePlatformAdapter):
                                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                             ],
                         }],
-                        "max_tokens": 80,
                     },
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+                desc = (data["choices"][0]["message"].get("content") or "").strip()
+                if not desc:
+                    reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+                    desc = reasoning[:40].strip()
         except Exception as e:
-            logger.warning("[OneBot] Cloud image description failed for %s: %s", image_path, e)
-            return "图片"
+            logger.warning("[OneBot] Image description failed for %s: %s", image_path, e)
+            desc = "图片"
+
+        if len(self._image_descriptions) > 500:
+            _oldest = next(iter(self._image_descriptions))
+            del self._image_descriptions[_oldest]
+        self._image_descriptions[image_path] = desc
+        return desc
+
+    async def _describe_video(self, video_path: str) -> str:
+        """Describe a video via cloud MiMo v2.5. Cached per path, 500 FIFO."""
+        if video_path in self._image_descriptions:
+            return self._image_descriptions[video_path]
+        if not os.path.exists(video_path):
+            self._image_descriptions[video_path] = "视频"
+            return "视频"
+
+        try:
+            api_key = os.getenv("XIAOMI_API_KEY", "")
+            api_base = os.getenv("XIAOMI_BASE_URL", "")
+            api_model = os.getenv("XIAOMI_MODEL", "")
+            if not api_key or not api_base or not api_model:
+                self._image_descriptions[video_path] = "视频"
+                return "视频"
+
+            import base64
+            with open(video_path, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode()
+            ext = os.path.splitext(video_path)[1].lower()
+            video_mimes = {".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska", ".3gp": "video/3gpp"}
+            mime = video_mimes.get(ext, "video/mp4")
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+                resp = await client.post(
+                    f"{api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": api_model,
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "简洁描述这个视频的内容，包括画面、动作、声音。中文，不超过50字。"},
+                                {"type": "video_url", "video_url": {"url": f"data:{mime};base64,{b64}"}},
+                            ],
+                        }],
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                desc = (data["choices"][0]["message"].get("content") or "").strip()
+                if not desc:
+                    reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+                    desc = reasoning[:50].strip()
+        except Exception as e:
+            logger.warning("[OneBot] Video description failed for %s: %s", video_path, e)
+            desc = "视频"
+
+        if len(self._image_descriptions) > 500:
+            _oldest = next(iter(self._image_descriptions))
+            del self._image_descriptions[_oldest]
+        self._image_descriptions[video_path] = desc
+        return desc
+
+    async def _transcribe_voice_mimo(self, voice_path: str) -> str:
+        """Transcribe voice via cloud MiMo v2.5 audio capability.
+
+        Fallback to local FunASR if MiMo unavailable.
+        """
+        if voice_path in self._voice_transcripts:
+            return self._voice_transcripts[voice_path]
+        if not os.path.exists(voice_path):
+            return "语音"
+
+        try:
+            api_key = os.getenv("XIAOMI_API_KEY", "")
+            api_base = os.getenv("XIAOMI_BASE_URL", "")
+            api_model = os.getenv("XIAOMI_MODEL", "")
+            if not api_key or not api_base or not api_model:
+                return self._transcribe_voice(voice_path)
+
+            import base64
+            with open(voice_path, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode()
+            ext = os.path.splitext(voice_path)[1].lower()
+            audio_mimes = {".ogg": "audio/ogg", ".opus": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".amr": "audio/amr", ".silk": "audio/silk"}
+            mime = audio_mimes.get(ext, "audio/ogg")
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                resp = await client.post(
+                    f"{api_base}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": api_model,
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "请将这段语音转写为文字。只输出转写结果，不要解释。中文。"},
+                                {"type": "input_audio", "input_audio": {"data": f"data:{mime};base64,{b64}"}},
+                            ],
+                        }],
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = (data["choices"][0]["message"].get("content") or "").strip()
+                if text and text != "语音":
+                    self._voice_transcripts[voice_path] = text
+                    return text
+        except Exception as e:
+            logger.warning("[OneBot] MiMo voice transcription failed for %s: %s", voice_path, e)
+
+        return self._transcribe_voice(voice_path)
 
     async def _get_image_files(self, msg: dict) -> list:
         """Download image(s) from OneBot message and return local file paths."""
@@ -2457,9 +2551,9 @@ class OneBotAdapter(BasePlatformAdapter):
                         if _sys:
                             _persona += "\n\n" + _sys[:2000]
                     _api_key = os.getenv("DEEPSEEK_API_KEY", "")
-                    _ds_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-                    _ds_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-                    if not _api_key:
+                    _ds_base = os.getenv("DEEPSEEK_BASE_URL", "")
+                    _ds_model = os.getenv("DEEPSEEK_MODEL", "")
+                    if not _api_key or not _ds_base or not _ds_model:
                         logger.warning("[OneBot] No API key for report rewrite, skipping")
                         raise RuntimeError("no api key")
                     _resp = _r.post(
@@ -2471,12 +2565,14 @@ class OneBotAdapter(BasePlatformAdapter):
                                 {"role": "system", "content": f"{_persona}\n\n【任务】把你收到的最后一条消息（一篇报告/分析）改写成你自己的说话风格。去掉所有markdown、列表、编号、分段标题。用日常口语，像普通女高中生聊天。保持原意但一句一句说，不要一口气说完。"},
                                 {"role": "user", "content": content},
                             ],
-                            "max_tokens": min(len(content) * 2, 2000),
                             "temperature": 0.7,
                         },
-                        timeout=15,
+                        timeout=60,
                     )
-                    _rewritten = _resp.json()["choices"][0]["message"]["content"].strip()
+                    _msg = _resp.json()["choices"][0]["message"]
+                    _rewritten = (_msg.get("content") or "").strip()
+                    if not _rewritten and _msg.get("reasoning_content"):
+                        _rewritten = _msg["reasoning_content"].strip()[:2000]
                     if _rewritten and len(_rewritten) > 10:
                         content = _rewritten
                 except Exception:
@@ -2818,4 +2914,24 @@ def _env_enablement():
     ws = os.getenv("ONEBOT_WS_URL", "")
     token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
     home = os.getenv("ONEBOT_HOME_CHANNEL", "")
-    if n
+    if not ws:
+        return None
+    extra = {"ws_url": ws}
+    if token:
+        extra["access_token"] = token
+    hc = {"chat_id": home} if home else None
+    return {"extra": extra, "home_channel": hc}
+
+def register(ctx):
+    ctx.register_platform(
+        name="onebot",
+        label="OneBot (QQ)",
+        adapter_factory=lambda cfg: OneBotAdapter(cfg),
+        check_fn=_check_requirements,
+        validate_config=_validate_config,
+        is_connected=_is_connected,
+        required_env=["ONEBOT_WS_URL"],
+        install_hint="pip install websockets httpx",
+        env_enablement_fn=_env_enablement,
+        allowed_users_env="ONEBOT_ALLOWED_USERS",
+  
