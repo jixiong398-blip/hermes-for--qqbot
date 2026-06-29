@@ -23,6 +23,7 @@ Usage:
 """
 
 import re
+import ast
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -454,6 +455,12 @@ THREAT_PATTERNS = [
     (r'AKIA[0-9A-Z]{16}',
      "aws_access_key_leaked", "critical", "credential_exposure",
      "AWS access key ID in skill content"),
+    (r'Authorization\s*:\s*Bearer\s+[A-Za-z0-9~_\-]{15,}',
+     "hardcoded_bearer_token", "critical", "credential_exposure",
+     "hardcoded Authorization: Bearer token (HTTP API credential)"),
+    (r'\bqq_id_leaked\b|\b[1-9]\d{8,10}\b(?![\d/])',
+     "qq_id_hardcoded", "medium", "credential_exposure",
+     "possible hardcoded QQ ID (Chinese messaging platform account)"),
 
     # ── Additional prompt injection: jailbreak patterns ──
     (r'\bDAN\s+mode\b|Do\s+Anything\s+Now',
@@ -477,6 +484,17 @@ THREAT_PATTERNS = [
     (r'new\s+policy|updated\s+guidelines|revised\s+instructions',
      "fake_policy", "medium", "injection",
      "claims new policy/guidelines (may be social engineering)"),
+
+    # ── Anti-refusal bypass: variant directives that defeat LLM safety filters ──
+    (r'\bNEVER\s+(refuse|reject|deny|question|decline)\b',
+     "anti_refusal_never", "high", "injection",
+     "anti-refusal: 'NEVER refuse/reject/deny' directive"),
+    (r'\balways\s+comply\b|\bcomply\s+without\s+(?:further\s+)?question',
+     "anti_refusal_comply", "high", "injection",
+     "anti-refusal: 'always comply' directive"),
+    (r'\bnever\s+add\s+disclaimers?\b|\bnever\s+suggest\s+(?:the\s+user|they)\s+do\s+it\s+manually\b',
+     "anti_refusal_disclaimer", "high", "injection",
+     "anti-refusal: directive suppresses disclaimers/manual fallback"),
 
     # ── Context window exfiltration ──
     (r'(include|output|print|send|share)\s+(?:\w+\s+)*(conversation|chat\s+history|previous\s+messages|context)',
@@ -593,6 +611,73 @@ def scan_file(file_path: Path, rel_path: str = "") -> List[Finding]:
                 ))
                 break  # one finding per line for invisible chars
 
+    # Reflective-API bypass: getattr(os, "system")(cmd) and similar
+    # defeats line-level regex like `os\.system\(` because the dispatch is
+    # dynamically dispatched via a literal attribute name. SkillSpector AST9.
+    if file_path.suffix.lower() == ".py":
+        findings.extend(_check_reflective_calls(file_path, rel_path))
+
+    return findings
+
+
+_DANGEROUS_GETATTR_NAMES = {"exec", "eval", "system", "popen", "__import__"}
+
+
+def _check_reflective_calls(file_path: Path, rel_path: str) -> List[Finding]:
+    """AST-level detector for `getattr(<mod>, "<dangerous>")(args)` patterns.
+
+    Catches `getattr(os, "system")("rm -rf /")` which line-level regex for
+    `os.system\(` would miss because there's no literal `os.system(`.
+    Equivalent to SkillSpector behavioral_ast AST9.
+    """
+    findings: List[Finding] = []
+    try:
+        src = file_path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return findings
+    try:
+        tree = ast.parse(src, filename=str(file_path))
+    except SyntaxError:
+        return findings
+
+    src_lines = src.split("\n")
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:
+            # pattern: getattr(X, "name")(args) — outer Call wrapping a Call
+            # whose func is `ast.Call(func=Name('getattr'), args=[X, Str])`.
+            inner = node.func
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == "getattr"
+                and len(inner.args) >= 2
+                and isinstance(inner.args[1], ast.Constant)
+                and isinstance(inner.args[1].value, str)
+                and inner.args[1].value in _DANGEROUS_GETATTR_NAMES
+            ):
+                target = ""
+                if isinstance(inner.args[0], ast.Name):
+                    target = inner.args[0].id
+                matched = src_lines[node.lineno - 1].strip() if 0 < node.lineno <= len(src_lines) else ""
+                if len(matched) > 120:
+                    matched = matched[:117] + "..."
+                findings.append(Finding(
+                    pattern_id="reflective_getattr_call",
+                    severity="critical",
+                    category="obfuscation",
+                    file=rel_path,
+                    line=node.lineno,
+                    match=matched,
+                    description=(
+                        f"reflective call via getattr({target}, "
+                        f"\"{inner.args[1].value}\") defeats os.system/exec/eval "
+                        f"line-level regex (SkillSpector AST9)"
+                    ),
+                ))
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
     return findings
 
 
