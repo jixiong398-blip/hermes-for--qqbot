@@ -8,7 +8,7 @@ tags: [napcat, qq-bot, onebot, linux, xvfb, qr-login]
 # NapCat QQ Bot Management (Linux)
 
 ## Triggers
-- User says "重启napcat", "重启QQ", "napcat死了", "二维�?, "扫码登录"
+- User says "重启napcat", "重启QQ", "napcat死了", "二维�?, "扫码登录"
 - Gateway reports NapCat disconnected / WS timeout
 - Need to re-login after token expiration
 
@@ -18,7 +18,7 @@ tags: [napcat, qq-bot, onebot, linux, xvfb, qr-login]
 - Base dir: `/home/{{USERNAME}}/Napcat/`
 - QQ binary: `/home/{{USERNAME}}/Napcat/opt/QQ/qq`
 - Config (OneBot网络): `/home/{{USERNAME}}/.napcat/config/onebot11_{{BOT_QQ_ID}}.json`
-- Config (NapCat内核/防检�?: `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/config/napcat_{{BOT_QQ_ID}}.json`
+- Config (NapCat内核/防检�?: `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/config/napcat_{{BOT_QQ_ID}}.json`
 - Log: `/tmp/napcat.log`
 - QR code image: `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/cache/qrcode.png`
 - PID file: `/home/{{USERNAME}}/Napcat/run/napcat.pid`
@@ -32,11 +32,11 @@ If the server is actually a laptop with a desktop environment (GNOME/KDE etc.), 
 cd ~/Napcat && /home/{{USERNAME}}/Napcat/opt/QQ/qq --no-sandbox -q {{BOT_QQ_ID}} &>/tmp/napcat.log &
 ```
 
-This will pop up a real QQ NT window. **However**, keeping xvfb is recommended for a bot �?no stray window cluttering the desktop, and the bot runs cleanly in the background regardless of whether a desktop session is active.
+This will pop up a real QQ NT window. **However**, keeping xvfb is recommended for a bot �?no stray window cluttering the desktop, and the bot runs cleanly in the background regardless of whether a desktop session is active.
 
 ### Start NapCat
 ```bash
-# Use background=true for the terminal call �?this is a long-lived process
+# Use background=true for the terminal call �?this is a long-lived process
 cd ~/Napcat && /bin/xvfb-run -a --server-args="-screen 0 800x600x24" /home/{{USERNAME}}/Napcat/opt/QQ/qq --no-sandbox -q {{BOT_QQ_ID}} &>/tmp/napcat.log &
 ```
 
@@ -59,7 +59,7 @@ ps aux | grep -i napcat | grep -v grep
 ```
 
 ### Discover Active Log File
-NapCat may log to different paths across restarts. Don't guess �?follow the process:
+NapCat may log to different paths across restarts. Don't guess �?follow the process:
 ```bash
 # Find the main QQ process PID
 PID=$(ps aux | grep "Napcat/opt/QQ/qq --no-sandbox" | grep -v grep | head -1 | awk '{print $2}')
@@ -71,7 +71,7 @@ Typical paths: `/tmp/napcat.log` (early init) or `/home/{{USERNAME}}/Napcat/log/
 ### Successful Login Indicator
 A successfully logged-in NapCat will show real-time group chat traffic in its log:
 ```
-接收 <- 群聊 [史蒂夫の停车�?796091804)] [...]
+接收 <- 群聊 [史蒂夫の停车�?{{GROUP_ID}})] [...]
 ```
 Looking for `接收 <- 群聊` or `接收 <- 私聊` lines means the bot is online. If you only see QR code output and no message flow, login hasn't completed yet.
 
@@ -86,7 +86,7 @@ Also check the WebUI: `http://127.0.0.1:6099/webui?token=...` (token in log).
 ### QR Code Login
 After starting, NapCat will print a QR code to the log and save it as PNG. Steps:
 1. Wait ~8-10 seconds for startup (check log: `tail -50 /tmp/napcat.log`)
-2. Look for the line: `二维码已保存�?... qrcode.png`
+2. Look for the line: `二维码已保存�?... qrcode.png`
 3. The image is at the path mentioned above (see Quick Reference)
 4. Send via Feishu: `send_message(target="feishu:oc_492396292bf59e9cf911af09e275fe85", message="MEDIA:/path/to/qrcode.png\n说明文字")`
 5. User scans the QR code to authorize the bot
@@ -96,20 +96,20 @@ After starting, NapCat will print a QR code to the log and save it as PNG. Steps
 - WebSocket Server: `127.0.0.1:3001`
 - Token is in the config file but masked in AGENTS.md
 
-## NapCat 协议架构与防检测配�?
+## NapCat 协议架构与防检测配�?
 ### 协议架构说明
 
-NapCat 基于 **QQ NT 架构**（统一跨平台协议栈），当前运行的是 **QQ Windows �?* 3.2.25-45758，通过 xvfb 虚拟显示�?Linux 上运行�?
-**"切换 QQLinux 协议"的真�?*：QQ NT �?Windows / Linux / macOS 上使用的是同一套底层协议栈（腾�?UnifiedProtocol），不存�?切换协议"这个概念。所�?换成 QQLinux"实际指的是：
-- 换用 QQ Linux 原生客户端二进制作为 NapCat 的底层载�?- 而不是真的切换通信协议
+NapCat 基于 **QQ NT 架构**（统一跨平台协议栈），当前运行的是 **QQ Windows �?* 3.2.25-45758，通过 xvfb 虚拟显示�?Linux 上运行�?
+**"切换 QQLinux 协议"的真�?*：QQ NT �?Windows / Linux / macOS 上使用的是同一套底层协议栈（腾�?UnifiedProtocol），不存�?切换协议"这个概念。所�?换成 QQLinux"实际指的是：
+- 换用 QQ Linux 原生客户端二进制作为 NapCat 的底层载�?- 而不是真的切换通信协议
 
-**QQLinux 方式的潜在好�?*�?- 不需�?xvfb 模拟显示，Linux 上直接跑原生 QQ
-- 设备指纹可能�?Windows QQ 不同（偶尔能绕过一些风控）
+**QQLinux 方式的潜在好�?*�?- 不需�?xvfb 模拟显示，Linux 上直接跑原生 QQ
+- 设备指纹可能�?Windows QQ 不同（偶尔能绕过一些风控）
 
-**QQLinux 方式的风�?*�?- QQ Linux 版功能比 Windows 版少，更新频率低
-- 腾讯�?Linux 版的支持和维护力度不�?Windows �?- 稳定性可能更�?
-**结论**：在排查被踢下线问题时，先检�?bypass 配置和风控原因，不要优先考虑�?QQ 客户端版本�?
-### Bypass 防检测配�?
+**QQLinux 方式的风�?*�?- QQ Linux 版功能比 Windows 版少，更新频率低
+- 腾讯�?Linux 版的支持和维护力度不�?Windows �?- 稳定性可能更�?
+**结论**：在排查被踢下线问题时，先检�?bypass 配置和风控原因，不要优先考虑�?QQ 客户端版本�?
+### Bypass 防检测配�?
 防检测配置在 NapCat 内核配置文件中：
 `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/config/napcat_{{BOT_QQ_ID}}.json`
 
@@ -127,73 +127,73 @@ NapCat 基于 **QQ NT 架构**（统一跨平台协议栈），当前运行的�
 }
 ```
 
-**各字段含�?*�?| 字段 | 说明 | 推荐�?|
+**各字段含�?*�?| 字段 | 说明 | 推荐�?|
 |------|------|--------|
-| `o3HookMode` | O3 hook 强度 (1-3)�? 最�?| `3` |
-| `bypass.hook` | 禁用 QQ �?hook 检�?| `true` |
-| `bypass.window` | 窗口层面防检�?| `true` |
-| `bypass.module` | 模块注入防检�?| `true` |
-| `bypass.process` | 进程层面防检�?| `true` |
-| `bypass.container` | 容器环境防检�?| `true` |
-| `bypass.js` | JS 注入防检�?| `true` |
+| `o3HookMode` | O3 hook 强度 (1-3)�? 最�?| `3` |
+| `bypass.hook` | 禁用 QQ �?hook 检�?| `true` |
+| `bypass.window` | 窗口层面防检�?| `true` |
+| `bypass.module` | 模块注入防检�?| `true` |
+| `bypass.process` | 进程层面防检�?| `true` |
+| `bypass.container` | 容器环境防检�?| `true` |
+| `bypass.js` | JS 注入防检�?| `true` |
 
-**注意**：NapCat 自身还有一个全局配置 `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/config/napcat.json`，里面的 bypass 默认都是 `false` �?这个文件是兜底默认值，实际生效的是�?QQ 号的配置文件（`napcat_{{BOT_QQ_ID}}.json`）。修改时要改�?QQ 号的那个�?
+**注意**：NapCat 自身还有一个全局配置 `/home/{{USERNAME}}/Napcat/opt/QQ/resources/app/app_launcher/napcat/config/napcat.json`，里面的 bypass 默认都是 `false` �?这个文件是兜底默认值，实际生效的是�?QQ 号的配置文件（`napcat_{{BOT_QQ_ID}}.json`）。修改时要改�?QQ 号的那个�?
 ## Troubleshooting: 被踢下线 (KickedOffLine)
 
 ### 常见原因
 
-1. **帐号安全策略**：笔记本 IP 跟手机使�?IP 不同（异地登录），QQ 安全中心触发保护
+1. **帐号安全策略**：笔记本 IP 跟手机使�?IP 不同（异地登录），QQ 安全中心触发保护
 2. **消息频率过高**：Bot 短时间内大量发消息，触发风控
-3. **设备指纹异常**：xvfb 模拟�?Windows QQ 环境可能有异常的客户端指纹特�?4. **登录 token 过期**：表现为"快速登录失�?而非"被踢"
+3. **设备指纹异常**：xvfb 模拟�?Windows QQ 环境可能有异常的客户端指纹特�?4. **登录 token 过期**：表现为"快速登录失�?而非"被踢"
 5. **多处登录冲突**：同账号在不同设备上频繁切换
 
 ### 排查步骤
 
-1. **检�?watchdog 日志**：看 `napcat_{{BOT_QQ_ID}}.log` 中的实际错误信息
+1. **检�?watchdog 日志**：看 `napcat_{{BOT_QQ_ID}}.log` 中的实际错误信息
    ```bash
-   grep -i "kicked\|KickedOffLine\|踢下�? /home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log
+   grep -i "kicked\|KickedOffLine\|踢下�? /home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log
    ```
-2. **确认 bypass 全开**：检�?`napcat_{{BOT_QQ_ID}}.json` �?bypass 是否全部 `true`
-3. **检查消息频�?*：看 SQLite buffer �?bot 最近的消息数量
-4. **检�?QQ 安全中心**：登录手�?QQ 查看是否有安全提�?5. **尝试更换 QQ 版本**（最后的手段）：如果 bypass 全开后仍然频繁被踢，可以考虑换用 QQ Linux 原生�?
-### �?快速登录失�?的区�?
-| 现象 | 日志关键�?| 含义 | 处理 |
+2. **确认 bypass 全开**：检�?`napcat_{{BOT_QQ_ID}}.json` �?bypass 是否全部 `true`
+3. **检查消息频�?*：看 SQLite buffer �?bot 最近的消息数量
+4. **检�?QQ 安全中心**：登录手�?QQ 查看是否有安全提�?5. **尝试更换 QQ 版本**（最后的手段）：如果 bypass 全开后仍然频繁被踢，可以考虑换用 QQ Linux 原生�?
+### �?快速登录失�?的区�?
+| 现象 | 日志关键�?| 含义 | 处理 |
 |------|-----------|------|------|
 | 被踢下线 | `KickedOffLine` / `被踢下线` | 在线时被 QQ 服务器强制断开 | 检视风控原因，登出重登 |
-| 快速登录失�?| `快速登录失败` / `快速登录错误` | 重启�?session token 失效 | 需要重新扫�?密码登录 |
+| 快速登录失�?| `快速登录失败` / `快速登录错误` | 重启�?session token 失效 | 需要重新扫�?密码登录 |
 
 ### Feishu Message Target
 - DM with user: `feishu:oc_492396292bf59e9cf911af09e275fe85`
-- No home channel set for Feishu �?always use explicit target
+- No home channel set for Feishu �?always use explicit target
 
 ### Retrying Failed QZone Cron Jobs (User Requested)
 
 When a cron job reports failure because OneBot is offline ("OneBot 服务未运行，qzone-post 无法连接"), and the user asks to retry:
 
-1. **First verify OneBot is back up** �?`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/` �?HTTP 403 means service is running (returns 403 because no auth token); connection refused or timeout means still down
-2. **Read the failed run's output** from `~/.hermes/cron/output/<job_id>/<timestamp>.md` �?the Response section contains the generated QZone content
-3. **Don't rely solely on `cronjob(action="run")`** �?manual cron triggers may NOT produce a new output file or update `last_run_at`/`last_status`. The agent session runs in background and output may be lost
+1. **First verify OneBot is back up** �?`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/` �?HTTP 403 means service is running (returns 403 because no auth token); connection refused or timeout means still down
+2. **Read the failed run's output** from `~/.hermes/cron/output/<job_id>/<timestamp>.md` �?the Response section contains the generated QZone content
+3. **Don't rely solely on `cronjob(action="run")`** �?manual cron triggers may NOT produce a new output file or update `last_run_at`/`last_status`. The agent session runs in background and output may be lost
 4. **Most reliable: run qzone-post directly** once OneBot is confirmed up:
    ```bash
-   /home/{{USERNAME}}/.local/bin/qzone-post "内容（从失败的输出日志中提取�?
+   /home/{{USERNAME}}/.local/bin/qzone-post "内容（从失败的输出日志中提取�?
    ```
 5. **If OneBot is still down**, tell the user to re-login NapCat first, then retry
 
 **Pitfalls:**
-- �?`cronjob(action="run")` triggers a new agent session but its delivery target is `"origin"` (the original creator of the cron job). On Linux Gateway, the output may not surface naturally �?always fall back to direct `qzone-post` execution
-- �?The failed run's content is in the `Response` section of the cron output markdown file �?read it with `read_file` before retrying
-- �?If OneBot was down and now came back, the cookie session is still valid (it's NapCat's active session) �?no need to re-login for qzone-post
+- �?`cronjob(action="run")` triggers a new agent session but its delivery target is `"origin"` (the original creator of the cron job). On Linux Gateway, the output may not surface naturally �?always fall back to direct `qzone-post` execution
+- �?The failed run's content is in the `Response` section of the cron output markdown file �?read it with `read_file` before retrying
+- �?If OneBot was down and now came back, the cookie session is still valid (it's NapCat's active session) �?no need to re-login for qzone-post
 
 ### QZone (QQ空间) Posting via NapCat Login
 
-NapCat's already-logged-in QQ session can be used to post to QQ空间 (QZone) �?no additional login needed. The technique hijacks the QQ session cookie from NapCat's OneBot API.
+NapCat's already-logged-in QQ session can be used to post to QQ空间 (QZone) �?no additional login needed. The technique hijacks the QQ session cookie from NapCat's OneBot API.
 
 **Script**: `/home/{{USERNAME}}/.local/bin/qzone-post`
 
 **Three-step mechanism**:
-1. **Get cookies** �?`POST /get_cookies` to OneBot HTTP with `{"domain": "qzone.qq.com"}` �?returns session cookies containing `skey` and `uin`
-2. **Calculate g_tk** �?QQ's CSRF token, computed from skey via a hash: `h=5381; for c in skey: h += (h << 5) + ord(c); return h & 0x7fffffff`
-3. **POST to QZone API** �?`POST https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6?g_tk=<gtk>&qzreferrer=https://user.qzone.qq.com/<uin>` with `Cookie` header and form data `{con, feedversion, ver, hostuin, format, code_version}`
+1. **Get cookies** �?`POST /get_cookies` to OneBot HTTP with `{"domain": "qzone.qq.com"}` �?returns session cookies containing `skey` and `uin`
+2. **Calculate g_tk** �?QQ's CSRF token, computed from skey via a hash: `h=5381; for c in skey: h += (h << 5) + ord(c); return h & 0x7fffffff`
+3. **POST to QZone API** �?`POST https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6?g_tk=<gtk>&qzreferrer=https://user.qzone.qq.com/<uin>` with `Cookie` header and form data `{con, feedversion, ver, hostuin, format, code_version}`
 
 **Usage**:
 ```bash
@@ -206,14 +206,14 @@ qzone-post "今天的天气真好～大家最近过得怎么样呀"
 **Logging**: Successful posts are logged to `~/.hermes/memory_store.db` (table `long_term_entries`, category `qzone`).
 
 **Pitfalls**:
-- �?OneBot HTTP must be reachable at `http://127.0.0.1:3000` with the correct Authorization token
-- �?NapCat must be **actively logged in** �?the cookie session is tied to the current QQ login session
-- �?If NapCat restarts, the session cookies change �?must re-fetch cookies before posting
-- �?The `uin` from cookie has an `o` prefix (e.g. `o{{BOT_QQ_ID}}`) �?the script strips it automatically
-- �?QZone API rate-limits: don't post too frequently (QQ may flag as spam)
-- �?QZone content supports plain text only via this API �?no images, no rich media formatting through this simple POST approach
-- �?**DB lock causes duplicate QZone posts!** The `post_mood()` function posts to QZone API first (lines 36-40), THEN logs to DB (lines 43-47). If the DB is locked by Hermes agent (`database is locked`), the QZone post succeeds but the script crashes on DB write �?the agent sees a FAIL error and retries �?each retry posts AGAIN to QZone �?identical duplicate posts. Fix: wrap the DB write in a `try/except` so a DB lock only logs a warning, not a crash. The agent script (`qzone-post`) has already been patched with this fix as of 2026-05-20.
-- �?The memory store DB may not have the `long_term_entries` table created yet on first run �?the script handles this implicitly via SQLite auto-create, but the table will only exist after the first successful post
+- �?OneBot HTTP must be reachable at `http://127.0.0.1:3000` with the correct Authorization token
+- �?NapCat must be **actively logged in** �?the cookie session is tied to the current QQ login session
+- �?If NapCat restarts, the session cookies change �?must re-fetch cookies before posting
+- �?The `uin` from cookie has an `o` prefix (e.g. `o{{BOT_QQ_ID}}`) �?the script strips it automatically
+- �?QZone API rate-limits: don't post too frequently (QQ may flag as spam)
+- �?QZone content supports plain text only via this API �?no images, no rich media formatting through this simple POST approach
+- �?**DB lock causes duplicate QZone posts!** The `post_mood()` function posts to QZone API first (lines 36-40), THEN logs to DB (lines 43-47). If the DB is locked by Hermes agent (`database is locked`), the QZone post succeeds but the script crashes on DB write �?the agent sees a FAIL error and retries �?each retry posts AGAIN to QZone �?identical duplicate posts. Fix: wrap the DB write in a `try/except` so a DB lock only logs a warning, not a crash. The agent script (`qzone-post`) has already been patched with this fix as of 2026-05-20.
+- �?The memory store DB may not have the `long_term_entries` table created yet on first run �?the script handles this implicitly via SQLite auto-create, but the table will only exist after the first successful post
 
 See `references/qzone-posting.md` for the full script source and session-specific details.
 
@@ -243,7 +243,7 @@ npm install -g localtunnel
 npx localtunnel --port 6099 > /tmp/lt_output.txt 2>&1
 # Wait ~5s, then check /tmp/lt_output.txt for the public URL
 ```
-However, this approach is unreliable �?localtunnel may not produce output promptly. Alternative: ask user to SSH with `-L` forwarding if they have shell access.
+However, this approach is unreliable �?localtunnel may not produce output promptly. Alternative: ask user to SSH with `-L` forwarding if they have shell access.
 
 ### Password Environment Variables (avoid QR entirely)
 To skip QR code login, set password env vars before starting:
@@ -259,20 +259,20 @@ Even when `NAPCAT_QUICK_PASSWORD` is correctly detected, QQ may still require SM
 正在尝试密码回退登录 {{BOT_QQ_ID}}
 正在密码登录 {{BOT_QQ_ID}}
 需要验证码, proofWaterUrl: https://ti.qq.com/safe/tools/captcha/sms-verify-login?...
-密码回退需要验证码，请�?WebUi 中继续完成验�?```
+密码回退需要验证码，请�?WebUi 中继续完成验�?```
 
-The proofWaterUrl is a OneClick link meant to open QQ app on mobile �?this does not work reliably. QQ app fails to intercept the redirect properly on most phones. The practical workarounds:
+The proofWaterUrl is a OneClick link meant to open QQ app on mobile �?this does not work reliably. QQ app fails to intercept the redirect properly on most phones. The practical workarounds:
 
-1. **WebUI is the only reliable path**: The log explicitly says "请在 WebUi 中继续完成验�?. Expose port 6099 via tunnel so the user can open it in their desktop browser and complete the SMS verification from there.
+1. **WebUI is the only reliable path**: The log explicitly says "请在 WebUi 中继续完成验�?. Expose port 6099 via tunnel so the user can open it in their desktop browser and complete the SMS verification from there.
 2. **Restart caveat**: If you restart NapCat between verification attempts, the session SID changes and the user must verify again. Always complete verification on the SAME running instance.
-3. **No CLI workaround**: There is no API to feed the SMS code back �?it is strictly a WebUI/browser flow.
+3. **No CLI workaround**: There is no API to feed the SMS code back �?it is strictly a WebUI/browser flow.
 4. **QR code fallback**: If password+SMS fails, kill the process and restart WITHOUT the password env var (pure QR mode).
 
 ### Screenshot Capture from xvfb
 When debugging NapCat display state, you may need to capture the xvfb virtual display:
-- `import` (ImageMagick) is NOT available on this system �?only ImageMagick common libs
+- `import` (ImageMagick) is NOT available on this system �?only ImageMagick common libs
 - Alternative: `ffmpeg -f x11grab` to capture frames
-- But: xvfb captures are tiny (~3KB), mostly blank/minimal �?not useful for reading QR codes or UI state
+- But: xvfb captures are tiny (~3KB), mostly blank/minimal �?not useful for reading QR codes or UI state
 - For QR codes: always use `cache/qrcode.png` instead of screenshot
 
 ```bash
@@ -286,19 +286,19 @@ Two cron jobs are configured to post to QQ空间 automatically, pulling content 
 | Job | Schedule | Behavior |
 |-----|----------|----------|
 | `qzone-早晚总结` | `0 9,21 * * *` (09:00 & 21:00) | Summarize recent group chats, pick 1-2 interesting topics, write a commentary post |
-| `qzone-�?小时随机` | `0 1,4,7,10,13,16,19,22 * * *` | Random topic pick from recent group chats, short casual post |
+| `qzone-�?小时随机` | `0 1,4,7,10,13,16,19,22 * * *` | Random topic pick from recent group chats, short casual post |
 
 **Both jobs read from the same live-cache data source:**
 
 ```sql
--- memory_store.db �?table: chat_message_buffer
--- ⚠️ Use TIME WINDOW not LIMIT �?user explicitly corrected this.
+-- memory_store.db �?table: chat_message_buffer
+-- ⚠️ Use TIME WINDOW not LIMIT �?user explicitly corrected this.
 -- LIMIT can pull hours-old messages from an inactive group.
--- The user wants only the "几分钟内的实时缓�? (live cache of recent minutes).
+-- The user wants only the "几分钟内的实时缓�? (live cache of recent minutes).
 
 SELECT sender_name, content, created_at
 FROM chat_message_buffer
-WHERE chat_id='796091804' AND is_bot=0
+WHERE chat_id='{{GROUP_ID}}' AND is_bot=0
   AND created_at > (strftime('%%s','now') - 600)  -- last 10 minutes
 ORDER BY created_at DESC;
 
@@ -306,13 +306,13 @@ ORDER BY created_at DESC;
 -- AND created_at > (strftime('%%s','now') - 1800)
 ```
 
-**Why time window instead of LIMIT**: The user explicitly rejected both `LIMIT N` (can pick up stale messages from hours ago) and querying `short_term_entries` (agent's processed memory, not raw chat buffer). The `chat_message_buffer` table IS the real-time buffer �?messages land here immediately when the Gateway receives them. Adding a time window filter makes the cron job read only the "近几分钟的缓�? (recent-minutes cache).
+**Why time window instead of LIMIT**: The user explicitly rejected both `LIMIT N` (can pick up stale messages from hours ago) and querying `short_term_entries` (agent's processed memory, not raw chat buffer). The `chat_message_buffer` table IS the real-time buffer �?messages land here immediately when the Gateway receives them. Adding a time window filter makes the cron job read only the "近几分钟的缓�? (recent-minutes cache).
 
 **`chat_message_buffer` table schema:**
 | Column | Type | Notes |
 |--------|------|-------|
 | id | INTEGER | Primary key |
-| chat_id | TEXT | QQ group number (796091804 = main group) |
+| chat_id | TEXT | QQ group number ({{GROUP_ID}} = main group) |
 | chat_type | TEXT | 'group' or 'private' |
 | user_id | INTEGER | QQ user ID |
 | sender_name | TEXT | Display name in group |
@@ -324,21 +324,21 @@ ORDER BY created_at DESC;
 **Cron job prompt pattern:**
 
 The prompts should instruct the agent to:
-1. Query `chat_message_buffer` for recent messages, always using **Python's built-in sqlite3 module** (`python3 -c "..."`) �?the `sqlite3` CLI binary is NOT installed on this system
+1. Query `chat_message_buffer` for recent messages, always using **Python's built-in sqlite3 module** (`python3 -c "..."`) �?the `sqlite3` CLI binary is NOT installed on this system
 2. Ignore `[image:...]` markers (only analyze text)
 3. Generate a character-appropriate post (素世's voice: ~ sentence endings, slightly elegant but casual)
 4. Call `/home/{{USERNAME}}/.local/bin/qzone-post "content"` to publish
 
-**Important**: Both jobs require the `terminal` toolset enabled (to run SQL queries and call qzone-post). The `web` toolset is NOT needed �?all data is local.
+**Important**: Both jobs require the `terminal` toolset enabled (to run SQL queries and call qzone-post). The `web` toolset is NOT needed �?all data is local.
 
-**⚠️ LLM 经常跳过执行步骤**：LLM �?cron 任务中经常只生成文案文字就结束，不实际调�?`qzone-post` 脚本。任务显�?`completed successfully` 但空间没发出去。修复方法：�?prompt 中加强调语�?*必须调用 terminal 工具执行以下命令来实际发布，不能只生成文�?*」并附上 `❗如果不执行 terminal，说说不会真的发出去！` 等警告�?
+**⚠️ LLM 经常跳过执行步骤**：LLM �?cron 任务中经常只生成文案文字就结束，不实际调�?`qzone-post` 脚本。任务显�?`completed successfully` 但空间没发出去。修复方法：�?prompt 中加强调语�?*必须调用 terminal 工具执行以下命令来实际发布，不能只生成文�?*」并附上 `❗如果不执行 terminal，说说不会真的发出去！` 等警告�?
 **Pitfalls**:
-- �?**User explicitly wants time-windowed reads, not LIMIT-based reads for cron jobs.** LIMIT N can pull stale messages from hours/days ago when the group is quiet. Always query with `created_at > (strftime('%%s','now') - 600)` and fall back to 1800 if <5 results. Do NOT use `short_term_entries` �?that's the agent's memory, not the raw chat buffer.
-- �?**QZone posting 依赖 OneBot HTTP 连接�?* qzone-post 脚本通过 OneBot HTTP API (127.0.0.1:3000) 获取 QQ 会话 cookie。如�?OneBot 未连接（NapCat 重启�?Gateway 未重连等），qzone-post 拿不�?cookie，发空间会失败。任务显�?completed successfully 但实际空间没发出去——因�?LLM session 跑完了但 qzone-post 静默失败�?- �?The cron prompt above uses `{'09:00': '早上', '21:00': '晚上'}[当前时间]` as a template �?this is a Python dict literal and does NOT get evaluated. Rephrase naturally like "If it's the morning run (09:00), open with a greeting; if it's the evening run (21:00), wrap up warmly."
+- �?**User explicitly wants time-windowed reads, not LIMIT-based reads for cron jobs.** LIMIT N can pull stale messages from hours/days ago when the group is quiet. Always query with `created_at > (strftime('%%s','now') - 600)` and fall back to 1800 if <5 results. Do NOT use `short_term_entries` �?that's the agent's memory, not the raw chat buffer.
+- �?**QZone posting 依赖 OneBot HTTP 连接�?* qzone-post 脚本通过 OneBot HTTP API (127.0.0.1:3000) 获取 QQ 会话 cookie。如�?OneBot 未连接（NapCat 重启�?Gateway 未重连等），qzone-post 拿不�?cookie，发空间会失败。任务显�?completed successfully 但实际空间没发出去——因�?LLM session 跑完了但 qzone-post 静默失败�?- �?The cron prompt above uses `{'09:00': '早上', '21:00': '晚上'}[当前时间]` as a template �?this is a Python dict literal and does NOT get evaluated. Rephrase naturally like "If it's the morning run (09:00), open with a greeting; if it's the evening run (21:00), wrap up warmly."
 
 See `references/qzone-cron-posting.md` for the full cron job prompts and session-specific details.
 
-See `references/send-image-via-http-api.md` for sending images through NapCat's HTTP API (curl to port 3000 with `file://` path) �?the `send_message` MEDIA prefix is NOT supported on OneBot.
+See `references/send-image-via-http-api.md` for sending images through NapCat's HTTP API (curl to port 3000 with `file://` path) �?the `send_message` MEDIA prefix is NOT supported on OneBot.
 
 ## QQ Connection Watchdog
 
@@ -350,19 +350,19 @@ A cron-based watchdog monitors NapCat's connection state and notifies the user w
 
 The watchdog runs every minute via a no-agent cron job. It does two things:
 
-1. **端口检�?*: Checks ports `6099` (NapCat WebUI) and `3001` (NapCat OneBot WS)
-2. **日志关键词检�?*: Scans `napcat_{{BOT_QQ_ID}}.log` 从上次检查位置往后读，检测两类告警：
-   - `快速登录失败` / `快速登录错误` �?重启后登录不上的情况
-   - `KickedOffLine` / `被踢下线` �?在线久了被踢的情�?
+1. **端口检�?*: Checks ports `6099` (NapCat WebUI) and `3001` (NapCat OneBot WS)
+2. **日志关键词检�?*: Scans `napcat_{{BOT_QQ_ID}}.log` 从上次检查位置往后读，检测两类告警：
+   - `快速登录失败` / `快速登录错误` �?重启后登录不上的情况
+   - `KickedOffLine` / `被踢下线` �?在线久了被踢的情�?
 State is tracked in `~/.hermes/qq_watchdog_state.json`:
 ```json
 {"online": true, "notified": false, "last_line": 42928, "at": ""}
 ```
 
-- **日志告警**: 发现新错误行时输�?`⚠️ 重启后快速登录失�?(MM-DD HH:MM:SS)` �?`⚠️ QQ被踢下线 (MM-DD HH:MM:SS)`
-- **端口断线**: 连接断开时输�?`⚠️ QQ Bot 端口断线�?(HH:MM:SS)`，恢复时输出 `�?QQ Bot 已恢复连接`
-- **No output when state is stable** �?the no-agent cron job stays silent, saving tokens
-- **Re-notification guard** �?tracks `last_line` position to avoid重复告警同一批日�?
+- **日志告警**: 发现新错误行时输�?`⚠️ 重启后快速登录失�?(MM-DD HH:MM:SS)` �?`⚠️ QQ被踢下线 (MM-DD HH:MM:SS)`
+- **端口断线**: 连接断开时输�?`⚠️ QQ Bot 端口断线�?(HH:MM:SS)`，恢复时输出 `�?QQ Bot 已恢复连接`
+- **No output when state is stable** �?the no-agent cron job stays silent, saving tokens
+- **Re-notification guard** �?tracks `last_line` position to avoid重复告警同一批日�?
 ### Cron Job Definition
 
 ```bash
@@ -371,7 +371,7 @@ cronjob(action="create", name="qq-watchdog", no_agent=True,
         schedule="* * * * *", script="qq_watchdog.py")
 ```
 
-**Important**: The `no_agent` pattern is critical here �?the script runs independently without LLM cost. It produces output ONLY when the state changes, which triggers delivery to the user.
+**Important**: The `no_agent` pattern is critical here �?the script runs independently without LLM cost. It produces output ONLY when the state changes, which triggers delivery to the user.
 
 ### Testing the Watchdog
 
@@ -381,10 +381,10 @@ To verify log scanning works, manually reset the `last_line` to a known error po
 python3 -c "
 import os, json
 state = json.load(open('/home/{{USERNAME}}/.hermes/qq_watchdog_state.json'))
-state['last_line'] = 40280  # 设在已知�?快速登录错�?行之�?json.dump(state, open('/home/{{USERNAME}}/.hermes/qq_watchdog_state.json', 'w'))
+state['last_line'] = 40280  # 设在已知�?快速登录错�?行之�?json.dump(state, open('/home/{{USERNAME}}/.hermes/qq_watchdog_state.json', 'w'))
 "
 python3 /home/{{USERNAME}}/.hermes/scripts/qq_watchdog.py
-# 预期输出: ⚠️ 重启后快速登录失�?(MM-DD HH:MM:SS)
+# 预期输出: ⚠️ 重启后快速登录失�?(MM-DD HH:MM:SS)
 ```
 
 然后重置回当前日志末尾：
@@ -398,40 +398,40 @@ state['last_line'] = total
 json.dump(state, open('/home/{{USERNAME}}/.hermes/qq_watchdog_state.json', 'w'))
 "
 python3 /home/{{USERNAME}}/.hermes/scripts/qq_watchdog.py
-# 无输�?= 正常
+# 无输�?= 正常
 ```
 
 ### Hourly Restart / Login Expiry Cycle
 
-See `references/hourly-restart-login-expiry.md` for the complete timeline and pattern �?NapCat restarts every hour on the hour, quick login fails because the session token expires, and the bot enters a 2-minute retry loop until the user re-logs in manually.
+See `references/hourly-restart-login-expiry.md` for the complete timeline and pattern �?NapCat restarts every hour on the hour, quick login fails because the session token expires, and the bot enters a 2-minute retry loop until the user re-logs in manually.
 
 ### Pitfalls
-- �?The script must be at `~/.hermes/scripts/qq_watchdog.py` for the cronjob system to find it (uses `~/.hermes/scripts/` prefix internally)
-- �?Port check only confirms the NapCat process is listening �?it doesn't verify the Hermes Gateway connection to OneBot. For full pipeline health, check the Gateway log as well
-- �?First run creates the state file silently (no notification �?assumes OK at startup)
-- �?No re-notification timeout currently �?after a "reconnected" message, the next disconnect will trigger immediately
+- �?The script must be at `~/.hermes/scripts/qq_watchdog.py` for the cronjob system to find it (uses `~/.hermes/scripts/` prefix internally)
+- �?Port check only confirms the NapCat process is listening �?it doesn't verify the Hermes Gateway connection to OneBot. For full pipeline health, check the Gateway log as well
+- �?First run creates the state file silently (no notification �?assumes OK at startup)
+- �?No re-notification timeout currently �?after a "reconnected" message, the next disconnect will trigger immediately
 
-### OneBot 自动重连（已修复�?
-**NapCat 重启�?Gateway �?OneBot 连接会自动恢复�?* 参�?`references/onebot-gateway-reconnect-issue.md`�?
-修复内容：在 `/home/{{USERNAME}}/.hermes/plugins/platforms/onebot/adapter.py` �?`_ws_loop()` 中加入了自动重连逻辑�?- WebSocket 断线后等�?5 秒重�?- 失败后指数退避（10s �?20s �?40s �?60s cap�?- 重连成功后自动拉取遗漏消�?- 手动关闭 Gateway 时（`disconnect()`）设置停止标记，不卡重连循环
+### OneBot 自动重连（已修复�?
+**NapCat 重启�?Gateway �?OneBot 连接会自动恢复�?* 参�?`references/onebot-gateway-reconnect-issue.md`�?
+修复内容：在 `/home/{{USERNAME}}/.hermes/plugins/platforms/onebot/adapter.py` �?`_ws_loop()` 中加入了自动重连逻辑�?- WebSocket 断线后等�?5 秒重�?- 失败后指数退避（10s �?20s �?40s �?60s cap�?- 重连成功后自动拉取遗漏消�?- 手动关闭 Gateway 时（`disconnect()`）设置停止标记，不卡重连循环
 
-验证方法�?```bash
+验证方法�?```bash
 tail -f ~/.hermes/logs/gateway.log | grep -a "OneBot"
-# 预期看到: [OneBot] Reconnecting in 5s... �?[OneBot] Reconnected successfully
+# 预期看到: [OneBot] Reconnecting in 5s... �?[OneBot] Reconnected successfully
 ```
 
 ## Pitfalls
-- �?**Must use `background=true`** when starting via `terminal()` �?this is a long-running process, not a quick command
-- �?**QQ blocks scanning QR codes from photo album!** Never suggest "save image �?open in QQ's scan-from-album" �?this does not work. QQ's camera scanner only accepts real camera input. Acceptable workarounds: (a) display the QR on a second device/screen and scan from there, (b) use the decoded URL directly in phone browser, (c) use WebUI, (d) set password env vars.
-- �?**`env` prefix required for password env var** �?`NAPCAT_QUICK_PASSWORD=xxx cd dir && cmd` does NOT pass the env var to `cmd` (scoped to `cd` only). Must use: `env NAPCAT_QUICK_PASSWORD=xxx /bin/xvfb-run ...`
-- �?The `qrcode.png` is only generated ONCE after startup. If it expires (about 3-5 minutes), you need to restart NapCat entirely (kill + start again)
-- �?Don't confuse the old `:99` display xvfb with the new one �?the new start gets a fresh display like `:100`
-- �?Sending images requires the explicit Feishu target, not bare `feishu` platform name (no home channel configured)
-- �?Docker-based approach not available �?this runs bare-metal with xvfb on a headless Linux server
-- �?`launcher-user.bat` is Windows-only; Linux uses direct xvfb-run invocation
-- �?SMS verification URL (`ti.qq.com/safe/tools/captcha/sms-verify-login?...`) cannot complete on mobile �?QQ app intercept fails. Complete verification via WebUI on desktop browser instead.
-- �?When killing NapCat, the log shows `[FATAL:electron/shell/browser/electron_browser_main_parts.cc:509] Failed to shutdown.` �?this is a cosmetic Electron crash from forced process kill, not a real issue. NapCat starts fresh on next launch.
-- �?QR code login flow for remote users: send image via Feishu �?user opens on phone �?user cannot scan from QQ album. Correct path: send the `二维码解码URL` instead and ask user to open in phone browser, OR have user SSH tunnel to WebUI.
-- �?On Linux, NapCat may create TWO log files: `/tmp/napcat.log` (old init) and `/home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log` (actual runtime log). Always check the latter for real-time status. Use `readlink /proc/<pid>/fd/1` to discover the active log path.
-- �?Cron jobs must have model set explicitly �?When creating cron jobs with cronjob(action='create'), always pass the model/provider right away: model={"model":"deepseek-v4-flash","provider":"deepseek"}. Without it, the model defaults to empty string and the API call fails with HTTP 400. This cannot be inherited from the current session �?it must be set during creation.
-- �?**修改任何平台适配器代码后必须重启 Gateway** �?无论�?OneBot adapter (`/home/{{USERNAME}}/.hermes/plugins/platforms/onebot/adapter.py`) 还是飞书适配�?(`/home/{{USERNAME}}/.hermes/gateway/platforms/feishu.py`) 等，修改后都需�?`hermes gateway restart` 才能生效。只重启 NapCat 不行�?- �?**NapCat 有两�?config 文件**：`napcat.json`（全局默认，bypass �?false）和 `napcat_{{BOT_QQ_ID}}.json`（QQ 号专属，实际生效）。修�?bypass 要改�?QQ 号的那个，改全局默认不生效�?- �?**"QQLinux协议"不存�?*：QQ NT 架构�?Windows/Linux/macOS 用统一协议栈。不存在"切换�?QQLinux 协议"的概念——只能换 QQ 客户端二进制文件，不能换协议本身�?
+- �?**Must use `background=true`** when starting via `terminal()` �?this is a long-running process, not a quick command
+- �?**QQ blocks scanning QR codes from photo album!** Never suggest "save image �?open in QQ's scan-from-album" �?this does not work. QQ's camera scanner only accepts real camera input. Acceptable workarounds: (a) display the QR on a second device/screen and scan from there, (b) use the decoded URL directly in phone browser, (c) use WebUI, (d) set password env vars.
+- �?**`env` prefix required for password env var** �?`NAPCAT_QUICK_PASSWORD=xxx cd dir && cmd` does NOT pass the env var to `cmd` (scoped to `cd` only). Must use: `env NAPCAT_QUICK_PASSWORD=xxx /bin/xvfb-run ...`
+- �?The `qrcode.png` is only generated ONCE after startup. If it expires (about 3-5 minutes), you need to restart NapCat entirely (kill + start again)
+- �?Don't confuse the old `:99` display xvfb with the new one �?the new start gets a fresh display like `:100`
+- �?Sending images requires the explicit Feishu target, not bare `feishu` platform name (no home channel configured)
+- �?Docker-based approach not available �?this runs bare-metal with xvfb on a headless Linux server
+- �?`launcher-user.bat` is Windows-only; Linux uses direct xvfb-run invocation
+- �?SMS verification URL (`ti.qq.com/safe/tools/captcha/sms-verify-login?...`) cannot complete on mobile �?QQ app intercept fails. Complete verification via WebUI on desktop browser instead.
+- �?When killing NapCat, the log shows `[FATAL:electron/shell/browser/electron_browser_main_parts.cc:509] Failed to shutdown.` �?this is a cosmetic Electron crash from forced process kill, not a real issue. NapCat starts fresh on next launch.
+- �?QR code login flow for remote users: send image via Feishu �?user opens on phone �?user cannot scan from QQ album. Correct path: send the `二维码解码URL` instead and ask user to open in phone browser, OR have user SSH tunnel to WebUI.
+- �?On Linux, NapCat may create TWO log files: `/tmp/napcat.log` (old init) and `/home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log` (actual runtime log). Always check the latter for real-time status. Use `readlink /proc/<pid>/fd/1` to discover the active log path.
+- �?Cron jobs must have model set explicitly �?When creating cron jobs with cronjob(action='create'), always pass the model/provider right away: model={"model":"deepseek-v4-flash","provider":"deepseek"}. Without it, the model defaults to empty string and the API call fails with HTTP 400. This cannot be inherited from the current session �?it must be set during creation.
+- �?**修改任何平台适配器代码后必须重启 Gateway** �?无论�?OneBot adapter (`/home/{{USERNAME}}/.hermes/plugins/platforms/onebot/adapter.py`) 还是飞书适配�?(`/home/{{USERNAME}}/.hermes/gateway/platforms/feishu.py`) 等，修改后都需�?`hermes gateway restart` 才能生效。只重启 NapCat 不行�?- �?**NapCat 有两�?config 文件**：`napcat.json`（全局默认，bypass �?false）和 `napcat_{{BOT_QQ_ID}}.json`（QQ 号专属，实际生效）。修�?bypass 要改�?QQ 号的那个，改全局默认不生效�?- �?**"QQLinux协议"不存�?*：QQ NT 架构�?Windows/Linux/macOS 用统一协议栈。不存在"切换�?QQLinux 协议"的概念——只能换 QQ 客户端二进制文件，不能换协议本身�?

@@ -1,7 +1,7 @@
-# 通过 OneBot HTTP API 发送图�?
+# 通过 OneBot HTTP API 发送图�?
 ## 背景
 
-虽然 `send_message` �?`MEDIA:` 前缀�?OneBot 上不支持，但可以直接调用 NapCat �?HTTP API 发送图片�?
+虽然 `send_message` �?`MEDIA:` 前缀�?OneBot 上不支持，但可以直接调用 NapCat �?HTTP API 发送图片�?
 ## 完整命令
 
 ```bash
@@ -24,12 +24,12 @@ curl -X POST "http://127.0.0.1:3000/send_msg" \
 
 ## 参数说明
 
-| 字段 | 说明 | 示例�?|
+| 字段 | 说明 | 示例�?|
 |------|------|--------|
 | `message_type` | 消息类型 | `"private"` 私聊 / `"group"` 群聊 |
 | `user_id` | 用户 QQ 号（私聊用） | `{{HOME_CHANNEL}}` |
-| `group_id` | 群号（群聊用�?| `796091804` |
-| `message[0].type` | 消息段类�?| `"image"` |
+| `group_id` | 群号（群聊用）| `{{GROUP_ID}}` |
+| `message[0].type` | 消息段类�?| `"image"` |
 | `message[0].data.file` | 图片路径 | `"file:///home/{{USERNAME}}/Pictures/xxx.jpg"` |
 
 ## 群聊发图
@@ -40,15 +40,15 @@ curl -X POST "http://127.0.0.1:3000/send_msg" \
   -H "Authorization: Bearer {{ONEBOT_TOKEN}}" \
   -d '{
     "message_type": "group",
-    "group_id": 796091804,
+    "group_id": {{GROUP_ID}},
     "message": [{"type": "image", "data": {"file": "file:///home/{{USERNAME}}/Pictures/xxx.jpg"}}]
   }'
 ```
 
-## 已验�?(2026-05-19)
+## 已验�?(2026-05-19)
 
-- 私聊发�?soyo chibi tea 图片 �?`retcode: 0`, `message_id: 643975527`
-- `file://` 路径方式正常工作，图片在 QQ 客户端正常显�?- NapCat 自动处理图片上传和格式转�?
+- 私聊发�?soyo chibi tea 图片 �?`retcode: 0`, `message_id: 643975527`
+- `file://` 路径方式正常工作，图片在 QQ 客户端正常显�?- NapCat 自动处理图片上传和格式转�?
 ## 注意事项
 
-- 图片路径必须是绝对路�?- 支持的图片格式：jpg, png, gif 等常见格�?- 大图�?NapCat 会自动压�?- `Authorization` header 使用 OneBot 配置中的 access token
+- 图片路径必须是绝对路�?- 支持的图片格式：jpg, png, gif 等常见格�?- 大图�?NapCat 会自动压�?- `Authorization` header 使用 OneBot 配置中的 access token
