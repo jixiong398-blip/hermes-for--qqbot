@@ -1,111 +1,75 @@
-﻿# UPGRADE.md — QQBot 版本升级指南（AI 代理用）
+﻿# 升级指南
 
-> 最后更新: 2026-05-26 | v0.5.3.1+
+> v0.9.0
 
-## 概述
+## 如何升级
 
-此文件供 AI 编程代理（Sisyphus / Claude / Cursor 等）在升级 QQBot 版本时使用。
+已有旧版本（v0.5.x / v0.6.x / v0.7.x）？按以下步骤升级到最新版：
 
-## 升级流程
+### 方法一：下载最新版覆盖（推荐）
 
 ```
-1. 从 GitHub Release 下载最新 zip
-2. 解压到临时目录
-3. 运行升级脚本覆盖文件
-4. 运行 npm install 更新 Live2D
-5. 隐私检查
+1. 从 GitHub Releases 下载最新 bot-template.zip
+2. 解压到新目录
+3. 将旧版的配置文件搬过来（config.yaml, SOUL.md, .env）
+4. 复制到新目录对应位置
+5. 运行 install.bat（会跳过已安装的环境）
+6. 运行 start.bat 启动
 ```
 
-## 文件覆盖清单
+### 方法二：直接覆盖（不推荐，可能残留旧文件）
 
-以下文件**直接覆盖**（不含用户配置）：
-
-### Hermes 核心
 ```
-hermes/plugins/platforms/onebot/adapter.py
-hermes/gateway/platforms/onebot/adapter.py
-hermes/plugins/knowledge-base/__init__.py
-hermes/plugins/knowledge-base/knowledge_base_tool.py
-hermes/agent/memory/gateway.py
-hermes/agent/memory/obsidian.py
-hermes/tools/memory_gateway_tool.py
-hermes/requirements.txt
+1. 下载最新 bot-template.zip
+2. 解压后，将所有文件覆盖到你的 bot 目录
+3. ⚠️ 不要覆盖 config.yaml、SOUL.md、.env ！
+4. 运行 .venv\Scripts\python scripts\upgrade.py
+5. 重启 Gateway
 ```
 
-### Dashboard
-```
-modules/dashboard/server.py
-modules/dashboard/static/index.html
-```
+---
 
-### 脚本
-```
-scripts/install.py
-scripts/setup_config.py
-scripts/fix_napcat.py
-scripts/upgrade.py
-```
+## 配置文件搬迁清单
 
-### 模板（覆盖，用户通过 PeiZhiAPI.bat 重新生成配置）
-```
-templates/config-template.yaml
-templates/SOUL-template.md
-templates/.env.template
-templates/napcat/onebot11.json
-templates/napcat/napcat.json
-```
+**必须保留（你的个人配置）：**
 
-### .bat 启动脚本
-```
-install.bat
-PeiZhiAPI.bat
-FixNapCat.bat
-start.bat
-setup.bat
-```
+| 文件 | 内容 |
+|------|------|
+| `config.yaml` | LLM 模型配置、群号、端口 |
+| `SOUL.md` | 角色人设 |
+| `.env` | API Key、Bot QQ、Admin QQ |
 
-### Live2D 依赖
-```
-node/                              ← 完整 Node.js portable
-modules/live2d/node_modules/       ← npm install 后生成
-modules/tts/ts_adapter_template.py
-```
+这些文件在新版本中不会被覆盖。
 
-## 文件**禁止覆盖**（用户配置）
-```
-config.yaml      ← API keys, 群号
-SOUL.md          ← 角色人设
-.env             ← 环境变量
-```
+**模板文件会自动更新：**
 
-## 升级后检查
+| 文件 | 说明 |
+|------|------|
+| `templates/config-template.yaml` | 配置模板（新增选项） |
+| `templates/SOUL-template.md` | 人设模板 |
+| `templates/.env.template` | 环境变量模板 |
 
-```python
-# 1. 语法检查
-import py_compile
-py_compile.compile("hermes/plugins/platforms/onebot/adapter.py", doraise=True)
+如需使用新版模板，重新运行 `配置API.bat` 即可。
 
-# 2. 隐私扫描（确认无硬编码 QQ/Token/APIKey）
-import re, os
-for root, dirs, files in os.walk("."):
-    for f in files:
-        if f.endswith((".py",".md",".yaml",".json")):
-            text = open(os.path.join(root,f), encoding="utf-8").read()
-            for pattern in ["{{BOT_QQ_ID}}", "{{ONEBOT_TOKEN}}", "{{DEEPSEEK_API_KEY}}",
-                           "{{CHANNEL_NAME}}", "{{USERNAME}}", "{{HOME_CHANNEL}}",
-                           "/home/{{USERNAME}}/", "[REDACTED_PATH]/"]:
-                if pattern in text and f != "AGENTS.md":
-                    print(f"LEAK: {f} - {pattern}")
+---
 
-# 3. Live2D 依赖
-# cd modules/live2d && ..\..\node\npm.cmd install
-```
+## v0.9.0 主要变更
 
-## 版本号更新
-```
-VERSION            → 写入新版本号
-hermes/VERSION     → 写入新版本号
-AGENTS.md          → 更新日期和版本
-CHANGELOG.md       → 添加新版本条目
-README.md          → 更新安装流程（如有变更）
-```
+1. **配置外提**：QQ号、API Key、路径等不再硬编码，改为环境变量
+2. **记忆系统升级**：LLM 蒸馏提取 + 1 天半衰期
+3. **离线安装优先**：install.bat 检测已有环境自动跳过
+4. **NapCat 登录独立**：扫码登录后运行 FixNapCat.bat 开端口
+5. **新增工具**：表情包管理、记忆监控、晚间简报
+
+---
+
+## 常见问题
+
+**Q: 升级后 bot 不回复？**
+A: 检查 `.env` 中的 `ONEBOT_SELF_ID` 是否已设置为你 bot 的 QQ 号。
+
+**Q: 升级后 Live2D 不显示？**
+A: `electron-offline.zip` 未包含时需联网安装，运行 `cd modules\live2d && ..\..\node\npm.cmd install`。
+
+**Q: 想保留旧版配置？**
+A: 方法一创建新目录，把旧版的 config.yaml / SOUL.md / .env 复制过去即可。

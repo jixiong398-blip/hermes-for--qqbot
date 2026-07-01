@@ -1,0 +1,58 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  -webkit-app-region: no-drag;
+  user-select: none;
+  pointer-events: none;
+  cursor: none;
+}
+
+canvas {
+  pointer-events: none;
+}
+
+#live2d-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#status-bar {
+  position: absolute;
+  bottom: 4px;
+  right: 8px;
+  display: flex;
+  gap: 12px;
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+#ws-status {
+  transition: color 0.3s ease;
+}
+
+#ws-status.connected, #ipc-status.connected {
+  color: rgba(100, 255, 100, 0.7);
+}
+
+#ws-status.disconnected, #ipc-status.disconnected {
+  color: rgba(255, 100, 100, 0.7);
+}
+
+#ipc-status {
+  transition: color 0.3s ease;
+}
