@@ -1,5 +1,11 @@
 ﻿# bot-template 更新日志
 
+## v0.9.1 (2026-07-04)
+- **QQ 数据库解密工具**: qq-db-decrypt skill + decrypt plugin + recovery script
+- 可从 QQ 本地加密 `nt_msg.db` 恢复完整群聊历史（突破 NapCat API 25,000 条上限）
+- 零硬编码：passphrase 运行时从 NapCat 获取，路径自动探测
+- 新增 `backfill_corpus.py` 备用恢复（NapCat API 方式）
+
 ## v0.9.0 (2026-07-01)
 - **零硬编码隐私**: QQ号/Token/路径 → os.getenv() 配置外提
 - **P0 修复**: session:end 传递 session_id，consolidation 正常触发
