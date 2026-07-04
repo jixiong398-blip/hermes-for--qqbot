@@ -46,6 +46,17 @@
 2. 在 `.env` 中设置 `ONEBOT_ACCESS_TOKEN`
 3. 配置定时任务（cron/任务计划程序），调用 `python scripts/qzone-post.py "说说内容"`
 
+### 恢复聊天记录（可选）
+
+如果升级后发现群聊历史丢失，可运行恢复脚本：
+
+```bash
+.venv\Scripts\python hermes\scripts\backfill_corpus.py
+```
+
+脚本通过 NapCat API 从 QQ 本地缓存拉取群聊消息写入数据库。
+需要 `.env` 中配置好 `ONEBOT_ACCESS_TOKEN` 和 `ONEBOT_HTTP_URL`。
+
 ## 支持的 LLM 供应商
 
 | 供应商 | 说明 |
