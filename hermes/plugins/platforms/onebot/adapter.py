@@ -92,8 +92,6 @@ from gateway.session import SessionSource, build_session_key
 
 logger = logging.getLogger(__name__)
 
-# ── Template env var fallbacks ──
-_CHIBI_ROOT = os.getenv("SOYO_CHIBI_ROOT", "") or os.path.join(os.path.expanduser("~"), "Pictures")
 
 # ── QQ system face emoji (type=face) id → name map ──────────────────────────
 # Loaded once at import time from qq_face_map.json (sibling file).
@@ -137,7 +135,11 @@ def _qq_face_text(face_id: str) -> str:
 # emotion name from `[sticker:<emotion>]` to the most recently collected image
 # under that emotion. Returns "" if no match, letting the caller fall back to
 # built-in chibi stickers.
-_STICKER_COLLECTION_INDEX = Path(os.getenv("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))) / "soyo_sticker_collection.json"
+_STICKER_COLLECTION_INDEX = Path(os.getenv(
+    "SOYO_STICKER_INDEX",
+    os.path.join(os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes")),
+                 "soyo_sticker_collection.json"),
+))
 
 
 def _lookup_collected_sticker(emotion: str) -> str:
@@ -294,7 +296,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 for attempt in range(3):
                     try:
                         db = sqlite3.connect(db_path, timeout=10)
-                        db.execute("PRAGMA journal_mode=DELETE")
+                        db.execute("PRAGMA busy_timeout=30000")
                         if not _corpus_inited:
                             db.executescript("""
                                 CREATE TABLE IF NOT EXISTS corpus_messages (
@@ -373,7 +375,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 sender_name, sender_card, content_raw, content_readable,
                                 image_descriptions, at_targets, reply_to_id, reply_to_text,
                                 is_bot, created_at)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (str(message_id), cid, chat_type,
                              group_id if chat_type == "group" else "",
                              user_id, sender_name, sender_card,
@@ -402,15 +404,41 @@ class OneBotAdapter(BasePlatformAdapter):
                         db.commit()
                         db.close()
                         break
-                    except Exception:
+                    except sqlite3.OperationalError as _dbe:
+                        logger.error("[OneBot] Persist worker DB error (attempt %d/%d): %s | msg_id=%s sender=%s chat=%s",
+                                     attempt + 1, 3, _dbe, message_id, sender_name, cid)
                         if attempt < 2:
                             await asyncio.sleep(1)
-                        db.close() if 'db' in dir() else None
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                    except sqlite3.IntegrityError as _ie:
+                        logger.error("[OneBot] Persist worker integrity error (attempt %d/%d): %s | msg_id=%s",
+                                     attempt + 1, 3, _ie, message_id)
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                        break  # Integrity error won't fix with retry, skip this message
+                    except Exception as _ue:
+                        logger.error("[OneBot] Persist worker unexpected error (attempt %d/%d): %s | msg_id=%s sender=%s",
+                                     attempt + 1, 3, _ue, message_id, sender_name, exc_info=True)
+                        if attempt < 2:
+                            await asyncio.sleep(1)
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                else:
+                    logger.critical("[OneBot] Persist worker gave up after 3 attempts | msg_id=%s sender=%s chat=%s content_len=%d",
+                                    message_id, sender_name, cid, len(content or ""))
                 self._persist_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except Exception:
-                pass
+            except Exception as _pe:
+                logger.error("[OneBot] Persist worker outer error: %s", _pe, exc_info=True)
+                await asyncio.sleep(1)
 
     @property
     def name(self) -> str:
@@ -1484,15 +1512,15 @@ class OneBotAdapter(BasePlatformAdapter):
         # Use the last msg as template, replace text with merged content
         last = entries[-1]
         msg = dict(last["msg"])
-        _self_id = os.getenv("ONEBOT_SELF_ID", "")
-        msg["raw_message"] = f"[CQ:at,qq={_self_id}] {merged_text}"
+        _self_qq = os.getenv("ONEBOT_SELF_ID", "")
+        msg["raw_message"] = f"[CQ:at,qq={_self_qq}] {merged_text}"
         msg["message"] = [
-            {"type": "at", "data": {"qq": _self_id}},
+            {"type": "at", "data": {"qq": _self_qq}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Re-process without batching — include images in merged message
         merged_msg_arr = [
-            {"type": "at", "data": {"qq": _self_id}},
+            {"type": "at", "data": {"qq": _self_qq}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Attach original image/face/mface segments so _get_image_files can process them
@@ -1723,9 +1751,9 @@ class OneBotAdapter(BasePlatformAdapter):
             return
 
         # ── 指令拦截：非 admin 的 / 命令不执行，但正常回复 ──
-        _admin_id = os.getenv("ONEBOT_ADMIN_ID", "")
         raw_text = self._get_raw_text(msg).strip()
-        if raw_text.startswith("/") and user_id_str != _admin_id:
+        _admin_id = os.getenv("ONEBOT_ADMIN_ID", "")
+        if raw_text.startswith("/") and _admin_id and user_id_str != _admin_id:
             # 把 / 命令替换为正常消息，让 LLM 自然回应
             cmd_name = raw_text.split()[0][1:] if ' ' in raw_text else raw_text[1:]
             msg["raw_message"] = f"（有人对我说 /{cmd_name}，但我不是AI才不会听指令呢）"
@@ -1734,12 +1762,21 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.info("[OneBot] Blocked /%s command from user %s", cmd_name, user_id_str)
         # ── 指令拦截结束 ──
 
+        # Get sender info early (needed for persist + buffer below)
+        sender = msg.get("sender", {})
+        sender_name = sender.get("card") or sender.get("nickname") or f"QQ{user_id}"
+
+        # Persist private messages (group messages are persisted inside the block below)
+        if msg_type == "private":
+            self._persist_chat_message(str(user_id), "private", int(user_id), sender_name,
+                                       self._cq_to_readable(raw_text),
+                                       message_id=str(msg.get("message_id", "")),
+                                       content_raw=raw_text,
+                                       sender_card=sender.get("card", ""))
+
         # Group trigger check: reply only if @mentioned
         is_mentioned = False
         effective_self_id = self_id or self._self_id
-        # Get sender info early (needed for buffer below)
-        sender = msg.get("sender", {})
-        sender_name = sender.get("card") or sender.get("nickname") or f"QQ{user_id}"
 
         _early_reply_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
         _early_reply_text = ""
@@ -1748,7 +1785,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 import sqlite3 as _ersql
                 _erdb = _ersql.connect(str(get_state_db_path()), timeout=5)
                 _errow = _erdb.execute(
-                    "SELECT sender_name, content_readable FROM corpus_messages WHERE message_id=? LIMIT 1",
+                    "SELECT sender_name, content_readable FROM corpus_messages WHERE message_id=? ORDER BY id DESC LIMIT 1",
                     (str(_early_reply_id),),
                 ).fetchone()
                 _erdb.close()
@@ -2208,7 +2245,7 @@ class OneBotAdapter(BasePlatformAdapter):
             try:
                 import sqlite3 as _rsql
                 _rdb = _rsql.connect(str(get_state_db_path()), timeout=5)
-                row = _rdb.execute("SELECT sender_name, content_readable, user_id FROM corpus_messages WHERE message_id=? LIMIT 1", (str(reply_msg_id),)).fetchone()
+                row = _rdb.execute("SELECT sender_name, content_readable, user_id FROM corpus_messages WHERE message_id=? ORDER BY id DESC LIMIT 1", (str(reply_msg_id),)).fetchone()
                 _rdb.close()
                 if row:
                     reply_raw = {
@@ -2592,7 +2629,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     import sqlite3 as _sql
                     _db = _sql.connect(str(get_state_db_path()), timeout=5)
                     _exists = _db.execute(
-                        "SELECT 1 FROM corpus_messages WHERE message_id=? LIMIT 1",
+                        "SELECT 1 FROM corpus_messages WHERE message_id=? ORDER BY id DESC LIMIT 1",
                         (str(_reply_id),)
                     ).fetchone()
                     _db.close()
@@ -2922,28 +2959,29 @@ class OneBotAdapter(BasePlatformAdapter):
 
     # ── Image extraction override: [sticker:xxx] → local path → image send ──
 
+    _CHIBI_ROOT = os.getenv("SOYO_CHIBI_ROOT", os.path.expanduser("~/Pictures"))
     _STICKER_MAP = {
-        "tea":        f"{_CHIBI_ROOT}/soyo_chibi_tea.jpg",
-        "excited":    f"{_CHIBI_ROOT}/soyo_chibi_excited.gif",
-        "sad":        f"{_CHIBI_ROOT}/soyo_chibi_sad.jpg",
-        "speechless": f"{_CHIBI_ROOT}/soyo_chibi_speechless.jpg",
-        "clasp":      f"{_CHIBI_ROOT}/soyo_chibi_clasp.jpg",
-        "拜托":       f"{_CHIBI_ROOT}/soyo_chibi_clasp.jpg",
-        "喝茶":       f"{_CHIBI_ROOT}/soyo_chibi_tea.jpg",
-        "兴奋":       f"{_CHIBI_ROOT}/soyo_chibi_excited.gif",
-        "难过":       f"{_CHIBI_ROOT}/soyo_chibi_sad.jpg",
-        "无语":       f"{_CHIBI_ROOT}/soyo_chibi_speechless.jpg",
+        "tea":        os.path.join(_CHIBI_ROOT, "soyo_chibi_tea.jpg"),
+        "excited":    os.path.join(_CHIBI_ROOT, "soyo_chibi_excited.gif"),
+        "sad":        os.path.join(_CHIBI_ROOT, "soyo_chibi_sad.jpg"),
+        "speechless": os.path.join(_CHIBI_ROOT, "soyo_chibi_speechless.jpg"),
+        "clasp":      os.path.join(_CHIBI_ROOT, "soyo_chibi_clasp.jpg"),
+        "拜托":       os.path.join(_CHIBI_ROOT, "soyo_chibi_clasp.jpg"),
+        "喝茶":       os.path.join(_CHIBI_ROOT, "soyo_chibi_tea.jpg"),
+        "兴奋":       os.path.join(_CHIBI_ROOT, "soyo_chibi_excited.gif"),
+        "难过":       os.path.join(_CHIBI_ROOT, "soyo_chibi_sad.jpg"),
+        "无语":       os.path.join(_CHIBI_ROOT, "soyo_chibi_speechless.jpg"),
     }
     _STICKER_PATHS = list(set(_STICKER_MAP.values()))
 
     # Legacy: CQ face ID → sticker path (for backward compat)
     _FACE_TO_STICKER = {
-        '192': f'{_CHIBI_ROOT}/soyo_chibi_tea.jpg',
-        '193': f'{_CHIBI_ROOT}/soyo_chibi_sad.jpg',
-        '194': f'{_CHIBI_ROOT}/soyo_chibi_excited.gif',
-        '195': f'{_CHIBI_ROOT}/soyo_chibi_speechless.jpg',
-        '196': f'{_CHIBI_ROOT}/soyo_chibi_clasp.jpg',
-        '197': f'{_CHIBI_ROOT}/soyo_chibi_excited.gif',
+        '192': os.path.join(_CHIBI_ROOT, 'soyo_chibi_tea.jpg'),
+        '193': os.path.join(_CHIBI_ROOT, 'soyo_chibi_sad.jpg'),
+        '194': os.path.join(_CHIBI_ROOT, 'soyo_chibi_excited.gif'),
+        '195': os.path.join(_CHIBI_ROOT, 'soyo_chibi_speechless.jpg'),
+        '196': os.path.join(_CHIBI_ROOT, 'soyo_chibi_clasp.jpg'),
+        '197': os.path.join(_CHIBI_ROOT, 'soyo_chibi_excited.gif'),
     }
 
     @staticmethod
@@ -2986,7 +3024,7 @@ class OneBotAdapter(BasePlatformAdapter):
         content = _re.sub(r'\[sticker:([^\]]+)\]', _replace_sticker, content, flags=_re.IGNORECASE)
         # Catch incomplete [sticker: without closing ] (model truncation)
         if '[sticker:' in content and ']' not in content.split('[sticker:')[-1][:20]:
-            content = content.replace('[sticker:', f'\n{_CHIBI_ROOT}/soyo_chibi_tea.jpg\n')
+            content = content.replace('[sticker:', f'\n{OneBotAdapter._CHIBI_ROOT}/soyo_chibi_tea.jpg\n')
         # ── [CQ:face,id=N] → local sticker path, unmapped → dropped ──
         # Mapped face IDs (192-197, Soyo chibi stickers) get sent as images;
         # unmapped system emoji (e.g. 177 喷血) are dropped to empty because

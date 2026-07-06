@@ -1,5 +1,12 @@
 ﻿# bot-template 更新日志
 
+## v0.9.2 (2026-07-07)
+- **脑功能分区**: CORTEX.md + CEREBELLUM.md 架构，SOUL→CORTEX→CEREBELLUM 注入链
+- **安装引导**: Dashboard onboarding 三步向导 + GitHub 更新检查 + NSIS 安装包
+- **稳定性**: persist worker 错误分类捕获 + health_check.py 四项健康检查
+- **Agent 自查询**: tools_list_tool.py 78 个工具清单
+- **Bug 修复**: @ 引用乱序、私聊崩溃、onboarding 占位符脱敏
+
 ## v0.9.1 (2026-07-04)
 - **QQ 数据库解密工具**: qq-db-decrypt skill + decrypt plugin + recovery script
 - 可从 QQ 本地加密 `nt_msg.db` 恢复完整群聊历史（突破 NapCat API 25,000 条上限）

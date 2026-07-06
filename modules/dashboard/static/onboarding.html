@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes 首次配置向导</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --card-bg: #16213e;
+  --card-border: rgba(255,255,255,0.06);
+  --accent: #e94560;
+  --accent-hover: #c23152;
+  --accent-glow: rgba(233,69,96,0.25);
+  --success: #2ecc71;
+  --warning: #f39c12;
+  --danger: #e74c3c;
+  --text: #e4e4e8;
+  --text2: #8e8ea0;
+  --text3: #5a5a6e;
+  --section-bg: rgba(255,255,255,0.03);
+  --border: rgba(255,255,255,0.08);
+  --input-bg: #0f0f23;
+  --radius: 24px;
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+  --font: -apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;
+  --spring: 0.4s cubic-bezier(0.34,1.56,0.64,1);
+  --ease: 0.3s cubic-bezier(0.25,0.1,0.25,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;display:flex;align-items:center;justify-content:center;padding:24px}
+body::before{content:'';position:fixed;top:0;left:50%;transform:translateX(-50%);width:900px;height:600px;background:radial-gradient(ellipse at 50% 0%,rgba(233,69,96,0.08),transparent 60%);pointer-events:none;z-index:0}
+body::after{content:'';position:fixed;bottom:0;right:20%;width:600px;height:500px;background:radial-gradient(ellipse at 80% 100%,rgba(46,204,113,0.05),transparent 60%);pointer-events:none;z-index:0}
+.wizard{position:relative;z-index:1;width:100%;max-width:640px;animation:wizIn 0.5s var(--spring)}
+@keyframes wizIn{from{opacity:0;transform:translateY(24px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.wizard-header{text-align:center;margin-bottom:36px}
+.wizard-header h1{font-size:32px;font-weight:700;color:var(--text);letter-spacing:-0.03em;line-height:1.2}
+.wizard-header .sub{font-size:15px;color:var(--text2);font-weight:500;margin-top:6px;letter-spacing:-0.01em}
+
+/* === STEP INDICATOR === */
+.steps{display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:40px}
+.step-item{display:flex;align-items:center;gap:0}
+.step-dot{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;background:rgba(255,255,255,0.04);color:var(--text3);border:2px solid rgba(255,255,255,0.08);transition:all 0.35s var(--ease);position:relative}
+.step-dot.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 0 20px var(--accent-glow)}
+.step-dot.done{background:var(--success);color:#fff;border-color:var(--success);font-size:18px}
+.step-line{width:64px;height:2px;background:rgba(255,255,255,0.08);transition:background 0.35s var(--ease);margin:0 6px}
+.step-line.done{background:var(--success)}
+.step-line.active{background:var(--accent)}
+.step-labels{display:flex;justify-content:center;gap:0;margin-top:10px;font-size:12px;color:var(--text3);font-weight:500}
+.step-labels span{width:120px;text-align:center;transition:color 0.35s var(--ease)}
+.step-labels span.active{color:var(--accent);font-weight:600}
+.step-labels span.done{color:var(--success)}
+
+/* === CARD === */
+.wizard-card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius);padding:32px;box-shadow:0 8px 32px rgba(0,0,0,0.3)}
+.wizard-card h2{font-size:20px;font-weight:700;letter-spacing:-0.02em;margin-bottom:6px}
+.wizard-card .step-desc{font-size:14px;color:var(--text2);margin-bottom:28px;line-height:1.5}
+
+/* === FORM FIELDS === */
+.form-group{margin-bottom:22px}
+.form-group label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px;letter-spacing:0.01em;text-transform:uppercase}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:13px 16px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--input-bg);color:var(--text);outline:none;font-size:14px;font-family:inherit;line-height:1.4;transition:all var(--ease)}
+.form-group input::placeholder,.form-group textarea::placeholder{color:var(--text3)}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.form-group select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238e8ea0' d='M6 8L0 0h12z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px}
+.form-group textarea{min-height:200px;resize:vertical;font-family:"SF Mono","Cascadia Code","Consolas",monospace;font-size:13px;line-height:1.6}
+.form-group .field-hint{font-size:12px;color:var(--text3);margin-top:5px;line-height:1.4}
+
+/* === PRESET BUTTONS === */
+.preset-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:18px}
+.preset-btn{padding:12px 16px;border:2px solid var(--border);border-radius:var(--radius-xs);background:var(--input-bg);color:var(--text2);cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;transition:all var(--ease);text-align:center}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(233,69,96,0.08)}
+.preset-btn.selected{border-color:var(--accent);color:var(--accent);background:rgba(233,69,96,0.12);box-shadow:0 0 12px var(--accent-glow)}
+
+/* === PREVIEW === */
+.preview-section{margin-top:16px;border:1px solid var(--border);border-radius:var(--radius-xs);overflow:hidden}
+.preview-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:rgba(255,255,255,0.03);border-bottom:1px solid var(--border)}
+.preview-header span{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em}
+.preview-content{padding:16px;max-height:240px;overflow-y:auto;font-size:13px;line-height:1.6;background:var(--input-bg);white-space:pre-wrap;color:var(--text2);font-family:var(--font)}
+.preview-content:empty::after{content:'选择预设以预览角色设定…';color:var(--text3);font-style:italic}
+
+/* === BUTTONS === */
+.wizard-actions{display:flex;justify-content:space-between;align-items:center;margin-top:32px;gap:12px}
+.btn{padding:13px 28px;font-size:15px;font-weight:600;border-radius:var(--radius-xs);border:none;cursor:pointer;font-family:inherit;letter-spacing:-0.01em;transition:all var(--ease);display:inline-flex;align-items:center;gap:8px}
+.btn:disabled{opacity:0.4;pointer-events:none}
+.btn-secondary{background:rgba(255,255,255,0.05);color:var(--text2);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:rgba(255,255,255,0.1);color:var(--text)}
+.btn-primary{background:linear-gradient(135deg,#e94560,#c23152);color:#fff;box-shadow:0 2px 12px var(--accent-glow)}
+.btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 20px rgba(233,69,96,0.4)}
+.btn-primary:active:not(:disabled){transform:translateY(0)}
+.btn-success{background:linear-gradient(135deg,#2ecc71,#27ae60);color:#fff;box-shadow:0 2px 12px rgba(46,204,113,0.25)}
+.btn-success:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 20px rgba(46,204,113,0.4)}
+.btn-success:active:not(:disabled){transform:translateY(0)}
+
+/* === ERROR / SUCCESS FEEDBACK === */
+.feedback{margin-top:16px;padding:12px 16px;border-radius:var(--radius-xs);font-size:13px;font-weight:500;line-height:1.5;display:none}
+.feedback.show{display:block;animation:fbIn 0.25s var(--spring)}
+.feedback.error{background:rgba(231,76,60,0.12);color:#e74c3c;border:1px solid rgba(231,76,60,0.25)}
+.feedback.success{background:rgba(46,204,113,0.12);color:#2ecc71;border:1px solid rgba(46,204,113,0.25)}
+@keyframes fbIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+
+/* === SPINNER === */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 0.6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* === SUCCESS STATE === */
+.success-card{text-align:center;padding:48px 32px}
+.success-icon{font-size:56px;margin-bottom:20px;display:block;animation:popIn 0.5s var(--spring)}
+@keyframes popIn{from{transform:scale(0)}to{transform:scale(1)}}
+.success-card h2{font-size:24px;margin-bottom:10px}
+.success-card p{font-size:15px;color:var(--text2);margin-bottom:28px;line-height:1.6}
+
+/* === RESPONSIVE === */
+@media(max-width:700px){
+  .wizard-card{padding:20px}
+  .wizard-actions{flex-direction:column-reverse;gap:10px}
+  .wizard-actions .btn{width:100%;justify-content:center}
+  .step-line{width:32px}
+  .step-labels span{width:80px;font-size:11px}
+  .preset-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="wizard" id="wizard">
+
+  <div class="wizard-header">
+    <h1>Hermes 配置向导</h1>
+    <div class="sub">只需三步，让智能体机器人上线运行</div>
+  </div>
+
+  <!-- STEP INDICATOR -->
+  <div class="steps" id="stepIndicator">
+    <div class="step-item">
+      <div class="step-dot active" id="dot1">1</div>
+      <div class="step-line" id="line1"></div>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="dot2">2</div>
+      <div class="step-line" id="line2"></div>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="dot3">3</div>
+    </div>
+  </div>
+  <div class="step-labels">
+    <span class="active" id="label1">模型配置</span>
+    <span id="label2">角色设定</span>
+    <span id="label3">QQ 连接</span>
+  </div>
+
+  <!-- STEP CONTENT -->
+  <div class="wizard-card" id="wizardCard"></div>
+
+</div>
+
+<script>
+(function(){
+  var API = '';
+  var currentStep = 1;
+  var totalSteps = 3;
+
+  // --- form data ---
+  var formData = {
+    provider: '',
+    base_url: 'https://opencode.ai/zen/go/v1',
+    model: 'deepseek-v4-flash',
+    api_key: '',
+    preset: '',
+    soul_content: '',
+    overwrite: false,
+    ws_url: 'ws://127.0.0.1:3001/',
+    access_token: '',
+    home_channel: '',
+    channel_name: ''
+  };
+
+  var PRESETS = {
+    'soyo': { label: '长崎素世', desc: 'BanG Dream! 长崎素世 — 温柔腹黑贝斯手' },
+    'assistant': { label: '智能助手', desc: '通用AI助手，专业而友好' },
+    'custom': { label: '自定义', desc: '在下一步手动编辑角色设定' }
+  };
+
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+  async function api(path, method, body){
+    method = method || 'GET';
+    var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    var r = await fetch(API + path, opts);
+    if (!r.ok) {
+      var tb = '';
+      try { tb = await r.text(); } catch(ex){}
+      throw new Error('HTTP ' + r.status + (tb ? ': ' + tb.substring(0, 200) : ''));
+    }
+    return r.json();
+  }
+
+  function showFeedback(type, msg){
+    var fb = $('feedback');
+    if (!fb) return;
+    fb.className = 'feedback show ' + type;
+    fb.textContent = msg;
+  }
+
+  function clearFeedback(){
+    var fb = $('feedback');
+    if (fb) { fb.className = 'feedback'; fb.textContent = ''; }
+  }
+
+  function setButtonLoading(btn, loading){
+    if (loading) {
+      btn.disabled = true;
+      btn._origHTML = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner"></span> ' + btn.getAttribute('data-loading') || '处理中…';
+    } else {
+      btn.disabled = false;
+      if (btn._origHTML) btn.innerHTML = btn._origHTML;
+    }
+  }
+
+  // --- step indicator update ---
+  function updateSteps(){
+    for (var i = 1; i <= totalSteps; i++) {
+      var dot = $('dot' + i);
+      var line = i < totalSteps ? $('line' + i) : null;
+      var label = $('label' + i);
+      var cls = (i < currentStep) ? 'done' : (i === currentStep ? 'active' : '');
+      dot.className = 'step-dot ' + cls;
+      if (cls === 'done') dot.textContent = '✓';
+      else dot.textContent = i;
+      if (line) line.className = 'step-line ' + (i < currentStep ? 'done' : (i === currentStep ? 'active' : ''));
+      if (label) label.className = cls;
+    }
+  }
+
+  // --- step renderers ---
+  function renderStep1(){
+    var h = '<h2>模型配置</h2>';
+    h += '<div class="step-desc">配置 LLM API 连接信息，支持任何兼容 OpenAI 协议的接口</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>API Base URL</label>';
+    h += '<input type="text" id="fBaseUrl" placeholder="https://api.openai.com/v1" value="' + esc(formData.base_url) + '">';
+    h += '<div class="field-hint">兼容 OpenAI 协议的 API 地址</div>';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>模型名称</label>';
+    h += '<select id="fModel">';
+    var models = [
+      'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v3',
+      'gpt-4o', 'gpt-4o-mini', 'gpt-4.1',
+      'claude-sonnet-4-20250514', 'claude-3.5-haiku',
+      'qwen3.6-plus', 'qwen-max',
+      'gemini-2.5-flash', 'gemini-2.5-pro',
+      '_custom_'
+    ];
+    for (var i = 0; i < models.length; i++) {
+      var m = models[i];
+      var sel = formData.model === m ? ' selected' : '';
+      var label = m === '_custom_' ? '其他（手动输入）…' : m;
+      h += '<option value="' + esc(m) + '"' + sel + '>' + esc(label) + '</option>';
+    }
+    h += '</select>';
+    h += '<input type="text" id="fModelCustom" placeholder="输入自定义模型名称" style="margin-top:8px;display:none" value="">';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>Provider（可选）</label>';
+    h += '<select id="fProvider">';
+    var providers = ['custom', 'openai', 'deepseek', 'anthropic', 'gemini'];
+    for (var j = 0; j < providers.length; j++) {
+      var p = providers[j];
+      var ps = formData.provider === p ? ' selected' : '';
+      h += '<option value="' + p + '"' + ps + '>' + p + '</option>';
+    }
+    h += '</select>';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>API Key</label>';
+    h += '<input type="password" id="fApiKey" placeholder="sk-..." value="' + esc(formData.api_key) + '">';
+    h += '<div class="field-hint">密钥仅在本地存储，不会上传到除 API 以外的任何地方</div>';
+    h += '</div>';
+
+    h += '<div class="feedback" id="feedback"></div>';
+
+    h += '<div class="wizard-actions">';
+    h += '<span></span>';
+    h += '<button class="btn btn-primary" id="btnNext1" onclick="W.goNext()" data-loading="验证中…">下一步 →</button>';
+    h += '</div>';
+
+    $('wizardCard').innerHTML = h;
+
+    // custom model toggle
+    var modelSel = $('fModel');
+    var customInp = $('fModelCustom');
+    function toggleCustom() {
+      if (modelSel.value === '_custom_') {
+        customInp.style.display = 'block';
+        customInp.focus();
+      } else {
+        customInp.style.display = 'none';
+      }
+    }
+    modelSel.addEventListener('change', toggleCustom);
+    toggleCustom();
+
+    // persist on change
+    $('fBaseUrl').addEventListener('input', function(){ formData.base_url = this.value; });
+    modelSel.addEventListener('change', function(){
+      formData.model = this.value === '_custom_' ? customInp.value : this.value;
+    });
+    customInp.addEventListener('input', function(){ formData.model = this.value; });
+    $('fProvider').addEventListener('change', function(){ formData.provider = this.value; });
+    $('fApiKey').addEventListener('input', function(){ formData.api_key = this.value; });
+  }
+
+  function renderStep2(){
+    var h = '<h2>角色设定</h2>';
+    h += '<div class="step-desc">选择预设角色模板或自定义你的 AI 角色</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>预设角色</label>';
+    h += '<div class="preset-grid" id="presetGrid">';
+    var presetKeys = Object.keys(PRESETS);
+    for (var i = 0; i < presetKeys.length; i++) {
+      var pk = presetKeys[i];
+      var p = PRESETS[pk];
+      var sel = formData.preset === pk ? ' selected' : '';
+      h += '<button class="preset-btn' + sel + '" data-preset="' + pk + '" onclick="W.selectPreset(\'' + pk + '\')">' + esc(p.label) + '<br><small style="font-weight:400;font-size:11px;color:var(--text3);display:block;margin-top:3px">' + esc(p.desc) + '</small></button>';
+    }
+    h += '</div>';
+    h += '</div>';
+
+    h += '<div class="preview-section">';
+    h += '<div class="preview-header"><span>SOUL.md 预览</span><span id="previewLabel" style="color:var(--text2)">—</span></div>';
+    h += '<div class="preview-content" id="soulPreview">';
+    h += formData.soul_content ? esc(formData.soul_content) : '';
+    h += '</div>';
+    h += '</div>';
+
+    h += '<div class="feedback" id="feedback"></div>';
+
+    h += '<div class="wizard-actions">';
+    h += '<button class="btn btn-secondary" onclick="W.goBack()">← 上一步</button>';
+    h += '<button class="btn btn-primary" id="btnNext2" onclick="W.goNext()" data-loading="保存中…">下一步 →</button>';
+    h += '</div>';
+
+    $('wizardCard').innerHTML = h;
+  }
+
+  function renderStep3(){
+    var h = '<h2>QQ 连接配置</h2>';
+    h += '<div class="step-desc">配置 OneBot 反向 WebSocket 连接参数以接入 QQ</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>WebSocket URL</label>';
+    h += '<input type="text" id="fWsUrl" placeholder="ws://127.0.0.1:3001/" value="' + esc(formData.ws_url) + '">';
+    h += '<div class="field-hint">NapCat / OneBot 实现的 WebSocket 地址</div>';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>Access Token</label>';
+    h += '<input type="password" id="fToken" placeholder="输入 OneBot access_token" value="' + esc(formData.access_token) + '">';
+    h += '<div class="field-hint">与 NapCat 配置中的 token 保持一致</div>';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>主频道 ID（Home Channel）</label>';
+    h += '<input type="text" id="fHomeChannel" placeholder="群号或私聊 ID，如 123456789" value="' + esc(formData.home_channel) + '">';
+    h += '<div class="field-hint">Bot 默认归属的群/私聊</div>';
+    h += '</div>';
+
+    h += '<div class="form-group">';
+    h += '<label>频道名称（可选）</label>';
+    h += '<input type="text" id="fChannelName" placeholder="如：清尘璃落" value="' + esc(formData.channel_name) + '">';
+    h += '</div>';
+
+    h += '<div class="feedback" id="feedback"></div>';
+
+    h += '<div class="wizard-actions">';
+    h += '<button class="btn btn-secondary" onclick="W.goBack()">← 上一步</button>';
+    h += '<button class="btn btn-success" id="btnFinish" onclick="W.finish()" data-loading="正在保存并重启…">✓ 完成配置</button>';
+    h += '</div>';
+
+    $('wizardCard').innerHTML = h;
+
+    $('fWsUrl').addEventListener('input', function(){ formData.ws_url = this.value; });
+    $('fToken').addEventListener('input', function(){ formData.access_token = this.value; });
+    $('fHomeChannel').addEventListener('input', function(){ formData.home_channel = this.value; });
+    $('fChannelName').addEventListener('input', function(){ formData.channel_name = this.value; });
+  }
+
+  function renderSuccess(){
+    var h = '<div class="success-card">';
+    h += '<span class="success-icon">🎉</span>';
+    h += '<h2>配置完成！</h2>';
+    h += '<p>Hermes 正在重启服务，新配置即将生效。<br>即将跳转到仪表盘…</p>';
+    h += '<button class="btn btn-primary" onclick="location.href=\'/\'">前往仪表盘</button>';
+    h += '</div>';
+    $('wizardCard').innerHTML = h;
+
+    // auto redirect after 4 seconds
+    setTimeout(function(){ location.href = '/'; }, 4000);
+  }
+
+  // --- navigation ---
+  function renderCurrentStep(){
+    updateSteps();
+    switch (currentStep) {
+      case 1: renderStep1(); break;
+      case 2: renderStep2(); break;
+      case 3: renderStep3(); break;
+    }
+  }
+
+  window.W = {
+    selectPreset: function(pk){
+      formData.preset = pk;
+      document.querySelectorAll('.preset-btn').forEach(function(b){ b.classList.remove('selected'); });
+      var btn = document.querySelector('[data-preset="' + pk + '"]');
+      if (btn) btn.classList.add('selected');
+
+      // fetch preset content
+      if (pk === 'custom') {
+        formData.soul_content = '';
+        $('soulPreview').textContent = '';
+        $('previewLabel').textContent = '自定义 — 可手动编辑 /api/onboarding/soul 中的 SOUL.md';
+      } else {
+        $('previewLabel').textContent = PRESETS[pk].label + ' — 加载中…';
+        api('/api/onboarding/soul/preview?preset=' + pk)
+          .then(function(r){
+            formData.soul_content = r.content || '';
+            if ($('soulPreview')) $('soulPreview').textContent = formData.soul_content;
+            if ($('previewLabel')) $('previewLabel').textContent = PRESETS[pk].label;
+          })
+          .catch(function(e){
+            formData.soul_content = '';
+            if ($('soulPreview')) $('soulPreview').textContent = '(预览加载失败: ' + e.message + ')';
+            if ($('previewLabel')) $('previewLabel').textContent = PRESETS[pk].label + ' — 加载失败';
+          });
+      }
+    },
+
+    goBack: function(){
+      if (currentStep <= 1) return;
+      currentStep--;
+      clearFeedback();
+      renderCurrentStep();
+    },
+
+    goNext: async function(){
+      clearFeedback();
+
+      if (currentStep === 1) {
+        // validate & POST to /api/onboarding/provider
+        var baseUrl = $('fBaseUrl') ? $('fBaseUrl').value.trim() : formData.base_url;
+        var model = $('fModel') ? ($('fModel').value === '_custom_' ? ($('fModelCustom') ? $('fModelCustom').value.trim() : '') : $('fModel').value) : formData.model;
+        var provider = $('fProvider') ? $('fProvider').value : (formData.provider || 'custom');
+        var apiKey = $('fApiKey') ? $('fApiKey').value.trim() : formData.api_key;
+
+        if (!baseUrl) { showFeedback('error', '请输入 API Base URL'); return; }
+        if (!model) { showFeedback('error', '请选择或输入模型名称'); return; }
+        if (!apiKey) { showFeedback('error', '请输入 API Key'); return; }
+
+        formData.base_url = baseUrl;
+        formData.model = model;
+        formData.provider = provider;
+        formData.api_key = apiKey;
+
+        var btn = $('btnNext1');
+        try {
+          setButtonLoading(btn, true);
+          await api('/api/onboarding/provider', 'POST', {
+            model: formData.model,
+            provider: formData.provider,
+            base_url: formData.base_url,
+            api_key: formData.api_key
+          });
+          currentStep++;
+          renderCurrentStep();
+        } catch (e) {
+          showFeedback('error', '保存模型配置失败: ' + e.message);
+        } finally {
+          setButtonLoading(btn, false);
+        }
+
+      } else if (currentStep === 2) {
+        var btn = $('btnNext2');
+        try {
+          setButtonLoading(btn, true);
+          await api('/api/onboarding/soul', 'POST', {
+            preset: formData.preset || 'custom',
+            overwrite: formData.overwrite
+          });
+          currentStep++;
+          renderCurrentStep();
+        } catch (e) {
+          showFeedback('error', '保存角色设定失败: ' + e.message);
+        } finally {
+          setButtonLoading(btn, false);
+        }
+      }
+    },
+
+    finish: async function(){
+      clearFeedback();
+
+      // collect step 3 data
+      var wsUrl = $('fWsUrl') ? $('fWsUrl').value.trim() : formData.ws_url;
+      var token = $('fToken') ? $('fToken').value.trim() : formData.access_token;
+      var homeChannel = $('fHomeChannel') ? $('fHomeChannel').value.trim() : formData.home_channel;
+      var channelName = $('fChannelName') ? $('fChannelName').value.trim() : formData.channel_name;
+
+      if (!wsUrl) { showFeedback('error', '请输入 WebSocket URL'); return; }
+      if (!token) { showFeedback('error', '请输入 Access Token'); return; }
+      if (!homeChannel) { showFeedback('error', '请输入主频道 ID'); return; }
+
+      formData.ws_url = wsUrl;
+      formData.access_token = token;
+      formData.home_channel = homeChannel;
+      formData.channel_name = channelName;
+
+      var btn = $('btnFinish');
+      try {
+        setButtonLoading(btn, true);
+
+        // save onebot config
+        await api('/api/onboarding/onebot', 'POST', {
+          ws_url: formData.ws_url,
+          access_token: formData.access_token,
+          home_channel: formData.home_channel,
+          channel_name: formData.channel_name
+        });
+
+        // restart gateway
+        try {
+          await api('/api/onboarding/restart', 'POST');
+        } catch (restartErr) {
+          // restart may timeout if process restarts — that's OK
+          console.log('Restart triggered (expected disconnect):', restartErr.message);
+        }
+
+        // hide step indicator on success
+        $('stepIndicator').style.display = 'none';
+        document.querySelector('.step-labels').style.display = 'none';
+        renderSuccess();
+      } catch (e) {
+        showFeedback('error', '保存 OneBot 配置失败: ' + e.message);
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    }
+  };
+
+  // --- init ---
+  async function init(){
+    try {
+      var status = await api('/api/onboarding/status');
+      // If already complete, just redirect
+      if (!status.onboarding_required) {
+        renderSuccess();
+        return;
+      }
+      // Pre-fill from existing config if available
+      if (status.current_model) formData.model = status.current_model;
+      if (status.current_provider) formData.provider = status.current_provider;
+    } catch (e) {
+      // API not reachable — show wizard anyway
+      console.log('Could not fetch onboarding status:', e.message);
+    }
+    renderCurrentStep();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

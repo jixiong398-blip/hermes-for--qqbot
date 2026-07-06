@@ -10653,9 +10653,27 @@ Examples:
         help="Platform to apply to (default: cli)",
     )
 
+    # hermes tools registry [--toolset NAME] [--json]
+    tools_registry_p = tools_sub.add_parser(
+        "registry",
+        help="Show all registered tools with real-time availability status",
+    )
+    tools_registry_p.add_argument(
+        "--toolset",
+        default="",
+        help="Filter by toolset name (e.g. web, terminal, memory)",
+    )
+    tools_registry_p.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON (for Dashboard/programmatic use)",
+    )
+
     def cmd_tools(args):
         action = getattr(args, "tools_action", None)
-        if action in ("list", "disable", "enable"):
+        if action == "registry":
+            _print_tool_registry(args)
+        elif action in ("list", "disable", "enable"):
             from hermes_cli.tools_config import tools_disable_enable_command
 
             tools_disable_enable_command(args)
@@ -10666,6 +10684,46 @@ Examples:
             tools_command(args)
 
     tools_parser.set_defaults(func=cmd_tools)
+
+    def _print_tool_registry(args):
+        """Print all registered tools with real-time availability from ToolRegistry."""
+        import json as _json
+        import model_tools  # triggers discover_builtin_tools()
+        from tools.tools_list_tool import tools_list
+
+        toolset_filter = getattr(args, "toolset", "") or ""
+        as_json = getattr(args, "json", False)
+
+        raw = tools_list(toolset=toolset_filter)
+        data = _json.loads(raw)
+        tools = data["tools"]
+        summary = data["summary"]
+
+        if as_json:
+            print(_json.dumps(data, ensure_ascii=False, indent=2))
+            return
+
+        if not tools:
+            print("No tools registered.")
+            if toolset_filter:
+                print(f"  (filter: toolset={toolset_filter!r})")
+            return
+
+        print(f"Registered tools: {summary['total']} total | "
+              f"\033[32m{summary['available']} available\033[0m | "
+              f"\033[33m{summary['unavailable']} unavailable\033[0m")
+        print()
+        print(f"{'TOOL':<32} {'TOOLSET':<18} {'STATUS':<8} DESCRIPTION")
+        print("-" * 110)
+        for t in tools:
+            if t["available"]:
+                status = "\033[32m✅\033[0m"
+            else:
+                status = "\033[33m⚠️ \033[0m"
+            name = t["name"][:31]
+            ts = t["toolset"][:17]
+            desc = t["description"][:55]
+            print(f"{name:<32} {ts:<18} {status:<8} {desc}")
 
     # =========================================================================
     # computer-use command — manage Computer Use (cua-driver) on macOS

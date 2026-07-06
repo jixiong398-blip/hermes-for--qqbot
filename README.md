@@ -74,6 +74,7 @@
 
 ```
 ├── install.bat              ← 一键安装（离线优先）
+├── update.bat               ← 一键更新（保护配置）
 ├── 配置API.bat               ← API 配置入口
 ├── FixNapCat.bat             ← 登录后开启端口
 ├── start.bat                ← 一键启动 Dashboard

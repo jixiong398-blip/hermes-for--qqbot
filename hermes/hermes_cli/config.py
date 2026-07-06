@@ -106,7 +106,7 @@ _EXTRA_ENV_KEYS = frozenset({
 import yaml
 
 from hermes_cli.colors import Colors, color
-from hermes_cli.default_soul import DEFAULT_SOUL_MD
+from hermes_cli.default_soul import DEFAULT_SOUL_MD, DEFAULT_CORTEX_MD, DEFAULT_CEREBELLUM_MD
 
 
 # =============================================================================
@@ -342,6 +342,24 @@ def _ensure_default_soul_md(home: Path) -> None:
     _secure_file(soul_path)
 
 
+def _ensure_default_cortex_md(home: Path) -> None:
+    """Seed a default CORTEX.md into HERMES_HOME if the user doesn't have one yet."""
+    cortex_path = home / "CORTEX.md"
+    if cortex_path.exists():
+        return
+    cortex_path.write_text(DEFAULT_CORTEX_MD, encoding="utf-8")
+    _secure_file(cortex_path)
+
+
+def _ensure_default_cerebellum_md(home: Path) -> None:
+    """Seed a default CEREBELLUM.md into HERMES_HOME if the user doesn't have one yet."""
+    cerebellum_path = home / "CEREBELLUM.md"
+    if cerebellum_path.exists():
+        return
+    cerebellum_path.write_text(DEFAULT_CEREBELLUM_MD, encoding="utf-8")
+    _secure_file(cerebellum_path)
+
+
 def ensure_hermes_home():
     """Ensure ~/.hermes directory structure exists with secure permissions.
 
@@ -364,6 +382,8 @@ def ensure_hermes_home():
             d.mkdir(parents=True, exist_ok=True)
             _secure_dir(d)
         _ensure_default_soul_md(home)
+        _ensure_default_cortex_md(home)
+        _ensure_default_cerebellum_md(home)
 
 
 def _ensure_hermes_home_managed(home: Path):
@@ -386,6 +406,8 @@ def _ensure_hermes_home_managed(home: Path):
     (home / "logs" / "curator").mkdir(parents=True, exist_ok=True)
     # Inside umask(0o007) scope — SOUL.md will be created as 0660
     _ensure_default_soul_md(home)
+    _ensure_default_cortex_md(home)
+    _ensure_default_cerebellum_md(home)
 
 
 # =============================================================================

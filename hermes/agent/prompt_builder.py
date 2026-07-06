@@ -1293,35 +1293,6 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
-def _apply_soul_templates(content: str) -> str:
-    """Replace template variables in SOUL.md with dynamically computed values.
-
-    Supported placeholders:
-      {{age}}         — Age computed from SOUL_MD_BIRTH_YEAR env var (default 2008)
-                         and SOUL_MD_BIRTH_MONTH / SOUL_MD_BIRTH_DAY (default May 27).
-                         Calculation: current year - birth year, minus 1 if
-                         current date is before the birthday this year.
-      {{today_is_birthday}} — "是" if today is the birthday, "不是" otherwise.
-    """
-    import os
-    from datetime import date as _date
-
-    birth_year = int(os.getenv("SOUL_MD_BIRTH_YEAR", "2008"))
-    birth_month = int(os.getenv("SOUL_MD_BIRTH_MONTH", "5"))
-    birth_day = int(os.getenv("SOUL_MD_BIRTH_DAY", "27"))
-
-    today = _date.today()
-    birthday_this_year = _date(today.year, birth_month, birth_day)
-    age = today.year - birth_year
-    if today < birthday_this_year:
-        age -= 1
-    is_birthday = "是" if today == birthday_this_year else "不是"
-
-    content = content.replace("{{age}}", str(age))
-    content = content.replace("{{today_is_birthday}}", is_birthday)
-    return content
-
-
 def load_soul_md() -> Optional[str]:
     """Load SOUL.md from HERMES_HOME and return its content, or None.
 
@@ -1344,10 +1315,55 @@ def load_soul_md() -> Optional[str]:
             return None
         content = _scan_context_content(content, "SOUL.md")
         content = _truncate_content(content, "SOUL.md")
-        content = _apply_soul_templates(content)
         return content
     except Exception as e:
         logger.debug("Could not read SOUL.md from %s: %s", soul_path, e)
+        return None
+
+
+def load_cortex_md() -> Optional[str]:
+    """Load CORTEX.md from HERMES_HOME — behavior rules + evolution strategy."""
+    try:
+        from hermes_cli.config import ensure_hermes_home
+        ensure_hermes_home()
+    except Exception as e:
+        logger.debug("Could not ensure HERMES_HOME before loading CORTEX.md: %s", e)
+
+    cortex_path = get_hermes_home() / "CORTEX.md"
+    if not cortex_path.exists():
+        return None
+    try:
+        content = cortex_path.read_text(encoding="utf-8").strip()
+        if not content:
+            return None
+        content = _scan_context_content(content, "CORTEX.md")
+        content = _truncate_content(content, "CORTEX.md")
+        return content
+    except Exception as e:
+        logger.debug("Could not read CORTEX.md from %s: %s", cortex_path, e)
+        return None
+
+
+def load_cerebellum_md() -> Optional[str]:
+    """Load CEREBELLUM.md from HERMES_HOME — body control rules (Live2D etc)."""
+    try:
+        from hermes_cli.config import ensure_hermes_home
+        ensure_hermes_home()
+    except Exception as e:
+        logger.debug("Could not ensure HERMES_HOME before loading CEREBELLUM.md: %s", e)
+
+    cerebellum_path = get_hermes_home() / "CEREBELLUM.md"
+    if not cerebellum_path.exists():
+        return None
+    try:
+        content = cerebellum_path.read_text(encoding="utf-8").strip()
+        if not content:
+            return None
+        content = _scan_context_content(content, "CEREBELLUM.md")
+        content = _truncate_content(content, "CEREBELLUM.md")
+        return content
+    except Exception as e:
+        logger.debug("Could not read CEREBELLUM.md from %s: %s", cerebellum_path, e)
         return None
 
 
@@ -1436,7 +1452,12 @@ def _load_cursorrules(cwd_path: Path) -> str:
     return _truncate_content(cursorrules_content, ".cursorrules")
 
 
-def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = False) -> str:
+def build_context_files_prompt(
+    cwd: Optional[str] = None,
+    skip_soul: bool = False,
+    skip_cortex: bool = False,
+    skip_cerebellum: bool = False,
+) -> str:
     """Discover and load context files for the system prompt.
 
     Priority (first found wins — only ONE project context type is loaded):
@@ -1445,11 +1466,11 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
       3. CLAUDE.md / claude.md   (cwd only)
       4. .cursorrules / .cursor/rules/*.mdc  (cwd only)
 
-    SOUL.md from HERMES_HOME is independent and always included when present.
-    Each context source is capped at 20,000 chars.
+    SOUL.md / CORTEX.md / CEREBELLUM.md from HERMES_HOME are independent and
+    always included when present. Each context source is capped at 20,000 chars.
 
-    When *skip_soul* is True, SOUL.md is not included here (it was already
-    loaded via ``load_soul_md()`` for the identity slot).
+    When a *skip_* flag is True, that file is not included here (it was already
+    loaded via its dedicated loader for the identity slot).
     """
     if cwd is None:
         cwd = os.getcwd()
@@ -1457,7 +1478,6 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
     cwd_path = Path(cwd).resolve()
     sections = []
 
-    # Priority-based project context: first match wins
     project_context = (
         _load_hermes_md(cwd_path)
         or _load_agents_md(cwd_path)
@@ -1467,11 +1487,20 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
     if project_context:
         sections.append(project_context)
 
-    # SOUL.md from HERMES_HOME only — skip when already loaded as identity
     if not skip_soul:
         soul_content = load_soul_md()
         if soul_content:
             sections.append(soul_content)
+
+    if not skip_cortex:
+        cortex_content = load_cortex_md()
+        if cortex_content:
+            sections.append(cortex_content)
+
+    if not skip_cerebellum:
+        cerebellum_content = load_cerebellum_md()
+        if cerebellum_content:
+            sections.append(cerebellum_content)
 
     if not sections:
         return ""

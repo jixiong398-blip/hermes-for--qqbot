@@ -378,8 +378,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/sessions":
             return self._handle_sessions()
 
+        elif path == "/api/onboarding/status":
+            return self._handle_onboarding_status()
+
+        elif path == "/api/updates/check":
+            return self._handle_updates_check()
+
         elif path == "/api/live2d/models":
             return self._handle_live2d_models()
+
+        elif path == "/onboarding" or path == "/onboarding.html":
+            return self._serve_onboarding()
 
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -390,6 +399,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/voice":
             return self._handle_voice_set(body)
+
+        elif path == "/api/onboarding/provider":
+            return self._handle_onboarding_provider(body)
+
+        elif path == "/api/onboarding/soul":
+            return self._handle_onboarding_soul(body)
+
+        elif path == "/api/onboarding/onebot":
+            return self._handle_onboarding_onebot(body)
+
+        elif path == "/api/onboarding/restart":
+            return self._handle_onboarding_restart()
 
         elif path == "/api/services/start":
             return self._handle_services_start(body)
@@ -932,6 +953,223 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pass
 
         self._send_json({"ok": True, "character": character, "outfit": outfit, "saved": True})
+
+    # ── Onboarding ─────────────────────────────────────────────
+
+    def _serve_onboarding(self):
+        """Serve the onboarding SPA page."""
+        try:
+            html = (STATIC_DIR / "onboarding.html").read_text(encoding="utf-8")
+        except Exception:
+            html = "<h1>Onboarding</h1><p>Onboarding page not found.</p>"
+        self._send_html(html)
+
+    def _handle_onboarding_status(self):
+        """Return what's missing for first-time setup."""
+        cfg = self._load_config()
+        provider_ok = bool(
+            cfg.get("model", {}).get("model")
+            and cfg.get("model", {}).get("provider")
+        )
+        soul_path = HERMES_HOME / "SOUL.md"
+        soul_ok = soul_path.exists() and soul_path.stat().st_size > 0
+        onebot_cfg = cfg.get("platforms", {}).get("onebot", {}) or {}
+        onebot_ok = bool(
+            onebot_cfg.get("enabled")
+            and (onebot_cfg.get("extra", {}) or {}).get("ws_url")
+        )
+        missing = []
+        if not provider_ok:
+            missing.append("provider")
+        if not soul_ok:
+            missing.append("soul")
+        if not onebot_ok:
+            missing.append("onebot")
+        return self._send_json({
+            "onboarding_required": bool(missing),
+            "missing": missing,
+            "provider_ok": provider_ok,
+            "soul_ok": soul_ok,
+            "onebot_ok": onebot_ok,
+            "current_model": cfg.get("model", {}).get("model"),
+            "current_provider": cfg.get("model", {}).get("provider"),
+        })
+
+    def _handle_onboarding_provider(self, body: Dict):
+        """Configure LLM provider."""
+        model = body.get("model", "").strip()
+        provider = body.get("provider", "custom").strip()
+        base_url = body.get("base_url", "").strip()
+        api_key = body.get("api_key", "").strip()
+        if not model:
+            return self._send_json({"error": "model required"}, 400)
+        if not api_key:
+            return self._send_json({"error": "api_key required"}, 400)
+        try:
+            cfg = self._load_config()
+            cfg.setdefault("model", {})
+            cfg["model"]["model"] = model
+            cfg["model"]["provider"] = provider
+            if base_url:
+                cfg["model"]["base_url"] = base_url
+            self._save_config(cfg)
+            # Write .env in HERMES_HOME
+            env_path = HERMES_HOME / ".env"
+            env_lines = []
+            if env_path.exists():
+                env_lines = env_path.read_text(encoding="utf-8").splitlines()
+            env_map = {}
+            for line in env_lines:
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    env_map[k.strip()] = v.strip()
+            env_map["OPENAI_API_KEY"] = api_key
+            env_map["OPENAI_BASE_URL"] = base_url or "https://opencode.ai/zen/go/v1"
+            env_map["OPENAI_MODEL"] = model
+            new_lines = [f"{k}={v}" for k, v in env_map.items()]
+            env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            return self._send_json({"ok": True, "message": f"Provider {provider} configured"})
+        except Exception as e:
+            logger.exception("POST /api/onboarding/provider failed")
+            return self._send_json({"error": str(e)}, 500)
+
+    def _handle_onboarding_soul(self, body: Dict):
+        """Write SOUL.md from onboarding."""
+        content = body.get("content", "").strip()
+        preset = body.get("preset", "").strip()
+        overwrite = body.get("overwrite", False)
+        if not content and not preset:
+            return self._send_json({"error": "content or preset required"}, 400)
+        soul_path = HERMES_HOME / "SOUL.md"
+        if soul_path.exists() and not overwrite:
+            return self._send_json({"error": "SOUL.md already exists. Set overwrite=true to replace."}, 409)
+        try:
+            # If a preset is chosen, load the template
+            if preset:
+                template_path = ROOT / "templates" / f"SOUL-{preset}.md"
+                if not template_path.exists():
+                    template_path = ROOT / "templates" / "SOUL-template.md"
+                if template_path.exists():
+                    content = template_path.read_text(encoding="utf-8")
+            if not content:
+                return self._send_json({"error": "No content to write"}, 400)
+            soul_path.parent.mkdir(parents=True, exist_ok=True)
+            soul_path.write_text(content, encoding="utf-8")
+            # Also seed CORTEX.md and CEREBELLUM.md if missing
+            for fname in ("CORTEX.md", "CEREBELLUM.md"):
+                fp = HERMES_HOME / fname
+                if not fp.exists():
+                    tpl = ROOT / "templates" / fname
+                    if tpl.exists():
+                        fp.write_text(tpl.read_text(encoding="utf-8"), encoding="utf-8")
+            return self._send_json({"ok": True, "message": "SOUL.md written"})
+        except Exception as e:
+            logger.exception("POST /api/onboarding/soul failed")
+            return self._send_json({"error": str(e)}, 500)
+
+    def _handle_onboarding_onebot(self, body: Dict):
+        """Configure OneBot / QQ platform."""
+        ws_url = body.get("ws_url", "").strip()
+        access_token = body.get("access_token", "").strip()
+        home_channel = body.get("home_channel", "").strip()
+        if not ws_url:
+            return self._send_json({"error": "ws_url required"}, 400)
+        try:
+            cfg = self._load_config()
+            cfg.setdefault("platforms", {})
+            cfg["platforms"]["onebot"] = {
+                "enabled": True,
+                "extra": {
+                    "ws_url": ws_url,
+                    "access_token": access_token,
+                    "http_url": "http://127.0.0.1:3000",
+                    "require_mention": False,
+                },
+                "home_channel": {
+                    "chat_id": home_channel,
+                    "name": body.get("channel_name", ""),
+                },
+            }
+            self._save_config(cfg)
+            return self._send_json({"ok": True, "message": "OneBot configured"})
+        except Exception as e:
+            logger.exception("POST /api/onboarding/onebot failed")
+            return self._send_json({"error": str(e)}, 500)
+
+    def _handle_onboarding_restart(self):
+        """Restart the Gateway after onboarding."""
+        try:
+            # Kill existing gateway
+            import signal
+            gw_pid_file = HERMES_HOME / "gateway.pid"
+            if gw_pid_file.exists():
+                try:
+                    old_pid = int(gw_pid_file.read_text().strip())
+                    os.kill(old_pid, signal.SIGTERM)
+                except Exception:
+                    pass
+            # Restart
+            subprocess.Popen(
+                [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-X", "utf8",
+                 "-m", "hermes_cli.main", "gateway"],
+                cwd=str(ROOT),
+                creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+            )
+            return self._send_json({"ok": True, "message": "Gateway restarting"})
+        except Exception as e:
+            logger.exception("Failed to restart gateway after onboarding")
+            return self._send_json({"error": str(e)}, 500)
+
+    # ── Updates ────────────────────────────────────────────────
+
+    def _handle_updates_check(self):
+        """Check GitHub for latest release version."""
+        try:
+            import urllib.request
+            url = "https://api.github.com/repos/jixiong398-blip/hermes-for--qqbot/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": "Hermes-Dashboard"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            latest = data.get("tag_name", "").lstrip("v")
+            # Read current version
+            version_path = ROOT / "VERSION"
+            current = "0.0.0"
+            if version_path.exists():
+                current = version_path.read_text(encoding="utf-8").strip()
+            return self._send_json({
+                "current": current,
+                "latest": latest,
+                "update_available": latest > current if latest and current else False,
+                "release_url": data.get("html_url", ""),
+                "release_notes": data.get("body", "")[:500],
+            })
+        except Exception as e:
+            logger.debug("Update check failed: %s", e)
+            return self._send_json({"error": str(e), "current": "unknown", "latest": "unknown", "update_available": False})
+
+    # ── Config helpers ─────────────────────────────────────────
+
+    def _load_config(self) -> Dict:
+        """Load config.yaml from HERMES_HOME."""
+        import yaml as _yaml_mod
+        cfg_path = HERMES_HOME / "config.yaml"
+        if not cfg_path.exists():
+            return {}
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                return _yaml_mod.safe_load(f) or {}
+        except Exception:
+            return {}
+
+    def _save_config(self, cfg: Dict):
+        """Save config.yaml atomically."""
+        import yaml as _yaml_mod
+        cfg_path = HERMES_HOME / "config.yaml"
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(cfg_path) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _yaml_mod.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        os.replace(tmp, str(cfg_path))
 
     # ── NapCat Control ────────────────────────────────────────
 

@@ -107,6 +107,8 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    "/api/onboarding/status",
+    "/api/updates/check",
 })
 
 
@@ -727,6 +729,204 @@ async def update_hermes():
         "pid": proc.pid,
         "name": "hermes-update",
     }
+
+
+# ---------------------------------------------------------------------------
+# Onboarding wizard endpoints (first-time setup)
+# ---------------------------------------------------------------------------
+
+class OnboardingProviderBody(BaseModel):
+    provider: str
+    base_url: str
+    model: str
+    api_key: str
+
+
+class OnboardingSoulBody(BaseModel):
+    content: str
+    overwrite: bool = False
+
+
+class OnboardingOneBotBody(BaseModel):
+    ws_url: str = "ws://127.0.0.1:3001/"
+    http_url: str = "http://127.0.0.1:3000"
+    access_token: str = ""
+    home_channel_chat_id: str
+    home_channel_name: str = ""
+
+
+@app.get("/api/onboarding/status")
+async def onboarding_status():
+    """Return what's missing for first-time setup."""
+    cfg = load_config()
+    env = load_env()
+    model_cfg = cfg.get("model", {}) or {}
+    provider_ok = bool(
+        model_cfg.get("model")
+        and model_cfg.get("provider")
+        and any(
+            env.get(k)
+            for k in (
+                "OPENAI_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "XIAOMI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "OPENROUTER_API_KEY",
+                "GOOGLE_API_KEY",
+            )
+        )
+    )
+    soul_path = get_hermes_home() / "SOUL.md"
+    soul_ok = soul_path.exists() and soul_path.stat().st_size > 0
+    onebot_cfg = cfg.get("platforms", {}).get("onebot", {}) or {}
+    onebot_ok = bool(
+        onebot_cfg.get("enabled")
+        and (onebot_cfg.get("extra", {}) or {}).get("ws_url")
+    )
+    missing = []
+    if not provider_ok:
+        missing.append("provider")
+    if not soul_ok:
+        missing.append("soul")
+    if not onebot_ok:
+        missing.append("onebot")
+    return {
+        "onboarding_required": bool(missing),
+        "missing": missing,
+        "provider_ok": provider_ok,
+        "soul_ok": soul_ok,
+        "onebot_ok": onebot_ok,
+        "current_model": model_cfg.get("model"),
+        "current_provider": model_cfg.get("provider"),
+    }
+
+
+@app.post("/api/onboarding/provider")
+async def onboarding_provider(body: OnboardingProviderBody):
+    try:
+        cfg = load_config()
+        cfg.setdefault("model", {})
+        cfg["model"]["model"] = body.model
+        cfg["model"]["provider"] = body.provider
+        save_config(cfg)
+        provider_upper = body.provider.upper()
+        save_env_value(f"{provider_upper}_API_KEY", body.api_key)
+        if body.base_url:
+            save_env_value(f"{provider_upper}_BASE_URL", body.base_url)
+        save_env_value(f"{provider_upper}_MODEL", body.model)
+        return {"ok": True, "message": f"Provider {body.provider} configured"}
+    except Exception:
+        _log.exception("POST /api/onboarding/provider failed")
+        raise HTTPException(status_code=500, detail="Failed to write provider config")
+
+
+@app.post("/api/onboarding/soul")
+async def onboarding_soul(body: OnboardingSoulBody):
+    try:
+        from hermes_cli.config import _secure_file
+        soul_path = get_hermes_home() / "SOUL.md"
+        if soul_path.exists() and not body.overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail="SOUL.md already exists. Set overwrite=true to replace.",
+            )
+        soul_path.write_text(body.content, encoding="utf-8")
+        _secure_file(soul_path)
+        return {"ok": True, "message": "SOUL.md written"}
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("POST /api/onboarding/soul failed")
+        raise HTTPException(status_code=500, detail="Failed to write SOUL.md")
+
+
+@app.post("/api/onboarding/onebot")
+async def onboarding_onebot(body: OnboardingOneBotBody):
+    try:
+        cfg = load_config()
+        cfg.setdefault("platforms", {})
+        cfg["platforms"]["onebot"] = {
+            "enabled": True,
+            "extra": {
+                "ws_url": body.ws_url,
+                "http_url": body.http_url,
+                "require_mention": False,
+            },
+            "gateway_restart_notification": False,
+            "home_channel": {
+                "chat_id": body.home_channel_chat_id,
+                "name": body.home_channel_name,
+                "platform": "onebot",
+            },
+        }
+        cfg.setdefault("plugins", {})
+        plugins_enabled = list(cfg["plugins"].get("enabled", []) or [])
+        if "platforms/onebot" not in plugins_enabled:
+            plugins_enabled.append("platforms/onebot")
+        cfg["plugins"]["enabled"] = plugins_enabled
+        save_config(cfg)
+        save_env_value("ONEBOT_WS_URL", body.ws_url)
+        save_env_value("ONEBOT_HTTP_URL", body.http_url)
+        if body.access_token:
+            save_env_value("ONEBOT_ACCESS_TOKEN", body.access_token)
+        return {"ok": True, "message": "OneBot configured"}
+    except Exception:
+        _log.exception("POST /api/onboarding/onebot failed")
+        raise HTTPException(status_code=500, detail="Failed to write OneBot config")
+
+
+@app.post("/api/onboarding/restart")
+async def onboarding_restart():
+    try:
+        proc = _spawn_hermes_action(["gateway", "restart"], "gateway-restart")
+    except Exception as exc:
+        _log.exception("Failed to spawn gateway restart after onboarding")
+        raise HTTPException(status_code=500, detail=f"Failed to restart gateway: {exc}")
+    return {"ok": True, "pid": proc.pid, "name": "gateway-restart"}
+
+
+# ---------------------------------------------------------------------------
+# GitHub Releases update check
+# ---------------------------------------------------------------------------
+
+@app.get("/api/updates/check")
+async def check_updates():
+    """Check GitHub Releases for newer versions of hermes-for-qqbot."""
+    REPO = "jixiong398-blip/hermes-for--qqbot"
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases/latest",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "hermes-agent",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest_version = (data.get("tag_name") or "").lstrip("v")
+        current_version = __version__
+        update_available = False
+        try:
+            from packaging.version import parse as pkg_parse
+            update_available = bool(latest_version) and pkg_parse(latest_version) > pkg_parse(current_version)
+        except Exception:
+            update_available = latest_version and latest_version != current_version
+        assets = data.get("assets") or []
+        return {
+            "current_version": current_version,
+            "latest_version": latest_version,
+            "update_available": update_available,
+            "release_notes": data.get("body") or "",
+            "release_url": data.get("html_url") or "",
+            "download_url": assets[0].get("browser_download_url") if assets else "",
+            "published_at": data.get("published_at") or "",
+        }
+    except urllib.error.HTTPError as exc:
+        _log.warning("GitHub Releases API error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"GitHub API error: {exc}")
+    except Exception as exc:
+        _log.exception("Update check failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/actions/{name}/status")
