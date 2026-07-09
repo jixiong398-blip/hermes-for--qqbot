@@ -126,7 +126,7 @@ def describe_image(
 if __name__ == "__main__":
     import sys
 
-    path = sys.argv[1] if len(sys.argv) > 1 else "/home/{{USERNAME}}/Pictures/soyo_chibi_tea.jpg"
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Pictures/soyo_chibi_tea.jpg")
     t = time.time()
     desc = describe_image(path)
     print(f"[{time.time()-t:.1f}s] {desc}")

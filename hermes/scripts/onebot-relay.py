@@ -8,12 +8,14 @@ import asyncio, json, os, sys, time, re
 import websockets, httpx
 
 # ── Config ──
-NAP_WS  = "ws://127.0.0.1:3001/"
-NAP_HTTP = "http://127.0.0.1:3000"
-HERMES_HTTP = "http://127.0.0.1:18789"  # gateway API server (may need enabling)
-TOKEN = os.getenv("ONEBOT_ACCESS_TOKEN", "{{ONEBOT_TOKEN}}")
-SELF_ID = "{{BOT_QQ_ID}}"
-LOG_FILE = "/tmp/onebot-relay.log"
+NAP_WS  = os.getenv("NAPCAT_WS_URL", "ws://127.0.0.1:3001/")
+NAP_HTTP = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3000")
+HERMES_HTTP = os.getenv("HERMES_API_URL", "http://127.0.0.1:18789")
+TOKEN = os.getenv("ONEBOT_ACCESS_TOKEN", "")
+if not TOKEN:
+    print("Error: ONEBOT_ACCESS_TOKEN not set in .env", file=sys.stderr); sys.exit(1)
+SELF_ID = ""  # discovered at runtime from NapCat events
+LOG_FILE = os.getenv("ONEBOT_RELAY_LOG", "/tmp/onebot-relay.log")
 
 def log(msg):
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"

@@ -542,6 +542,15 @@ class OneBotAdapter(BasePlatformAdapter):
         elif blocked_str:
             self._blocked_users = {u.strip() for u in str(blocked_str).split(",") if u.strip()}
 
+        # Admin ID: config.yaml extra.admin_id takes precedence, env as fallback.
+        # This is the only QQ number that MUST be pre-configured - it controls
+        # who can issue / slash commands. All other QQ/group IDs are discovered
+        # at runtime from NapCat events.
+        self._admin_id = str(
+            extra.get("admin_id", "")
+            or os.getenv("ONEBOT_ADMIN_ID", "")
+        )
+
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
@@ -1529,7 +1538,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Use the last msg as template, replace text with merged content
         last = entries[-1]
         msg = dict(last["msg"])
-        _self_qq = os.getenv("ONEBOT_SELF_ID", "")
+        _self_qq = str(self._self_id or "")
         msg["raw_message"] = f"[CQ:at,qq={_self_qq}] {merged_text}"
         msg["message"] = [
             {"type": "at", "data": {"qq": _self_qq}},
@@ -1769,8 +1778,7 @@ class OneBotAdapter(BasePlatformAdapter):
 
         # ── 指令拦截：非 admin 的 / 命令不执行，但正常回复 ──
         raw_text = self._get_raw_text(msg).strip()
-        _admin_id = os.getenv("ONEBOT_ADMIN_ID", "")
-        if raw_text.startswith("/") and _admin_id and user_id_str != _admin_id:
+        if raw_text.startswith("/") and self._admin_id and user_id_str != self._admin_id:
             # 把 / 命令替换为正常消息，让 LLM 自然回应
             cmd_name = raw_text.split()[0][1:] if ' ' in raw_text else raw_text[1:]
             msg["raw_message"] = f"（有人对我说 /{cmd_name}，但我不是AI才不会听指令呢）"
@@ -3120,14 +3128,12 @@ def _is_connected(cfg):
 def _env_enablement():
     ws = os.getenv("ONEBOT_WS_URL", "")
     token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
-    home = os.getenv("ONEBOT_HOME_CHANNEL", "")
     if not ws:
         return None
     extra = {"ws_url": ws}
     if token:
         extra["access_token"] = token
-    hc = {"chat_id": home} if home else None
-    return {"extra": extra, "home_channel": hc}
+    return {"extra": extra}
 
 def register(ctx):
     ctx.register_platform(
@@ -3138,10 +3144,4 @@ def register(ctx):
         validate_config=_validate_config,
         is_connected=_is_connected,
         required_env=["ONEBOT_WS_URL"],
-        install_hint="pip install websockets httpx",
-        env_enablement_fn=_env_enablement,
-        allowed_users_env="ONEBOT_ALLOWED_USERS",
-        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
-        emoji="🐧",
-        pii_safe=False,
-    )
+        in

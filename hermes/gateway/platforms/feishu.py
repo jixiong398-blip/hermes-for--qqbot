@@ -63,6 +63,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+_CHIBI_ROOT = os.getenv("SOYO_CHIBI_ROOT", os.path.expanduser("~/Pictures"))
 from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional, Sequence
 from urllib.error import HTTPError, URLError
@@ -1697,6 +1699,29 @@ class FeishuAdapter(BasePlatformAdapter):
     # Outbound — send / edit / send_image / send_voice / …
     # =========================================================================
 
+    # Sticker shortcode → local file path mapping (same as OneBot adapter)
+    _STICKER_MAP = {
+        "tea":        os.path.join(_CHIBI_ROOT, "soyo_chibi_tea.jpg"),
+        "excited":    os.path.join(_CHIBI_ROOT, "soyo_chibi_excited.gif"),
+        "sad":        os.path.join(_CHIBI_ROOT, "soyo_chibi_sad.jpg"),
+        "speechless": os.path.join(_CHIBI_ROOT, "soyo_chibi_speechless.jpg"),
+        "clasp":      os.path.join(_CHIBI_ROOT, "soyo_chibi_clasp.jpg"),
+    }
+    _STICKER_RE = re.compile(r'\[sticker:([^\]]+)\]')
+
+    async def _send_sticker_for_code(
+        self, chat_id: str, sticker_name: str,
+        reply_to: Optional[str] = None,
+    ) -> None:
+        """Upload and send a sticker image by shortcode name."""
+        path = self._STICKER_MAP.get(sticker_name) or self._STICKER_MAP.get(sticker_name.lower())
+        if not path or not os.path.exists(path):
+            return
+        try:
+            await self.send_image_file(chat_id=chat_id, image_path=path, reply_to=reply_to)
+        except Exception:
+            logger.exception("[Feishu] Failed to send sticker: %s", sticker_name)
+
     async def send(
         self,
         chat_id: str,
@@ -1707,6 +1732,26 @@ class FeishuAdapter(BasePlatformAdapter):
         """Send a Feishu message."""
         if not self._client:
             return SendResult(success=False, error="Not connected")
+
+        # ── Extract and send [sticker:xxx] codes ──
+        stickers_to_send: list[str] = []
+        def _collect_sticker(m: re.Match) -> str:
+            name = m.group(1).strip()
+            if name in self._STICKER_MAP or name.lower() in self._STICKER_MAP:
+                stickers_to_send.append(name)
+            return ""
+        cleaned = self._STICKER_RE.sub(_collect_sticker, content)
+        # Catch incomplete [sticker: without closing ] (model truncation)
+        if '[sticker:' in cleaned and ']' not in cleaned.split('[sticker:')[-1][:20]:
+            cleaned = cleaned.replace('[sticker:', '')
+        content = cleaned.strip()
+
+        # Send sticker images first (before text, so they arrive together-ish)
+        for sticker_name in stickers_to_send:
+            await self._send_sticker_for_code(chat_id, sticker_name, reply_to)
+
+        if not content:
+            return SendResult(success=True, message_id="")
 
         formatted = self.format_message(content)
         chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)

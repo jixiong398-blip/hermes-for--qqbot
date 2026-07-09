@@ -1,4 +1,4 @@
-#!/home/{{USERNAME}}/.hermes/.venv/bin/python3
+#!/usr/bin/env python3
 """FunASR speech-to-text: SenseVoiceSmall — 50+ languages, fast CPU inference.
 
 Singleton model loaded once, reused across calls.

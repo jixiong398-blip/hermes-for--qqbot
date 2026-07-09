@@ -699,15 +699,15 @@ class OneBotAdapter(BasePlatformAdapter):
         # Use the last msg as template, replace text with merged content
         last = entries[-1]
         msg = dict(last["msg"])
-        _self_id = os.getenv("ONEBOT_SELF_ID", "")
-        msg["raw_message"] = f"[CQ:at,qq={_self_id}] {merged_text}"
+        _self_qq = str(getattr(self, "_self_id", "") or "")
+        msg["raw_message"] = f"[CQ:at,qq={_self_qq}] {merged_text}"
         msg["message"] = [
-            {"type": "at", "data": {"qq": _self_id}},
+            {"type": "at", "data": {"qq": _self_qq}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Re-process without batching — include images in merged message
         merged_msg_arr = [
-            {"type": "at", "data": {"qq": _self_id}},
+            {"type": "at", "data": {"qq": _self_qq}},
             {"type": "text", "data": {"text": f"[合并消息，{len(entries)}人@]: {merged_text}"}}
         ]
         # Attach original image/face/mface segments so _get_image_files can process them

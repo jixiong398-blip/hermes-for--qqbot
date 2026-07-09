@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""QQ连接看门�?- 检测断�?+ 日志关键词报�?""
+"""QQ连接看门狗 - 检测断线 + 日志关键词报警"""
 import json, os, time, socket, re
 
 STATE_FILE = os.path.expanduser("~/.hermes/qq_watchdog_state.json")
-LOG_FILE = "/home/{{USERNAME}}/Napcat/log/napcat_{{BOT_QQ_ID}}.log"
+LOG_FILE = os.getenv("NAPCAT_LOG_FILE", os.path.expanduser("~/Napcat/log/napcat.log"))
 
-# 只检测两类：快速登录失败（重启后）和被踢下线（在线久了被踢�?ALERT_PATTERNS = [
-    "快速登录失�?,
-    "快速登录错�?,
+# 只检测两类：快速登录失败（重启后）和被踢下线（在线久了被踢）
+ALERT_PATTERNS = [
+    "快速登录失败",
+    "快速登录错误",
     "KickedOffLine",
     "被踢下线",
 ]
 
 def check_connection():
-    """检�?QQ 是否在线（端口检测）"""
+    """检查 QQ 是否在线（端口检测）"""
     for port in [6099, 3001]:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -43,9 +44,9 @@ def check_log_errors():
         total_lines = int(result) if result else 0
 
         if total_lines <= last_line:
-            last_line = 0
-
-        if total_lines > last_line:
+            # 日志被轮转/截断了，从当前最新处开始，不重读历史
+            last_line = total_lines
+        else:
             read_start = last_line + 1
             lines = os.popen(f"sed -n '{read_start},{total_lines}p' {LOG_FILE}").read().splitlines()
 
@@ -54,8 +55,8 @@ def check_log_errors():
                     if pattern in line:
                         ts_match = re.match(r'(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
                         ts = ts_match.group(1) if ts_match else time.strftime("%m-%d %H:%M:%S")
-                        if "快速登�? in pattern:
-                            alert_msg = f"⚠️ 重启后快速登录失�?({ts})"
+                        if "快速登录" in pattern:
+                            alert_msg = f"⚠️ 重启后快速登录失败 ({ts})"
                         else:
                             alert_msg = f"⚠️ QQ被踢下线 ({ts})"
                         if alert_msg not in new_alerts:
@@ -74,16 +75,27 @@ def main():
 
     was_online = state.get("online", True)
     ts = time.strftime("%H:%M:%S")
+    now = time.time()
 
-    if new_alerts:
+    # 冷却：5分钟内恢复就不报
+    last_alert_ts = state.get("last_alert_ts", 0)
+    in_cooldown = (now - last_alert_ts) < 300
+
+    if new_alerts and not in_cooldown:
         for alert in new_alerts:
             print(alert)
+        state["last_alert_ts"] = now
+        # 立即保存，防止下一分钟重复告警
+        with open(STATE_FILE, 'w') as f:
+            json.dump(state, f)
+        return
 
-    if was_online and not now_online:
+    if was_online and not now_online and not in_cooldown:
         state["online"] = False
         state["notified"] = True
         state["at"] = ts
-        print(f"⚠️ QQ Bot 端口断线�?({ts})")
+        state["last_alert_ts"] = now
+        print(f"⚠️ QQ Bot 端口断线了 ({ts})")
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f)
         return
@@ -91,7 +103,7 @@ def main():
     if not was_online and now_online:
         state["online"] = True
         state["notified"] = False
-        print(f"�?QQ Bot 已恢复连�?({ts})")
+        print(f"✅ QQ Bot 已恢复连接 ({ts})")
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f)
         return

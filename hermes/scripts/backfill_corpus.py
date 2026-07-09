@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Backfill missing messages into corpus_messages using NapCat HTTP API.
 
 Reads the latest corpus_messages timestamp per group, then fetches newer
@@ -7,17 +7,19 @@ messages from NapCat's get_group_msg_history API and inserts them.
 
 import sqlite3
 import json
-import time
 import os
+import time
 import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
-NAPCAT_HTTP = os.getenv("ONEBOT_HTTP_URL", "http://127.0.0.1:3000")
+NAPCAT_HTTP = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3000")
 ACCESS_TOKEN = os.getenv("ONEBOT_ACCESS_TOKEN", "")
-STATE_DB = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))) / "state.db"
+if not ACCESS_TOKEN:
+    print("Error: ONEBOT_ACCESS_TOKEN not set in .env", file=sys.stderr); sys.exit(1)
+STATE_DB = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
 
 def napcat_api(action: str, params: dict) -> dict:
     req = Request(
@@ -243,4 +245,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

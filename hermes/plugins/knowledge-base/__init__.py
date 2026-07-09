@@ -1,6 +1,11 @@
 import sys, os
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+_KB_ROOT = os.getenv("KNOWLEDGE_BASE_ROOT", "")
+if _KB_ROOT:
+    sys.path.insert(0, _KB_ROOT)
+else:
+    sys.path.insert(0, os.path.expanduser("~/ai/ai"))
+
 from knowledge_base_tool import knowledge_search, knowledge_read, OBSIDIAN_SEARCH_SCHEMA, OBSIDIAN_READ_SCHEMA
 
 def register(ctx):

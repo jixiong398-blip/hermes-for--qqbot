@@ -101,10 +101,11 @@ platforms:
       http_url: http://127.0.0.1:3000
       require_mention: false
       ws_url: ws://127.0.0.1:3001/
+      admin_id: {{OWNER_QQ}}
     gateway_restart_notification: false
     home_channel:
       chat_id: '{{HOME_CHANNEL}}'
-      name: {{CHANNEL_NAME}}
+      name: '{{CHANNEL_NAME}}'
       platform: onebot
 plugins:
   enabled:

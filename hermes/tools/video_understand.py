@@ -1,4 +1,4 @@
-#!/home/{{USERNAME}}/.hermes/.venv/bin/python3
+#!/usr/bin/env python3
 """Video/image understanding via SmolVLM2 (transformers, 256M params, ~1GB).
 
 Usage:
