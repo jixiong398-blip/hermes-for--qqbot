@@ -703,6 +703,13 @@ class GatewayRunner:
         except Exception:
             return False
 
+    def _should_send_home_channel_prompt(self, source: SessionSource) -> bool:
+        platform = source.platform
+        if platform is None or platform.value in {"local", "webhook"}:
+            return False
+        env_key = f"{platform.value.upper()}_HOME_CHANNEL"
+        return not os.getenv(env_key) and self.config.get_home_channel(platform) is None
+
     # -- Voice mode persistence ------------------------------------------
 
     _VOICE_MODE_PATH = _hermes_home / "gateway_voice_mode.json"
@@ -787,14 +794,23 @@ class GatewayRunner:
                 model=model,
                 max_iterations=8,
                 quiet_mode=True,
-                skip_memory=True,  # Flush agent — no memory provider
+                skip_memory=True,  # Flush agent - no memory provider lifecycle hooks
                 enabled_toolsets=["memory", "skills"],
                 session_id=old_session_id,
             )
             try:
-                # Fully silence the flush agent — quiet_mode only suppresses init
+                # skip_memory=True above skips provider hooks (on_session_start/end)
+                # but also leaves _memory_store=None, which makes the memory tool
+                # return "Memory is not available".  Manually init the store so
+                # the flush agent can read/write MEMORY.md and USER.md.
+                if tmp_agent._memory_store is None:
+                    from tools.memory_tool import BoundedMemoryStore
+                    tmp_agent._memory_store = BoundedMemoryStore()
+                    tmp_agent._memory_store.load_from_disk()
+
+                # Fully silence the flush agent - quiet_mode only suppresses init
                 # messages; tool call output still leaks to the terminal through
-                # _safe_print → _print_fn.  Set a no-op to prevent that.
+                # _safe_print -> _print_fn.  Set a no-op to prevent that.
                 tmp_agent._print_fn = lambda *a, **kw: None
 
                 # Build conversation history from transcript
@@ -859,7 +875,7 @@ class GatewayRunner:
                 self._cleanup_agent_resources(tmp_agent)
             logger.info("Pre-reset memory flush completed for session %s", old_session_id)
         except Exception as e:
-            logger.debug("Pre-reset memory flush failed for session %s: %s", old_session_id, e)
+            logger.warning("Pre-reset memory flush failed for session %s: %s", old_session_id, e, exc_info=True)
 
     async def _async_flush_memories(
         self,
@@ -2076,7 +2092,7 @@ class GatewayRunner:
                 # Collect expired sessions first, then log a single summary.
                 _expired_entries = []
                 for key, entry in list(self.session_store._entries.items()):
-                    if entry.memory_flushed:
+                    if entry.expiry_finalized:
                         continue
                     if not self.session_store._is_session_expired(entry):
                         continue
@@ -2124,7 +2140,7 @@ class GatewayRunner:
                         # Mark as flushed and persist to disk so the flag
                         # survives gateway restarts.
                         with self.session_store._lock:
-                            entry.memory_flushed = True
+                            entry.expiry_finalized = True
                             self.session_store._save()
                         logger.debug(
                             "Memory flush completed for session %s",
@@ -2141,7 +2157,7 @@ class GatewayRunner:
                                 failures, entry.session_id, e,
                             )
                             with self.session_store._lock:
-                                entry.memory_flushed = True
+                                entry.expiry_finalized = True
                                 self.session_store._save()
                             _flush_failures.pop(entry.session_id, None)
                         else:
@@ -2152,7 +2168,7 @@ class GatewayRunner:
 
                 if _expired_entries:
                     _flushed = sum(
-                        1 for _, e in _expired_entries if e.memory_flushed
+                        1 for _, e in _expired_entries if e.expiry_finalized
                     )
                     _failed = len(_expired_entries) - _flushed
                     if _failed:
@@ -2646,6 +2662,14 @@ class GatewayRunner:
                 logger.warning("QQBot: aiohttp/httpx missing or QQ_APP_ID/QQ_CLIENT_SECRET not configured")
                 return None
             return QQAdapter(config)
+
+        try:
+            from gateway.platform_registry import platform_registry
+            adapter = platform_registry.create_adapter(platform.value, config)
+            if adapter is not None:
+                return adapter
+        except Exception:
+            logger.debug("Platform registry lookup failed for '%s'", platform.value)
 
         return None
 
@@ -4048,20 +4072,18 @@ class GatewayRunner:
         
         # One-time prompt if no home channel is set for this platform
         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
+        if not history and self._should_send_home_channel_prompt(source):
             platform_name = source.platform.value
-            env_key = f"{platform_name.upper()}_HOME_CHANNEL"
-            if not os.getenv(env_key):
-                adapter = self.adapters.get(source.platform)
-                if adapter:
-                    await adapter.send(
-                        source.chat_id,
-                        f"📬 No home channel is set for {platform_name.title()}. "
-                        f"A home channel is where Hermes delivers cron job results "
-                        f"and cross-platform messages.\n\n"
-                        f"Type /sethome to make this chat your home channel, "
-                        f"or ignore to skip."
-                    )
+            adapter = self.adapters.get(source.platform)
+            if adapter:
+                await adapter.send(
+                    source.chat_id,
+                    f"📬 No home channel is set for {platform_name.title()}. "
+                    f"A home channel is where Hermes delivers cron job results "
+                    f"and cross-platform messages.\n\n"
+                    f"Type /sethome to make this chat your home channel, "
+                    f"or ignore to skip."
+                )
         
         # -----------------------------------------------------------------
         # Voice channel awareness — inject current voice channel state

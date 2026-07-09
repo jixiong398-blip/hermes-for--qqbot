@@ -3,7 +3,7 @@
          │      清   尘   璃   落      │
          └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
     上联：代码永无 bug  佛祖座下莲花放
-    下联：{{CHANNEL_NAME}}赐福  素世心中万世安
+    下联：清尘璃落赐福  素世心中万世安
 
               _ooOoo_
              o8888888o
@@ -185,7 +185,7 @@ class UnifiedMemoryGateway:
           - recalled_ids: list of LTM entry IDs that were hit
           - results: list of RetrievalResult objects
         """
-        results = self._retriever.recall(query, session_id, limit_per_source=5)
+        results = self._retriever.recall(query, session_id, limit_per_source=10)
 
         ltm_seed_ids = [r.metadata["id"] for r in results
                         if r.source == "long_term" and r.metadata.get("id")]
@@ -322,7 +322,7 @@ class UnifiedMemoryGateway:
         # Check database entries — covers sessions where process_turn()
         # was called in the agent subprocess rather than the gateway
         try:
-            entries = self.stm.get_recent(session_id, n=self._consolidation_min_turns)
+            entries = self._stm.get_recent(session_id, n=self._consolidation_min_turns)
             if len(entries) >= self._consolidation_min_turns:
                 return self.consolidate(session_id)
         except Exception:

@@ -2,13 +2,13 @@
 
 Records every conversation turn into Short-Term Memory and the Layer 0
 event stream. Triggers consolidation on session end. Runs periodic
-maintenance (decay, pruning, cleanup).
+maintenance (distillation, decay, pruning, cleanup).
 
 Events handled:
   agent:start      → Record user message in STM + Layer 0 JSONL
   agent:end        → Record assistant response in STM + Layer 0 JSONL
   session:end      → Run STM→LTM consolidation
-  gateway:startup  → Start periodic maintenance timer
+  gateway:startup  → Start periodic maintenance timer (hourly distill + daily sleep)
 
 All operations are best-effort — failures are logged but never block
 the message pipeline.
@@ -202,6 +202,34 @@ async def _on_gateway_startup(context: dict) -> None:
                             "Memory maintenance: pruned=%d STM, %d workflows decayed",
                             pruned, decayed,
                         )
+
+                    # Hourly distillation: consolidate every active session
+                    # with enough accumulated turns. Without this, sessions
+                    # that never get an explicit /reset (QQ group/private
+                    # chat is the canonical case) keep accumulating STM rows
+                    # but never promote facts to LTM/WFM — MEMORY.md freezes.
+                    # consolidate_if_needed is idempotent: it marks rows
+                    # summarized=1 so re-runs on the same turns are no-ops.
+                    try:
+                        conn = gw._store._get_conn()
+                        rows = conn.execute(
+                            "SELECT DISTINCT session_id FROM short_term_entries "
+                            "WHERE summarized = 0"
+                        ).fetchall()
+                        for (sid,) in rows:
+                            if not sid:
+                                continue
+                            cstats = gw.consolidate_if_needed(sid)
+                            if cstats and cstats.get("status") != "skipped":
+                                logger.info(
+                                    "Periodic distill [%s]: promoted=%d reinforced=%d wf=%d",
+                                    sid[:20],
+                                    cstats.get("facts_promoted", 0),
+                                    cstats.get("facts_reinforced", 0),
+                                    cstats.get("workflows_suggested", 0),
+                                )
+                    except Exception as e:
+                        logger.debug("Periodic distill failed: %s", e)
 
                     now = datetime.now(timezone.utc)
                     today_str = now.strftime("%Y-%m-%d")

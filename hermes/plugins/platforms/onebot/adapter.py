@@ -1,35 +1,35 @@
-"""
-         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
-         │      清   尘   璃   落      │
-         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
-    上联：代码永无 bug  佛祖座下莲花放
-    下联：清尘璃落赐福  素世心中万世安
+#         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐         
+#          │      清   尘   璃   落      │          
+#         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘         
+#              上联：代码永无 bug  佛祖座下莲花放             
+#               下联：清尘璃落赐福  素世心中万世安              
+#
+#                    _ooOoo_                    
+#                   o8888888o                   
+#                   88" . "88                   
+#                   (| -_- |)                   
+#                   O\  =  /O                   
+#                ____/`---'\____                
+#              .'  \\|     |//  `.              
+#             /  \\|||  :  |||//  \             
+#            /  _||||| -:- |||||-  \            
+#            |   | \\\  -  /// |   |            
+#            | \_|  ''\---/''  |   |            
+#            \  .-\__  `-`  ___/-. /            
+#           ___`. .'  /--.--\  `. . __          
+#        ."" '<  `.___\_<|>_/___.'  >'"".       
+#      | | :  `- \`.;`\ _ /`;.`/ - ` : | |      
+#      \  \ `-.   \_ __\ /__ _/   .-` /  /      
+# ======`-.____`-.___\_____/___.-`____.-'====== 
+#                    `=---='                    
+#          }  }  }  }  莲花台  {  {  {  {          
+#          }  }  }  }  莲花台  {  {  {  {          
+#          }  }  }  }  莲花台  {  {  {  {          
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#                 佛祖保佑    永无 bug                
+#
 
-              _ooOoo_
-             o8888888o
-             88" . "88
-             (| -_- |)
-             O\  =  /O
-          ____/`---'\____
-        .'  \\|     |//  `.
-       /  \\|||  :  |||//  \
-      /  _||||| -:- |||||-  \
-      |   | \\\  -  /// |   |
-      | \_|  ''\---/''  |   |
-      \  .-\__  `-`  ___/-. /
-    ___`. .'  /--.--\  `. . __
-  ."" '<  `.___\_<|>_/___.'  >'"".
- | | :  `- \`.;`\ _ /`;.`/ - ` : | |
- \  \ `-.   \_ __\ /__ _/   .-` /  /
-======`-.____`-.___\_____/___.-`____.-'======
-                   `=---='
-         }  }  }  }  莲花台  {  {  {  {
-         }  }  }  }  莲花台  {  {  {  {
-         }  }  }  }  莲花台  {  {  {  {
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-              佛祖保佑    永无 bug
-
-OneBot v11 adapter for Hermes Agent.
+"""OneBot v11 adapter for Hermes Agent.
 
 Connects to QQ via NapCat/Lagrange/go-cqhttp using the OneBot v11 protocol
 over WebSocket. Supports both forward (bot connects to NapCat) and backward
@@ -327,6 +327,19 @@ class OneBotAdapter(BasePlatformAdapter):
                                 );
                                 CREATE INDEX IF NOT EXISTS idx_corpus_chat_time ON corpus_messages(chat_id, created_at);
                                 CREATE INDEX IF NOT EXISTS idx_corpus_group ON corpus_messages(group_id, created_at);
+                                CREATE INDEX IF NOT EXISTS idx_corpus_message_id ON corpus_messages(message_id);
+                                -- FTS5 full-text search for corpus_messages (trigram tokenizer for Chinese substring matching)
+                                CREATE VIRTUAL TABLE IF NOT EXISTS corpus_messages_fts USING fts5(
+                                    content_readable, sender_name,
+                                    content='corpus_messages',
+                                    content_rowid='id',
+                                    tokenize='trigram'
+                                );
+                                -- INSERT trigger: corpus_messages is append-only (no UPDATE/DELETE triggers needed)
+                                CREATE TRIGGER IF NOT EXISTS corpus_fts_ai AFTER INSERT ON corpus_messages BEGIN
+                                    INSERT INTO corpus_messages_fts(rowid, content_readable, sender_name)
+                                    VALUES (new.id, new.content_readable, new.sender_name);
+                                END;
                                 CREATE TABLE IF NOT EXISTS corpus_pairs (
                                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                                     trigger_msg_id TEXT DEFAULT '',
@@ -1267,7 +1280,11 @@ class OneBotAdapter(BasePlatformAdapter):
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": "请将这段语音转写为文字。只输出转写结果，不要解释。中文。"},
-                                {"type": "input_audio", "input_audio": {"data": f"data:{mime};base64,{b64}"}},
+                                # opencodego relay forwards to Xiaomi MiMo; the
+                                # OpenAI-realtime `input_audio` schema is rejected
+                                # with "invalid audio format". MiMo accepts the
+                                # image-style `audio_url` carrying a data URL.
+                                {"type": "audio_url", "audio_url": {"url": f"data:{mime};base64,{b64}"}},
                             ],
                         }],
                     },
@@ -2174,7 +2191,8 @@ class OneBotAdapter(BasePlatformAdapter):
 
             msg_time = msg.get("time", 0)
             time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
-            _prefix = f"{_mode} {trigger_reason}。{time_str} 来自「{sender_name}」：{_preview_text[:100]}。"
+            _cur_mid_tag = f"[mid:{_msg_id}] " if _msg_id else ""
+            _prefix = f"{_mode} {trigger_reason}。{time_str} {_cur_mid_tag}来自「{sender_name}」：{_preview_text[:100]}。"
             channel_prompt = (
                 _prefix
                 + (f"\n\n{group_context}" if group_context else "")
@@ -2211,7 +2229,13 @@ class OneBotAdapter(BasePlatformAdapter):
                 "- 觉得话题跟你完全没关系了、想安静潜水就输出 [QUIET]（无其他文字），之后不再被叫到就不说话\n"
                 "- 想引用某条消息就在回复里用 [reply:消息ID]，消息ID 必须是上方 [mid:xxx] 里出现过的数字，不能自己编\n"
                 "- 不写 [reply:xxx] 时默认不引用任何消息\n"
-                "- 只有在回应某条具体消息时才引用，闲聊时不引用"
+                "- 只有在回应某条具体消息时才引用，闲聊时不引用\n"
+                "\n[搜索历史] 你可以调用 search_chat_history 工具搜索 NapCat/OneBot QQ 群聊历史消息（非官方 QQBot API）：\n"
+                "- 当群友问「我之前说的...」「还记得上次...」或者提到你不在当前上下文里的话题时，用这个工具翻查历史\n"
+                "- 当你想确认某件事之前有没有讨论过、或者需要之前的上下文才能回答时，用它搜索\n"
+                "- 工具返回的每条结果都带 [mid:数字] 标签，你可以用这些 mid 值来 [reply:数字] 引用\n"
+                "- 引用时必须使用工具返回的真实 mid，绝对不能自己编造消息 ID\n"
+                "- 只在需要翻查更早消息时才搜索，当前对话已经有的就不要搜了"
             )
         else:
             session_key = f"onebot:{user_id}"
@@ -2309,35 +2333,57 @@ class OneBotAdapter(BasePlatformAdapter):
             voice_path = await self._get_voice_file(msg)
             if voice_path:
                 logger.info("[OneBot] Voice message received, saved to: %s", voice_path)
+                transcript = (await self._transcribe_voice_mimo(voice_path)).strip()
                 _vmid = str(msg.get("message_id", ""))
+                _has_transcript = bool(transcript) and transcript != "语音"
+                if _has_transcript:
+                    _voice_descs = [f"[语音转写: {transcript}]"]
+                else:
+                    _voice_descs = ["[语音]"]
+                m_text = "[语音] " + " ".join(_voice_descs)
+                if _early_reply_text:
+                    m_text = _early_reply_text + " " + m_text
                 try:
                     from .group_state import BufferedMessage
                     self._group_states.get(group_id).append_message(
                         BufferedMessage(mid=_vmid, ts=time.time(), uid=str(user_id),
-                                        name=sender_name, text=f"[语音: {voice_path}]",
-                                        msg_type="voice")
+                                        name=sender_name, text=m_text, msg_type="voice",
+                                        descriptions=_voice_descs)
                     )
                 except Exception:
                     pass
                 self._persist_chat_message(group_id, "group", int(user_id or 0), sender_name,
-                                           "[语音]", message_id=str(msg.get("message_id", "")),
+                                           m_text, message_id=str(msg.get("message_id", "")),
                                            content_raw=self._get_raw_text(msg),
                                            sender_card=sender.get("card", ""),
+                                           image_descriptions=_voice_descs,
                                            reply_to_id=str(_early_reply_id) if _early_reply_id else "",
                                            reply_to_text=_early_reply_text,
                                            at_targets=_at_targets)
-                event = MessageEvent(
-                    text="",
-                    message_type=MessageType.VOICE,
-                    source=source,
-                    raw_message=msg,
-                    message_id=str(msg.get("message_id", "")),
-                    reply_to_message_id=str(reply_msg_id) if reply_msg_id else None,
-                    reply_to_text=reply_to_text,
-                    media_urls=[voice_path],
-                    media_types=["audio/ogg"],
-                    channel_prompt=channel_prompt,
-                )
+                if _has_transcript:
+                    event = MessageEvent(
+                        text=m_text,
+                        message_type=MessageType.VOICE,
+                        source=source,
+                        raw_message=msg,
+                        message_id=str(msg.get("message_id", "")),
+                        reply_to_message_id=str(reply_msg_id) if reply_msg_id else None,
+                        reply_to_text=reply_to_text,
+                        channel_prompt=channel_prompt,
+                    )
+                else:
+                    event = MessageEvent(
+                        text="",
+                        message_type=MessageType.VOICE,
+                        source=source,
+                        raw_message=msg,
+                        message_id=str(msg.get("message_id", "")),
+                        reply_to_message_id=str(reply_msg_id) if reply_msg_id else None,
+                        reply_to_text=reply_to_text,
+                        media_urls=[voice_path],
+                        media_types=["audio/ogg"],
+                        channel_prompt=channel_prompt,
+                    )
                 await self.handle_message(event)
             else:
                 logger.warning("[OneBot] Voice message received but failed to download file")

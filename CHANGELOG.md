@@ -1,5 +1,15 @@
 ﻿# bot-template 更新日志
 
+## v0.9.3 (2026-07-07)
+- **静默 Bug 清扫**: 修复 8 个被 except Exception 吞掉的静默失效
+- 语音转写: MiMo schema 修复 (400→200) + 持久化对齐图片分支
+- session 过期 watcher: 字段改名导致 MEMORY.md flush 冻结 2 月 → 修复 4 处
+- consolidate: self.stm→self._stm 字段名修复
+- 每小时蒸馏: 从未运行 → 恢复 (memory_maintenance.py)
+- flush agent: 手动初始化 memory store
+- home channel 提示: 检查 config.yaml 而非仅 env
+- 回归测试: 4 个 test 锁定修复
+
 ## v0.9.2 (2026-07-07)
 - **脑功能分区**: CORTEX.md + CEREBELLUM.md 架构，SOUL→CORTEX→CEREBELLUM 注入链
 - **安装引导**: Dashboard onboarding 三步向导 + GitHub 更新检查 + NSIS 安装包
