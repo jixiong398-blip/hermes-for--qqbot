@@ -185,6 +185,11 @@ class OneBotAdapter(BasePlatformAdapter):
     # as a single message.
     SUPPORTS_MESSAGE_EDITING = False
 
+    # QQ/NapCat is a chat platform — system progress messages (⚡ busy-ack,
+    # ⏳ draining, 💾 self-review, etc.) must NOT be sent to the user.
+    # The gateway checks this flag before sending any system-initiated message.
+    SUPPORTS_SYSTEM_MESSAGES = False
+
     def __init__(self, config, **kwargs):
         from gateway.config import Platform as _Platform
         super().__init__(config=config, platform=_Platform("onebot"))
@@ -1753,6 +1758,105 @@ class OneBotAdapter(BasePlatformAdapter):
         else:
             return await self._process_message_impl(msg)
 
+    async def _extract_forward_content(self, msg: dict) -> tuple[str, str, list[str]]:
+        """Extract forwarded/merged chat record content from a message.
+
+        Unified extraction for both group and private messages.
+        Tries (in order):
+        1. NapCat extension: segment data.content (inline, no API call)
+        2. get_forward_msg API with message_id param (NapCat convention)
+        3. get_forward_msg API with id param (OneBot 11 spec fallback)
+
+        Returns (forward_summary, forward_detail, forward_image_paths).
+        Both strings are "" if no forward content was found or extraction failed.
+        forward_summary is a compact one-liner for buffers/DB.
+        forward_detail is a multi-line block for LLM channel_prompt context.
+        """
+        segments = msg.get("message", [])
+        if not isinstance(segments, list):
+            return "", "", []
+
+        forward_id = None
+        for seg in segments:
+            if seg.get("type") in ("forward", "node"):
+                forward_id = self._get_seg_data(seg, "id", "")
+                if forward_id:
+                    break
+        if not forward_id:
+            raw_text = self._get_raw_text(msg) or ""
+            fm = re.search(r'\[CQ:forward,id=(\d+)', raw_text)
+            if fm:
+                forward_id = fm.group(1)
+        if not forward_id:
+            return "", "", []
+
+        fwd_msgs = None
+        forward_image_paths: list[str] = []
+
+        # Try 1: NapCat extension - inline content in segment data
+        for seg in segments:
+            if seg.get("type") in ("forward", "node"):
+                raw_content = seg.get("data", {}).get("content")
+                if isinstance(raw_content, list):
+                    fwd_msgs = raw_content
+                elif isinstance(raw_content, str):
+                    import json as _json
+                    try:
+                        fwd_msgs = _json.loads(raw_content)
+                    except Exception:
+                        pass
+                if fwd_msgs:
+                    break
+
+        # Try 2: get_forward_msg API (fallback for expired or non-inline forwards)
+        if not fwd_msgs:
+            await asyncio.sleep(3)
+            for param_key in ("message_id", "id"):
+                try:
+                    fwd_data = await self._send_action("get_forward_msg", {param_key: forward_id})
+                    fwd_msgs = fwd_data.get("data", {}).get("messages", [])
+                    if fwd_msgs:
+                        break
+                except Exception as e:
+                    logger.debug("[OneBot] get_forward_msg (%s=%s) failed: %s", param_key, forward_id, e)
+                    continue
+
+        if not fwd_msgs:
+            logger.warning("[OneBot] Forward extraction failed for id=%s", forward_id)
+            return "", "", []
+
+        summary_parts = []
+        detail_parts = []
+        for fm in fwd_msgs:
+            name = fm.get("sender", {}).get("nickname", "?")
+            fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
+            if self._has_image_message(fm):
+                try:
+                    _fwd_imgs = await self._get_image_files(fm)
+                    if _fwd_imgs:
+                        forward_image_paths.extend(_fwd_imgs)
+                        fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
+                except Exception:
+                    pass
+            fwd_text = self._cq_to_readable(fwd_text or "")
+            if not fwd_text:
+                continue
+            _uid = fm.get("user_id") or fm.get("sender", {}).get("user_id", "")
+            _prefix = f"{name}(QQ{_uid})" if _uid else name
+            summary_parts.append(f"{_prefix}: {fwd_text[:80]}")
+            detail_parts.append(f"{name}: {fwd_text}")
+
+        if not summary_parts:
+            return "", "", []
+
+        forward_summary = "[转发: " + " | ".join(summary_parts) + "]"
+        forward_detail = "[转发消息内容]\n" + "\n".join(detail_parts)
+        if len(forward_detail) > 2000:
+            forward_detail = forward_detail[:2000] + "\n...[已截断]"
+
+        logger.info("[OneBot] Extracted forward: %d msgs, %d images", len(summary_parts), len(forward_image_paths))
+        return forward_summary, forward_detail, forward_image_paths
+
     async def _process_message_impl(self, msg: dict) -> None:
         """Inner message processing — called under group lock for group messages."""
         user_id = msg.get("user_id")
@@ -1791,10 +1895,14 @@ class OneBotAdapter(BasePlatformAdapter):
         sender = msg.get("sender", {})
         sender_name = sender.get("card") or sender.get("nickname") or f"QQ{user_id}"
 
+        # Unified forward extraction (before group/DM branch so both paths share it)
+        _fwd_summary, _fwd_detail, _fwd_images = await self._extract_forward_content(msg)
+
         # Persist private messages (group messages are persisted inside the block below)
         if msg_type == "private":
+            _persist_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
             self._persist_chat_message(str(user_id), "private", int(user_id), sender_name,
-                                       self._cq_to_readable(raw_text),
+                                       _persist_text,
                                        message_id=str(msg.get("message_id", "")),
                                        content_raw=raw_text,
                                        sender_card=sender.get("card", ""))
@@ -1863,61 +1971,9 @@ class OneBotAdapter(BasePlatformAdapter):
                 except Exception:
                     _image_hint = " [image:download_failed]"
 
-            # Buffer ALL group messages for context
-            # Extract forwarded/merged chat records from segment data BEFORE cleaning
-            _fwd_text = ""
-            _segments = msg.get("message", [])
-            _seg_types = [s.get("type","?") for s in _segments] if isinstance(_segments, list) else []
-            if "forward" in _seg_types or "node" in _seg_types or "CQ:forward" in (raw_text or ""):
-                try:
-                    _full = await self._send_action("get_forward_msg", {"message_id": msg.get("message_id")})
-                    _segments = (_full.get("data", {}) or {}).get("messages", [])
-                except Exception as e:
-                    logger.debug("[OneBot] get_forward_msg failed: %s", e)
-            # Build forward text from either segment data.content or API messages
-            _fwd_parts = []
-            _fwd_image_paths = []
-            for _seg in _segments if isinstance(_segments, list) else []:
-                if _seg.get("sender"):  # API response
-                    _name = _seg.get("sender", {}).get("nickname", "?")
-                    _t = _seg.get("raw_message") or OneBotAdapter._get_text_from_segments(_seg)
-                    if self._has_image_message(_seg):
-                        try:
-                            _imgs = await self._get_image_files(_seg)
-                            if _imgs:
-                                _fwd_image_paths.extend(_imgs)
-                                _t = (_t or "") + " [图片]"
-                        except Exception:
-                            _t = (_t or "") + " [图片]"
-                    _uid = _seg.get("user_id") or _seg.get("sender", {}).get("user_id", "")
-                    _prefix = f"{_name}(QQ{_uid})" if _uid else _name
-                    _fwd_parts.append(f"{_prefix}: {_t[:80]}")
-                elif _seg.get("type") in ("forward", "node"):
-                    _content = _seg.get("data", {}).get("content")
-                    if isinstance(_content, list):
-                        for _fm in _content[:10]:
-                            _name = _fm.get("sender", {}).get("nickname", "?")
-                            _t = _fm.get("raw_message") or OneBotAdapter._get_text_from_segments(_fm)
-                            if self._has_image_message(_fm):
-                                try:
-                                    _imgs = await self._get_image_files(_fm)
-                                    if _imgs:
-                                        _fwd_image_paths.extend(_imgs)
-                                        _t = (_t or "") + " [图片]"
-                                except Exception:
-                                    _t = (_t or "") + " [图片]"
-                            _uid = _fm.get("user_id") or _fm.get("sender", {}).get("user_id", "")
-                            _prefix = f"{_name}(QQ{_uid})" if _uid else _name
-                            _fwd_parts.append(f"{_prefix}: {_t[:80]}")
-                    break
-            if _fwd_parts:
-                _fwd_text = "[转发: " + " | ".join(_fwd_parts) + "]"
-                logger.debug("[OneBot] Extracted forward: %d msgs, %d images", len(_fwd_parts), len(_fwd_image_paths))
-            # Clean CQ codes — use forward text if available, otherwise raw text
-            _clean_text = _fwd_text if _fwd_text else self._cq_to_readable(raw_text)
-            # Inject downloaded forward images into buffer so vision tool can process them
-            if _fwd_image_paths:
-                _clean_text += " [image:" + ",".join(_fwd_image_paths) + "]"
+            _clean_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
+            if _fwd_images:
+                _clean_text += " [image:" + ",".join(_fwd_images) + "]"
             m_text = (_clean_text + _image_hint)
             if _image_descs:
                 m_text += " " + " ".join(_image_descs)
@@ -2450,80 +2506,11 @@ class OneBotAdapter(BasePlatformAdapter):
             text = f"[{time_str}] {text}"
         logger.info("[OneBot] Extracted text: %s", text[:200] if text else "(empty)")
 
-        # Handle forwarded/merged messages (聊天记录合并转发)
-        # NapCat represents forwards as: type="forward"/type="node" in array format,
-        # or [CQ:forward,id=xxx,...] in CQ code format. Try all known patterns.
         segments = msg.get("message", [])
-        forward_id = None
-        for seg in segments if isinstance(segments, list) else []:
-            if seg.get("type") in ("forward", "node"):
-                forward_id = self._get_seg_data(seg, "id", "")
-                if forward_id:
-                    break
-        # Fallback: extract id from CQ code in raw_message
-        if not forward_id:
-            raw_text = self._get_raw_text(msg) or ""
-            fm = re.search(r'\[CQ:forward,id=(\d+)', raw_text)
-            if fm:
-                forward_id = fm.group(1)
-        forward_image_paths = []
-        if forward_id:
-            # Try 1: embedded content in segment data (most reliable, no API call)
-            fwd_msgs = None
-            for seg in segments if isinstance(segments, list) else []:
-                if seg.get("type") in ("forward", "node"):
-                    raw_content = seg.get("data", {}).get("content")
-                    if isinstance(raw_content, list):
-                        fwd_msgs = raw_content
-                    elif isinstance(raw_content, str):
-                        import json as _json
-                        try:
-                            fwd_msgs = _json.loads(raw_content)
-                        except Exception:
-                            pass
-                    if fwd_msgs:
-                        break
-            # Try 2: get_forward_msg API (fallback for expired forwards)
-            if not fwd_msgs:
-                await asyncio.sleep(3)
-                for param_key in ("message_id", "id"):
-                    try:
-                        fwd_data = await self._send_action("get_forward_msg", {param_key: forward_id})
-                        fwd_msgs = fwd_data.get("data", {}).get("messages", [])
-                        if fwd_msgs:
-                            break
-                    except Exception:
-                        continue
-            if fwd_msgs:
-                parts = []
-                for fm in fwd_msgs:
-                    name = fm.get("sender", {}).get("nickname", "")
-                    fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
-                    # Download images in forwarded messages for vision
-                    if self._has_image_message(fm):
-                        try:
-                            _fwd_imgs = await self._get_image_files(fm)
-                            if _fwd_imgs:
-                                forward_image_paths.extend(_fwd_imgs)
-                                fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
-                        except Exception:
-                            pass
-                    # Clean CQ codes from text
-                    fwd_text = self._cq_to_readable(fwd_text or "")
-                    if fwd_text:
-                        parts.append(f"{name}: {fwd_text}")
-                if parts:
-                    # Forwarded content goes into channel_prompt as context,
-                    # NOT into the main text
-                    _fwd_block = "[转发消息内容]\n" + "\n".join(parts)
-                    if len(_fwd_block) > 2000:
-                        _fwd_block = _fwd_block[:2000] + "\n...[已截断]"
-                    if not hasattr(self, '_fwd_temp'):
-                        self._fwd_temp = {}
-                    self._fwd_temp[forward_id] = _fwd_block
-                    text = text or ""
         if text.strip().startswith("[CQ:forward"):
             text = ""
+        if not text.strip() and _fwd_summary:
+            text = "[转发消息]"
         if not text.strip():
             # Try to extract text from json/xml segments (QQ mini-programs, cards)
             extra_text = []
@@ -2559,11 +2546,8 @@ class OneBotAdapter(BasePlatformAdapter):
             thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False),
         )
 
-        # Inject forwarded message content into channel_prompt as low-priority context.
-        # Forward content must NOT override the main text — it's supplementary.
-        _fwd_block = getattr(self, '_fwd_temp', {}).pop(forward_id, "") if forward_id else ""
-        if _fwd_block and channel_prompt:
-            channel_prompt += f"\n\n{_fwd_block}"
+        if _fwd_detail and channel_prompt:
+            channel_prompt += f"\n\n{_fwd_detail}"
 
         # Build text message event
         _all_media_urls = list(reply_media_urls) if reply_media_urls else []
@@ -2577,8 +2561,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 if _p not in _all_media_urls:
                     _all_media_urls.append(_p)
                     _all_media_types.append("image/jpeg")
-        if forward_id and forward_image_paths:
-            for _p in forward_image_paths:
+        if _fwd_images:
+            for _p in _fwd_images:
                 if _p not in _all_media_urls:
                     _all_media_urls.append(_p)
                     _all_media_types.append("image/jpeg")
@@ -2700,18 +2684,10 @@ class OneBotAdapter(BasePlatformAdapter):
             else:
                 reply_to = None
 
-        # ── QQ 最终防线：过滤系统提示词和括号动作描写 ──
+        # ── QQ 最终防线：过滤括号动作描写 ──
         if content:
             # 保存原始内容用于括号删除后的表情包回退
             _original_for_mood = content
-            # 过滤含 💾 的整行和网关系统消息
-            lines = content.split('\n')
-            filtered_lines = [l for l in lines if '💾' not in l 
-                              and 'Self-improvement review' not in l
-                              and 'Gateway is' not in l
-                              and 'not accepting' not in l
-                              and '⏳' not in l]
-            content = '\n'.join(filtered_lines)
             # 删除括号动作描写
             content = re.sub(r'（[^）]*）', '', content)
             # 删除后为空 → 检测关键词映射表情包
@@ -3144,4 +3120,10 @@ def register(ctx):
         validate_config=_validate_config,
         is_connected=_is_connected,
         required_env=["ONEBOT_WS_URL"],
-        in
+        install_hint="pip install websockets httpx",
+        env_enablement_fn=_env_enablement,
+        allowed_users_env="ONEBOT_ALLOWED_USERS",
+        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
+        emoji="🐧",
+        pii_safe=False,
+    )

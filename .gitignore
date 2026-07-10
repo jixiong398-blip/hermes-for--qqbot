@@ -13,7 +13,11 @@ gateway.lock
 gateway.pid
 *.zip
 AGENTS.md
-.opencode/
+_*.py
+_*.bat
+_*.json
+release-notes.txt
+bsk-args.json
 **/node_modules/
 modules/live2d/assets/figure/
 node/
