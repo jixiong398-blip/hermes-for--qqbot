@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型下载管理</title>
+<style>
+  :root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-glass: rgba(255,255,255,0.06);
+    --bg-glass-hover: rgba(255,255,255,0.10);
+    --bg-glass-active: rgba(255,255,255,0.04);
+    --accent: #7c3aed;
+    --accent-hover: #8b5cf6;
+    --accent-muted: rgba(124,58,237,0.18);
+    --text-primary: #e0e0e0;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --border: rgba(255,255,255,0.08);
+    --border-focus: rgba(124,58,237,0.4);
+    --danger: #ef4444;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+    --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    -webkit-app-region: no-drag;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: -120px; left: 50%;
+    transform: translateX(-50%);
+    width: 420px; height: 420px;
+    background: radial-gradient(circle, rgba(124,58,237,0.13) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ====== Panel ====== */
+  .panel {
+    position: relative;
+    z-index: 1;
+    width: 560px;
+    max-width: 95vw;
+    height: 700px;
+    max-height: 92vh;
+    background: rgba(22,33,62,0.85);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ====== Title bar ====== */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 6px 0 18px;
+    height: 44px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    -webkit-app-region: drag;
+    background: rgba(0,0,0,0.15);
+  }
+  .titlebar__text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+  }
+  .titlebar__close {
+    -webkit-app-region: no-drag;
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent;
+    color: var(--text-muted); font-size: 18px;
+    border-radius: var(--radius-sm);
+    cursor: pointer; line-height: 1;
+    transition: all var(--transition);
+  }
+  .titlebar__close:hover {
+    background: rgba(239,68,68,0.2);
+    color: var(--danger);
+  }
+
+  /* ====== Toolbar ====== */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.08);
+  }
+  .search-box {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--transition);
+  }
+  .search-box:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+  .search-box__icon {
+    color: var(--text-muted);
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .search-box input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .search-box input::placeholder { color: var(--text-muted); }
+  .toolbar__count {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* ====== Category tabs ====== */
+  .tabs {
+    display: flex;
+    flex-shrink: 0;
+    padding: 0 14px;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.08);
+  }
+  .tab {
+    -webkit-app-region: no-drag;
+    padding: 9px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border: none; background: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition);
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text-secondary); }
+  .tab--active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ====== Content ====== */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .content::-webkit-scrollbar { width: 4px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+  .content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+  /* ====== Role card ====== */
+  .role-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition);
+    flex-shrink: 0;
+  }
+  .role-card:hover { background: var(--bg-glass-hover); }
+  .role-card--installed {
+    border-color: rgba(34,197,94,0.2);
+    background: rgba(34,197,94,0.04);
+  }
+  .role-card--downloading {
+    border-color: rgba(124,58,237,0.25);
+    background: rgba(124,58,237,0.05);
+  }
+  .role-card--error {
+    border-color: rgba(239,68,68,0.2);
+  }
+
+  /* Thumbnail */
+  .role-thumb {
+    width: 52px; height: 52px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  .role-thumb__img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: none;
+  }
+  .role-thumb__img--loaded { display: block; }
+  .role-thumb__placeholder {
+    font-size: 20px;
+    opacity: 0.3;
+  }
+
+  /* Info */
+  .role-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .role-info__char {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .role-info__costume {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .role-info__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .role-info__size {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    display: none;
+    width: 100%;
+    height: 3px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+  }
+  .progress-wrap--visible { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 120ms linear;
+    width: 0%;
+  }
+  .progress-bar--done { background: var(--success); }
+  .progress-bar--error { background: var(--danger); }
+  .progress-text {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 1px;
+    display: none;
+  }
+  .progress-text--visible { display: block; }
+
+  /* Action buttons */
+  .role-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .btn {
+    -webkit-app-region: no-drag;
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+    line-height: 1.4;
+  }
+  .btn:hover { background: var(--bg-glass-hover); border-color: rgba(255,255,255,0.2); }
+  .btn:active { background: var(--bg-glass-active); }
+  .btn--accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn--accent:hover { background: var(--accent-hover); }
+  .btn--success {
+    background: transparent;
+    border-color: rgba(34,197,94,0.25);
+    color: var(--success);
+    cursor: default;
+  }
+  .btn--success:hover { background: rgba(34,197,94,0.08); }
+  .btn--danger {
+    background: transparent;
+    border-color: rgba(239,68,68,0.2);
+    color: var(--danger);
+  }
+  .btn--danger:hover { background: rgba(239,68,68,0.1); }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .btn--retry {
+    background: transparent;
+    border-color: rgba(245,158,11,0.25);
+    color: var(--warning);
+    font-size: 10px;
+    padding: 4px 10px;
+  }
+  .btn--retry:hover { background: rgba(245,158,11,0.1); }
+
+  /* ====== Badge ====== */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 10px;
+    line-height: 1.5;
+  }
+  .badge--main {
+    background: rgba(124,58,237,0.15);
+    color: var(--accent);
+  }
+  .badge--sub {
+    background: rgba(107,114,128,0.15);
+    color: var(--text-muted);
+  }
+  .badge--installed {
+    background: rgba(34,197,94,0.12);
+    color: var(--success);
+  }
+
+  /* ====== States ====== */
+  .state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 20px;
+  }
+  .state__icon { font-size: 36px; opacity: 0.4; }
+  .state__text {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .state--hidden { display: none; }
+
+  /* Loading spinner */
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid rgba(255,255,255,0.08);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ====== Footer ====== */
+  .footer {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: rgba(0,0,0,0.1);
+  }
+  .footer__stats {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .footer__actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* ====== Toast ====== */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    padding: 8px 20px;
+    font-size: 12px;
+    color: #fff;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    z-index: 100;
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+    max-width: 80%;
+    text-align: center;
+  }
+  .toast--show { transform: translateX(-50%) translateY(0); }
+  .toast--error { border-color: rgba(239,68,68,0.3); color: #fca5a5; }
+
+  /* ====== Confirm dialog ====== */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .overlay--hidden { display: none; }
+  .dialog {
+    background: rgba(22,33,62,0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 20px 24px;
+    max-width: 360px;
+    text-align: center;
+    box-shadow: var(--shadow-lg);
+  }
+  .dialog__text {
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+  }
+  .dialog__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Confirm Overlay -->
+<div class="overlay overlay--hidden" id="overlay">
+  <div class="dialog">
+    <div class="dialog__text" id="dialogText"></div>
+    <div class="dialog__actions">
+      <button class="btn" id="dialogCancel">取消</button>
+      <button class="btn btn--accent" id="dialogConfirm">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- Panel -->
+<div class="panel">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <span class="titlebar__text">模型下载管理</span>
+    <button class="titlebar__close" onclick="window.close()" title="关闭">&times;</button>
+  </div>
+
+  <!-- Category tabs -->
+  <div class="tabs" id="tabs">
+    <button class="tab tab--active" data-cat="all">全部</button>
+    <button class="tab" data-cat="main">主角</button>
+    <button class="tab" data-cat="sub">配角</button>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="search-box">
+      <span class="search-box__icon">&#x1F50D;</span>
+      <input type="text" id="searchInput" placeholder="搜索角色名称..." oninput="onSearch()">
+    </div>
+    <span class="toolbar__count" id="toolbarCount">0 个模型</span>
+  </div>
+
+  <!-- Content -->
+  <div class="content" id="content">
+
+    <!-- Loading state -->
+    <div class="state" id="stateLoading">
+      <div class="spinner"></div>
+      <span class="state__text">加载模型列表...</span>
+    </div>
+
+    <!-- Error state -->
+    <div class="state state--hidden" id="stateError">
+      <span class="state__icon">&#x26A0;</span>
+      <span class="state__text" id="stateErrorText">加载失败</span>
+      <button class="btn btn--accent" onclick="loadRoles()">重试</button>
+    </div>
+
+    <!-- Empty state -->
+    <div class="state state--hidden" id="stateEmpty">
+      <span class="state__icon">&#x1F4E6;</span>
+      <span class="state__text">没有找到匹配的模型</span>
+    </div>
+
+    <!-- Role list (populated dynamically) -->
+    <div id="roleList"></div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer__stats">
+      <span id="footerInstalled">已安装 0</span>
+      <span>&#x2022;</span>
+      <span id="footerDownloading">下载中 0</span>
+    </div>
+    <div class="footer__actions">
+      <button class="btn" id="btnRefresh" onclick="loadRoles()">刷新列表</button>
+      <button class="btn btn--accent" id="btnBatchDownload" onclick="onBatchDownload()" disabled>一键下载全部</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================================
+// IPC Setup
+// ============================================================================
+let ipc = null;
+let ipcAvailable = false;
+
+function setupIPC() {
+  // Try multiple methods to access ipcRenderer
+  if (typeof require === 'function') {
+    try {
+      const electron = require('electron');
+      if (electron && electron.ipcRenderer) {
+        ipc = electron.ipcRenderer;
+        ipcAvailable = true;
+        return;
+      }
+    } catch (_) {}
+  }
+  if (window.ipcRenderer) {
+    ipc = window.ipcRenderer;
+    ipcAvailable = true;
+    return;
+  }
+  if (window.electronAPI && window.electronAPI.ipcRenderer) {
+    ipc = window.electronAPI.ipcRenderer;
+    ipcAvailable = true;
+    return;
+  }
+  // Not available
+  ipcAvailable = false;
+}
+
+setupIPC();
+
+// ============================================================================
+// State
+// ============================================================================
+const MAIN_CHARS = ['anon', 'mutsumi', 'nyamu', 'rana', 'sakiko', 'soyo', 'taki', 'tomori', 'uika', 'umiri'];
+const SUB_CHARS = ['sub', 'yachiyo'];
+
+let allRoles = [];
+let activeCategory = 'all';
+let searchQuery = '';
+let downloadsInProgress = new Map();  // roleId -> {percent, status, error}
+let toastTimer = null;
+
+// ============================================================================
+// Toast
+// ============================================================================
+function showToast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.toggle('toast--error', !!isError);
+  el.classList.add('toast--show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.classList.remove('toast--show'); }, 2500);
+}
+
+// ============================================================================
+// Confirm Dialog
+// ============================================================================
+function showConfirm(msg) {
+  return new Promise(function (resolve) {
+    document.getElementById('dialogText').textContent = msg;
+    var overlay = document.getElementById('overlay');
+    overlay.classList.remove('overlay--hidden');
+    document.getElementById('dialogConfirm').onclick = function () {
+      overlay.classList.add('overlay--hidden');
+      resolve(true);
+    };
+    document.getElementById('dialogCancel').onclick = function () {
+      overlay.classList.add('overlay--hidden');
+      resolve(false);
+    };
+  });
+}
+
+// ============================================================================
+// Data: Load roles via IPC
+// ============================================================================
+function loadRoles() {
+  if (!ipcAvailable) {
+    showError('IPC 通信未就绪，请确保通过 Electron 运行此页面');
+    return;
+  }
+
+  showLoading();
+
+  try {
+    var roles = ipc.sendSync('download-get-roles');
+    if (roles && roles.error) {
+      showError(roles.error);
+      return;
+    }
+    if (!Array.isArray(roles)) {
+      showError('获取模型列表失败：响应格式错误');
+      return;
+    }
+    allRoles = roles;
+    render();
+    showList();
+  } catch (err) {
+    showError('获取模型列表失败：' + (err.message || '未知错误'));
+  }
+}
+
+// ============================================================================
+// Render
+// ============================================================================
+function getFilteredRoles() {
+  var filtered = allRoles;
+  if (activeCategory === 'main') {
+    filtered = filtered.filter(function (r) { return r.category === 'main'; });
+  } else if (activeCategory === 'sub') {
+    filtered = filtered.filter(function (r) { return r.category === 'sub'; });
+  }
+  if (searchQuery.trim()) {
+    var q = searchQuery.trim().toLowerCase();
+    filtered = filtered.filter(function (r) {
+      return r.character.toLowerCase().indexOf(q) >= 0 ||
+             (r.displayName && r.displayName.toLowerCase().indexOf(q) >= 0) ||
+             (r.costume && r.costume.toLowerCase().indexOf(q) >= 0);
+    });
+  }
+  return filtered;
+}
+
+function render() {
+  var filtered = getFilteredRoles();
+  var container = document.getElementById('roleList');
+  var html = '';
+
+  if (filtered.length === 0) {
+    showEmpty();
+    return;
+  }
+
+  showList();
+
+  for (var i = 0; i < filtered.length; i++) {
+    var role = filtered[i];
+    var dl = downloadsInProgress.get(role.id);
+    var isDL = !!dl;
+    var isErr = isDL && dl.status === 'error';
+    var cardClass = 'role-card';
+    if (role.installed) cardClass += ' role-card--installed';
+    else if (isDL) cardClass += ' role-card--downloading';
+    if (isErr) cardClass += ' role-card--error';
+
+    var charEmoji = getCharEmoji(role.character);
+
+    html += '<div class="' + cardClass + '" id="card-' + role.id + '">';
+
+    // Thumbnail
+    html += '<div class="role-thumb">';
+    html += '<span class="role-thumb__placeholder">' + charEmoji + '</span>';
+    html += '</div>';
+
+    // Info
+    html += '<div class="role-info">';
+    html += '<div class="role-info__char">' + esc(role.displayName || role.character) + '</div>';
+    html += '<div class="role-info__meta">';
+    html += '<span class="role-info__size">' + esc(role.sizeFormatted || '? MB') + '</span>';
+    if (role.category === 'main') {
+      html += '<span class="badge badge--main">主角</span>';
+    } else if (role.category === 'sub') {
+      html += '<span class="badge badge--sub">配角</span>';
+    }
+    html += '</div>';
+
+    // Progress bar
+    var progVisible = isDL ? ' progress-wrap--visible' : '';
+    html += '<div class="progress-wrap' + progVisible + '" id="prog-wrap-' + role.id + '">';
+    var barClass = 'progress-bar';
+    if (isDL && dl.status === 'done') barClass += ' progress-bar--done';
+    if (isErr) barClass += ' progress-bar--error';
+    var pct = isDL ? (dl.percent || 0) : 0;
+    html += '<div class="' + barClass + '" id="prog-bar-' + role.id + '" style="width:' + pct + '%"></div>';
+    html += '</div>';
+    var txtVisible = isDL ? ' progress-text--visible' : '';
+    var txt = '';
+    if (isDL && dl.status === 'downloading') txt = '下载中 ' + (dl.percent || 0) + '%';
+    else if (isDL && dl.status === 'connecting') txt = '连接中...';
+    else if (isDL && dl.status === 'verifying') txt = '校验中...';
+    else if (isDL && dl.status === 'done') txt = '下载完成';
+    else if (isDL && dl.status === 'installing') txt = '安装中...';
+    else if (isDL && dl.status === 'installed') txt = '已安装';
+    else if (isErr) txt = dl.error || '下载失败';
+    html += '<span class="progress-text' + txtVisible + '" id="prog-txt-' + role.id + '">' + esc(txt) + '</span>';
+
+    html += '</div>';
+
+    // Actions
+    html += '<div class="role-actions">';
+    if (role.installed) {
+      html += '<span class="badge badge--installed">已安装</span>';
+    } else if (isDL && dl.status === 'done') {
+      html += '<button class="btn btn--accent" id="btn-install-' + role.id + '" onclick="onInstall(\'' + escAttr(role.id) + '\')">安装</button>';
+    } else if (isErr) {
+      html += '<button class="btn btn--retry" onclick="onDownload(\'' + escAttr(role.id) + '\', \'' + escAttr(role.url) + '\')">重试</button>';
+    } else if (isDL) {
+      html += '<button class="btn" disabled>下载中</button>';
+    } else {
+      html += '<button class="btn btn--accent" id="btn-dl-' + role.id + '" onclick="onDownload(\'' + escAttr(role.id) + '\', \'' + escAttr(role.url) + '\')">下载</button>';
+    }
+    html += '</div>';
+
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+
+  // Update toolbar count
+  document.getElementById('toolbarCount').textContent = filtered.length + ' 个模型';
+
+  // Update footer stats
+  var installedCount = allRoles.filter(function (r) { return r.installed; }).length;
+  var downloadingCount = 0;
+  downloadsInProgress.forEach(function (d) {
+    if (d.status === 'downloading' || d.status === 'connecting' || d.status === 'verifying') {
+      downloadingCount++;
+    }
+  });
+  document.getElementById('footerInstalled').textContent = '已安装 ' + installedCount;
+  document.getElementById('footerDownloading').textContent = '下载中 ' + downloadingCount;
+
+  // Update batch button
+  var btn = document.getElementById('btnBatchDownload');
+  var notInstalled = filtered.filter(function (r) { return !r.installed; });
+  btn.disabled = notInstalled.length === 0;
+  btn.textContent = '一键下载全部 (' + notInstalled.length + ')';
+}
+
+// ============================================================================
+// Category tabs
+// ============================================================================
+document.getElementById('tabs').addEventListener('click', function (e) {
+  var tab = e.target.closest('.tab');
+  if (!tab) return;
+  activeCategory = tab.getAttribute('data-cat');
+  var tabs = document.querySelectorAll('#tabs .tab');
+  for (var i = 0; i < tabs.length; i++) { tabs[i].classList.remove('tab--active'); }
+  tab.classList.add('tab--active');
+  render();
+});
+
+// ============================================================================
+// Search
+// ============================================================================
+function onSearch() {
+  searchQuery = document.getElementById('searchInput').value;
+  render();
+}
+
+// ============================================================================
+// Download
+// ============================================================================
+function onDownload(roleId, url) {
+  if (!ipcAvailable) { showToast('IPC 未就绪', true); return; }
+
+  // Mark as downloading
+  downloadsInProgress.set(roleId, { percent: 0, status: 'connecting', error: null });
+  render();
+
+  try {
+    ipc.send('download-start', roleId, url);
+  } catch (err) {
+    downloadsInProgress.set(roleId, { percent: 0, status: 'error', error: err.message });
+    render();
+  }
+}
+
+// ============================================================================
+// Install
+// ============================================================================
+async function onInstall(roleId) {
+  if (!ipcAvailable) { showToast('IPC 未就绪', true); return; }
+
+  // Mark as installing
+  var current = downloadsInProgress.get(roleId) || {};
+  downloadsInProgress.set(roleId, { percent: 100, status: 'installing', error: null });
+  render();
+
+  try {
+    ipc.send('download-install', roleId);
+  } catch (err) {
+    downloadsInProgress.set(roleId, { percent: current.percent || 0, status: 'error', error: err.message });
+    render();
+  }
+}
+
+// ============================================================================
+// Batch Download
+// ============================================================================
+async function onBatchDownload() {
+  if (!ipcAvailable) { showToast('IPC 未就绪', true); return; }
+
+  var filtered = getFilteredRoles();
+  var toDownload = [];
+  for (var i = 0; i < filtered.length; i++) {
+    var r = filtered[i];
+    if (!r.installed && !downloadsInProgress.has(r.id)) {
+      toDownload.push(r);
+    }
+  }
+
+  if (toDownload.length === 0) {
+    showToast('没有需要下载的模型');
+    return;
+  }
+
+  var confirmed = await showConfirm(
+    '即将下载 ' + toDownload.length + ' 个模型（共 ' +
+    formatTotalSize(toDownload) + '），是否继续？'
+  );
+  if (!confirmed) return;
+
+  showToast('开始批量下载 ' + toDownload.length + ' 个模型...');
+
+  // Sequential download to avoid overwhelming the server
+  for (var i = 0; i < toDownload.length; i++) {
+    var role = toDownload[i];
+    onDownload(role.id, role.url);
+    // Small delay between starting downloads
+    await sleep(300);
+  }
+}
+
+// ============================================================================
+// IPC: Listen for download progress
+// ============================================================================
+if (ipc) {
+  ipc.on('download-progress', function (event, data) {
+    if (!data || !data.roleId) return;
+
+    var roleId = data.roleId;
+    var existing = downloadsInProgress.get(roleId) || {};
+
+    var status = data.status || existing.status || 'downloading';
+    var percent = data.percent != null ? data.percent : existing.percent || 0;
+    var error = data.error || null;
+
+    downloadsInProgress.set(roleId, {
+      percent: percent,
+      status: status,
+      error: error,
+      downloaded: data.downloaded,
+      total: data.total,
+    });
+
+    // Handle completion
+    if (status === 'installed') {
+      // Mark role as installed in allRoles
+      for (var i = 0; i < allRoles.length; i++) {
+        if (allRoles[i].id === roleId) {
+          allRoles[i].installed = true;
+          break;
+        }
+      }
+      showToast((data.character || roleId) + ' 安装完成！');
+      // Clear from in-progress after a short delay
+      setTimeout(function () {
+        downloadsInProgress.delete(roleId);
+        render();
+      }, 1500);
+    } else if (status === 'error') {
+      showToast((error || '下载失败'), true);
+    } else if (status === 'done') {
+      // Auto-install after download completes
+      setTimeout(function () { onInstall(roleId); }, 500);
+    }
+
+    render();
+  });
+}
+
+// ============================================================================
+// States
+// ============================================================================
+function showLoading() {
+  document.getElementById('stateLoading').classList.remove('state--hidden');
+  document.getElementById('stateError').classList.add('state--hidden');
+  document.getElementById('stateEmpty').classList.add('state--hidden');
+  document.getElementById('roleList').style.display = 'none';
+}
+
+function showList() {
+  document.getElementById('stateLoading').classList.add('state--hidden');
+  document.getElementById('stateError').classList.add('state--hidden');
+  document.getElementById('stateEmpty').classList.add('state--hidden');
+  document.getElementById('roleList').style.display = '';
+}
+
+function showError(msg) {
+  document.getElementById('stateLoading').classList.add('state--hidden');
+  document.getElementById('stateError').classList.remove('state--hidden');
+  document.getElementById('stateEmpty').classList.add('state--hidden');
+  document.getElementById('roleList').style.display = 'none';
+  document.getElementById('stateErrorText').textContent = msg || '加载失败';
+}
+
+function showEmpty() {
+  document.getElementById('stateLoading').classList.add('state--hidden');
+  document.getElementById('stateError').classList.add('state--hidden');
+  document.getElementById('stateEmpty').classList.remove('state--hidden');
+  document.getElementById('roleList').style.display = 'none';
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escAttr(str) {
+  if (!str) return '';
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function getCharEmoji(char) {
+  var map = {
+    anon: '\u{1F36E}',        // 🍮 — pudding / 爱音
+    mutsumi: '\u{1F33F}',     // 🌿 — herb / 睦
+    nyamu: '\u{1F638}',       // 😸 — cat smile / 喵梦
+    rana: '\u{1F431}',        // 🐱 — cat / 乐奈
+    sakiko: '\u{1F48E}',      // 💎 — gem / 祥子
+    soyo: '\u{1F337}',        // 🌷 — tulip / 素世
+    taki: '\u{1F941}',        // 🥁 — drum / 立希
+    tomori: '\u{1F31F}',      // 🌟 — star / 灯
+    uika: '\u{1F98B}',        // 🦋 — butterfly / 初华
+    umiri: '\u{1F30A}',       // 🌊 — wave / 海铃
+    sub: '\u{1F3AD}',         // 🎭 — theater / 配角
+    yachiyo: '\u{1F338}',     // 🌸 — cherry blossom / 八千代
+  };
+  return map[char] || '\u{1F4E6}';
+}
+
+function formatTotalSize(roles) {
+  var total = 0;
+  for (var i = 0; i < roles.length; i++) {
+    total += roles[i].size || 0;
+  }
+  var mb = total / (1024 * 1024);
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb.toFixed(1) + ' MB';
+}
+
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+// ============================================================================
+// Init
+// ============================================================================
+if (!ipcAvailable) {
+  showError('IPC 通信不可用。请在 Electron 环境中打开此页面。');
+} else {
+  loadRoles();
+}
+</script>
+
+</body>
+</html>

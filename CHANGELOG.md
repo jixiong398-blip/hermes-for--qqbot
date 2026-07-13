@@ -1,5 +1,40 @@
 ﻿# bot-template 更新日志
 
+## v0.10.0 (2026-07-13)
+
+### Live2D Cubism 5 — 完整重写
+- **渲染引擎**: pixi.js 7 + pixi-live2d-display-cubism4 + Live2D Cubism 5 Core
+- **角色模型**: 12 位 Cubism 4/5 角色 (anon, mutsumi, nyamu, rana, sakiko, soyo, sub, taki, tomori, uika, umiri, yachiyo)，旧 Cubism 2 `assets/figure/` 已删除
+- **Hermes WS 协议**: `ws://127.0.0.1:19919/hermes`，支持 loadModel/expression/motion/look/getScreenshot/listModels
+- **设置面板**: settings.html (4 标签: 显示/模型/Hermes/关于)
+- **下载管理器**: download.html + download-backend.js，CDN 下载 .cvpkg + 解密安装
+- **右键菜单**: 自定义菜单（点击透过/置顶/鼠标跟随/帧率/窗口大小/直播模式/切换角色）
+- **Dashboard 集成**: 模型切换 + 默认保存 (live2d_pref.json) + 12 角色扫描
+- **Bug 修复**: koffi 依赖缺失 → fix `npm install`；preload.js electronAPI 桥接恢复；switch_model→loadModel 转译
+
+### 转发消息 — 检测加固 + 私聊修复
+- **服务端同步**: adapter.py 3 级 fallback 转发提取 + 64 行死代码删除
+- **DM 锁 + 去重**: `_dm_locks` 逐用户串行 + `_seen_forward_ids` 5 秒去重 + 50 条 prune
+- **语义判断重写**: semantic_judge.py 全文重写 (189→303 行)，新增噪音等级计算/连续性检测/间接对话/指向证据层级
+- **Gateway 补丁**: SUPPORTS_SYSTEM_MESSAGES → 防状态消息泄漏到 QQ 群
+
+### 配置工具 v2.0 — `配置API.bat` 重写
+- **13 家 LLM 供应商**: DeepSeek/OpenCode Go/智谱GLM/火山方舟/阿里百炼/MiniMax/Kimi/OpenAI/Anthropic/SiliconFlow/OpenRouter + 自定义
+- **7 家视觉供应商**: OpenCode Go/智谱GLM/火山方舟/阿里百炼/OpenAI/TokenPlan + 自定义
+- **Token 自动读取**: 从 NapCat `onebot11_{QQ}.json` 自动提取 access_token
+- **交互流程**: 供应商 → 模型 → 密钥，OpenCode Go 一键复用
+- **隐私清洗**: config-template.yaml 全部占位符，删除硬编码 feishu/anysearch key
+
+### Dashboard 增强
+- **NapCat 配置**: 端口状态 + 反检测一键 + WebUI 链接
+- **Live2D 控制**: 模型切换 + 默认保存 + 管理模型按钮
+- **隐私**: QQ 官方 Bot 配置已删除 (.env + config-soyo.yaml)
+
+### 工程改进
+- **Git LFS**: 模型文件走 LFS (1.14 GB → 指针文件)
+- **隐私审查**: 全仓库 API Key/Token/QQ 号/硬编码路径扫描通过
+- **install.bat**: Live2D 步骤更新 + koffi 依赖安装
+
 ## v0.9.3 (2026-07-07)
 - **静默 Bug 清扫**: 修复 8 个被 except Exception 吞掉的静默失效
 - 语音转写: MiMo schema 修复 (400→200) + 持久化对齐图片分支

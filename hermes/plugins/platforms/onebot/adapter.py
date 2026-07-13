@@ -234,9 +234,11 @@ class OneBotAdapter(BasePlatformAdapter):
         # Per-group lock: ensure messages from the same group are processed serially
         # Prevents concurrent agent runs from clobbering each other's context
         self._group_locks: Dict[str, asyncio.Lock] = {}
+        self._dm_locks: Dict[str, asyncio.Lock] = {}
 
         # Message dedup: prevent processing the same message twice
         self._seen_msg_ids: Dict[str, float] = {}  # msg_id → seen_at timestamp
+        self._seen_forward_ids: Dict[str, float] = {}  # forward_id → seen_at timestamp
         self._DEDUP_TTL = 30  # 30 seconds — only guards against reconnect replay
 
         # Reconnect tuning: independent of gateway's global backoff
@@ -1707,6 +1709,12 @@ class OneBotAdapter(BasePlatformAdapter):
             self._group_locks[group_id] = asyncio.Lock()
         return self._group_locks[group_id]
 
+    def _get_dm_lock(self, user_id: str) -> asyncio.Lock:
+        """Get (or create) a per-user asyncio.Lock for serial private message processing."""
+        if user_id not in self._dm_locks:
+            self._dm_locks[user_id] = asyncio.Lock()
+        return self._dm_locks[user_id]
+
     def _is_duplicate(self, msg_id: str) -> bool:
         """Check if a message was already processed within dedup TTL.
         
@@ -1746,6 +1754,23 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.debug("[OneBot] Skipping duplicate message %s", msg_id)
             return
 
+        # Forward dedup: skip sub-messages of the same forwarded content
+        # NapCat sends each forwarded sub-message as a separate event with unique message_id
+        _fwd_id = self._extract_forward_id(msg)
+        if _fwd_id:
+            now = time.time()
+            # Prune expired (every ~50 forward messages)
+            if len(self._seen_forward_ids) > 50:
+                self._seen_forward_ids = {
+                    fid: ts for fid, ts in self._seen_forward_ids.items()
+                    if now - ts < 5.0
+                }
+            if _fwd_id in self._seen_forward_ids:
+                if now - self._seen_forward_ids[_fwd_id] < 5.0:
+                    logger.info("[OneBot] Skipping duplicate forward sub-message: forward_id=%s", _fwd_id)
+                    return
+            self._seen_forward_ids[_fwd_id] = now
+
         if self_id:
             self._self_id = self_id
 
@@ -1755,8 +1780,33 @@ class OneBotAdapter(BasePlatformAdapter):
             group_lock = self._get_group_lock(str(group_id))
             async with group_lock:
                 return await self._process_message_impl(msg)
+        elif msg_type == "private":
+            dm_lock = self._get_dm_lock(str(user_id))
+            async with dm_lock:
+                return await self._process_message_impl(msg)
         else:
             return await self._process_message_impl(msg)
+
+    @staticmethod
+    def _extract_forward_id(msg: dict) -> Optional[str]:
+        """Quickly extract forward_id from message segments (no API calls)."""
+        segments = msg.get("message", [])
+        if not isinstance(segments, list):
+            return None
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            st = seg.get("type", "")
+            sid = seg.get("data", {}).get("id", "")
+            if sid and (st in ("forward", "node") or "content" in seg.get("data", {})):
+                return sid
+        # Fallback: CQ code in raw_text
+        raw = msg.get("raw_message", "")
+        if raw:
+            fm = re.search(r'\[CQ:forward,id=(\d+)', str(raw))
+            if fm:
+                return fm.group(1)
+        return None
 
     async def _extract_forward_content(self, msg: dict) -> tuple[str, str, list[str]]:
         """Extract forwarded/merged chat record content from a message.
@@ -1776,37 +1826,67 @@ class OneBotAdapter(BasePlatformAdapter):
         if not isinstance(segments, list):
             return "", "", []
 
+        _raw_text = self._get_raw_text(msg) or ""
+
+        # Diagnostic: log segment types for empty-text or forward-indicating messages
+        _seg_types = [(s.get("type", "?"), list(s.get("data", {}).keys())[:5])
+                       for s in segments if isinstance(s, dict)]
+        if not _raw_text.strip() or "CQ:forward" in _raw_text or any(
+                s.get("type") in ("forward", "node") or "content" in s.get("data", {})
+                for s in segments if isinstance(s, dict)):
+            logger.info("[OneBot] Forward detection: text=%r, segments=%s, msg_id=%s",
+                        _raw_text[:120], _seg_types, msg.get("message_id", "?"))
+
+        # Detect forward ID: prefer segments typed "forward"/"node" or with "content" key
         forward_id = None
         for seg in segments:
-            if seg.get("type") in ("forward", "node"):
-                forward_id = self._get_seg_data(seg, "id", "")
-                if forward_id:
-                    break
+            if not isinstance(seg, dict):
+                continue
+            st = seg.get("type", "")
+            sid = self._get_seg_data(seg, "id", "")
+            if sid and (st in ("forward", "node") or "content" in seg.get("data", {})):
+                forward_id = sid
+                break
+
+        # Fallback: CQ code in raw_text (server NapCat sends string format)
         if not forward_id:
-            raw_text = self._get_raw_text(msg) or ""
-            fm = re.search(r'\[CQ:forward,id=(\d+)', raw_text)
+            fm = re.search(r'\[CQ:forward,id=(\d+)', _raw_text)
             if fm:
                 forward_id = fm.group(1)
+
+        # Fallback: any segment with a non-zero "id" (logs the unknown type for diagnosis)
+        if not forward_id:
+            for seg in segments:
+                if not isinstance(seg, dict):
+                    continue
+                sid = self._get_seg_data(seg, "id", "")
+                if sid and sid != "0":
+                    forward_id = sid
+                    logger.info("[OneBot] Forward ID from unknown type=%s, id=%s",
+                                seg.get("type", "?"), sid)
+                    break
+
         if not forward_id:
             return "", "", []
 
         fwd_msgs = None
         forward_image_paths: list[str] = []
 
-        # Try 1: NapCat extension - inline content in segment data
+        # Try 1: NapCat extension - inline content in any segment's data
         for seg in segments:
-            if seg.get("type") in ("forward", "node"):
-                raw_content = seg.get("data", {}).get("content")
-                if isinstance(raw_content, list):
-                    fwd_msgs = raw_content
-                elif isinstance(raw_content, str):
-                    import json as _json
-                    try:
-                        fwd_msgs = _json.loads(raw_content)
-                    except Exception:
-                        pass
-                if fwd_msgs:
-                    break
+            if not isinstance(seg, dict):
+                continue
+            raw_content = seg.get("data", {}).get("content")
+            if isinstance(raw_content, list):
+                fwd_msgs = raw_content
+            elif isinstance(raw_content, str):
+                import json as _json
+                try:
+                    fwd_msgs = _json.loads(raw_content)
+                except Exception:
+                    pass
+            if fwd_msgs:
+                break
 
         # Try 2: get_forward_msg API (fallback for expired or non-inline forwards)
         if not fwd_msgs:

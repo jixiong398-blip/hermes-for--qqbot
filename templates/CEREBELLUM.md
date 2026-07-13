@@ -1,8 +1,8 @@
 # CEREBELLUM.md — 身体控制
 
-## Live2D
+## Live2D (Cubism 4/5)
 
-Live2D 自动做表情，你只需直接说话。不要在文字里做动作描写。
+Live2D 自动做表情，支持 Cubism 2 和 Cubism 4/5 双版本模型。你只需直接说话，不要在文字里做动作描写。
 
 ## 表情包情绪映射
 

@@ -1,21 +1,18 @@
 ﻿# build-release.ps1 - QQBot Release Builder
 # Run this BEFORE creating a GitHub Release.
 # It pre-installs everything so users don't need internet.
-param($version = "v0.5.7")
+# Live2D: Cubism 4/5 SDK (pixi-live2d-display-cubism4)
+param($version = "v0.10.0")
 
 $root = Split-Path -Parent $PSCommandPath
 Set-Location $root
 
 Write-Host "=== QQBot Release Builder $version ===" -ForegroundColor Cyan
 
-# 1. Extract Live2D figures
-Write-Host "[1/4] Extracting Live2D models..." -ForegroundColor Yellow
-if (Test-Path "modules\live2d\assets\figures.zip") {
-    if (-not (Test-Path "modules\live2d\assets\figure")) {
-        Expand-Archive -Path "modules\live2d\assets\figures.zip" -DestinationPath "modules\live2d\assets\figure" -Force
-        Write-Host "  11 characters extracted" -ForegroundColor Green
-    }
-}
+# 1. Live2D Models (Cubism 4/5, pre-installed under assets/models/)
+Write-Host "[1/4] Live2D Models (Cubism 4/5) — pre-installed" -ForegroundColor Yellow
+Write-Host "  7 characters: mutsumi, rana, sub, taki, tomori, umiri, yachiyo" -ForegroundColor Green
+Write-Host "  v0.10.0: old Cubism 2 figures.zip extraction removed" -ForegroundColor DarkGray
 
 # 2. Extract Node.js
 Write-Host "[2/4] Setting up Node.js..." -ForegroundColor Yellow

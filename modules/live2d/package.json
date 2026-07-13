@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "soyo-live2d",
   "version": "1.0.0",
-  "description": "QQBot Live2D 透明窗口",
+  "description": "长崎素世 Live2D 透明窗口",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -12,6 +12,7 @@
     "esbuild": "^0.28.0"
   },
   "dependencies": {
+    "koffi": "^3.1.1",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^7.4.3"
   }

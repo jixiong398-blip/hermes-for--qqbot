@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Live2D 设置</title>
+<style>
+  :root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-glass: rgba(255,255,255,0.06);
+    --bg-glass-hover: rgba(255,255,255,0.10);
+    --bg-glass-active: rgba(255,255,255,0.04);
+    --accent: #7c3aed;
+    --accent-hover: #8b5cf6;
+    --accent-muted: rgba(124,58,237,0.18);
+    --text-primary: #e0e0e0;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --border: rgba(255,255,255,0.08);
+    --border-focus: rgba(124,58,237,0.4);
+    --danger: #ef4444;
+    --success: #22c55e;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+    --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    -webkit-app-region: no-drag;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ====== Ambient glow ====== */
+  body::before {
+    content: '';
+    position: fixed;
+    top: -120px; left: 50%;
+    transform: translateX(-50%);
+    width: 420px; height: 420px;
+    background: radial-gradient(circle, rgba(124,58,237,0.13) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ====== Glass panel ====== */
+  .panel {
+    position: relative;
+    z-index: 1;
+    width: 480px;
+    max-height: 92vh;
+    background: rgba(22,33,62,0.85);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ====== Title bar ====== */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 6px 0 18px;
+    height: 44px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    -webkit-app-region: drag;
+    background: rgba(0,0,0,0.15);
+  }
+  .titlebar__text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+  }
+  .titlebar__close {
+    -webkit-app-region: no-drag;
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent;
+    color: var(--text-muted); font-size: 18px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    line-height: 1;
+  }
+  .titlebar__close:hover {
+    background: rgba(239,68,68,0.2);
+    color: var(--danger);
+  }
+
+  /* ====== Tabs ====== */
+  .tabs {
+    display: flex;
+    flex-shrink: 0;
+    padding: 0 12px;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.1);
+  }
+  .tab {
+    -webkit-app-region: no-drag;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border: none; background: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition);
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text-secondary); }
+  .tab--active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ====== Scrollable content ====== */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .content::-webkit-scrollbar { width: 4px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08);
+    border-radius: 4px;
+  }
+  .content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+  /* ====== Section ====== */
+  .section { display: none; flex-direction: column; gap: 14px; }
+  .section--active { display: flex; }
+
+  /* ====== Row ====== */
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 38px;
+    gap: 12px;
+  }
+  .row__label {
+    font-size: 13px;
+    color: var(--text-primary);
+    flex-shrink: 0;
+  }
+  .row__hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+  .row__right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  /* ====== Toggle switch ====== */
+  .toggle {
+    position: relative;
+    width: 42px; height: 24px;
+    flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle__slider {
+    position: absolute; inset: 0;
+    background: rgba(255,255,255,0.14);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background var(--transition);
+  }
+  .toggle__slider::after {
+    content: '';
+    position: absolute;
+    width: 18px; height: 18px;
+    left: 3px; top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform var(--transition);
+  }
+  .toggle input:checked + .toggle__slider { background: var(--accent); }
+  .toggle input:checked + .toggle__slider::after { transform: translateX(18px); }
+  .toggle input:focus-visible + .toggle__slider {
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+
+  /* ====== Slider ====== */
+  .slider-wrap { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 120px; height: 6px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px; height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid rgba(255,255,255,0.3);
+    transition: transform var(--transition), box-shadow var(--transition);
+  }
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 6px var(--accent-muted);
+  }
+  .slider-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 43px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  }
+
+  /* ====== Dropdown / Select ====== */
+  select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding: 6px 30px 6px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    outline: none;
+    transition: border-color var(--transition), box-shadow var(--transition);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239ca3af'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+  }
+  select:hover { border-color: rgba(255,255,255,0.2); }
+  select:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+
+  /* ====== Number input ====== */
+  input[type="number"] {
+    width: 80px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+    color: var(--text-primary);
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color var(--transition), box-shadow var(--transition);
+    text-align: center;
+  }
+  input[type="number"]:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* ====== Status dot ====== */
+  .status-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background var(--transition);
+  }
+  .status-dot--connected { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.5); }
+  .status-dot--disconnected { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.4); }
+  .status-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  /* ====== Button ====== */
+  .btn {
+    -webkit-app-region: no-drag;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--bg-glass-hover); border-color: rgba(255,255,255,0.2); }
+  .btn:active { background: var(--bg-glass-active); }
+  .btn--accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn--accent:hover { background: var(--accent-hover); }
+  .btn--danger {
+    background: transparent;
+    border-color: rgba(239,68,68,0.3);
+    color: var(--danger);
+  }
+  .btn--danger:hover {
+    background: rgba(239,68,68,0.12);
+    border-color: rgba(239,68,68,0.5);
+  }
+
+  /* ====== Footer ====== */
+  .footer {
+    flex-shrink: 0;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    background: rgba(0,0,0,0.1);
+  }
+
+  /* ====== Divider ====== */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
+  }
+
+  /* ====== About section ====== */
+  .about {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+  }
+  .about__icon {
+    width: 56px; height: 56px;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    color: #fff;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 16px rgba(124,58,237,0.3);
+  }
+  .about__name {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .about__ver {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-glass);
+    padding: 2px 10px;
+    border-radius: 10px;
+  }
+  .about__meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.7;
+  }
+  .about__credits {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.8;
+  }
+  .about__credits strong { color: var(--text-secondary); font-weight: 600; }
+
+  /* ====== Toast ====== */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    padding: 8px 20px;
+    font-size: 12px;
+    color: #fff;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    z-index: 100;
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+  }
+  .toast--show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- ====== Toast ====== -->
+<div class="toast" id="toast"></div>
+
+<!-- ====== Panel ====== -->
+<div class="panel">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <span class="titlebar__text">Hermes Live2D 设置</span>
+    <button class="titlebar__close" onclick="window.close()" title="关闭">&times;</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab tab--active" data-tab="display">显示</button>
+    <button class="tab" data-tab="model">模型</button>
+    <button class="tab" data-tab="hermes">Hermes</button>
+    <button class="tab" data-tab="about">关于</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content" id="content">
+
+    <!-- ============ Tab: 显示 ============ -->
+    <div class="section section--active" data-section="display">
+
+      <div class="row">
+        <span class="row__label">窗口置顶</span>
+        <label class="toggle">
+          <input type="checkbox" data-key="alwaysOnTop" checked onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="row__label">鼠标点击透过<span class="row__hint">(穿透窗口)</span></span>
+        <label class="toggle">
+          <input type="checkbox" data-key="clickThrough" onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="row__label">直播模式<span class="row__hint">(任务栏可见)</span></span>
+        <label class="toggle">
+          <input type="checkbox" data-key="streamingMode" onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <span class="row__label">窗口大小</span>
+        <div class="slider-wrap">
+          <input type="range" data-key="sizePercent" min="50" max="300" value="100" step="5" oninput="onSlider(this)">
+          <span class="slider-value" data-for="sizePercent">100%</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row__label">渲染帧率</span>
+        <select data-key="maxFPS" onchange="onSelect(this)">
+          <option value="0">无限制</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+          <option value="120">120</option>
+          <option value="144">144</option>
+        </select>
+      </div>
+
+    </div>
+
+    <!-- ============ Tab: 模型 ============ -->
+    <div class="section" data-section="model">
+
+      <div class="row">
+        <span class="row__label">鼠标跟随</span>
+        <label class="toggle">
+          <input type="checkbox" data-key="mouseFollow" checked onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="row__label">跟随帧率</span>
+        <select data-key="followFps" onchange="onSelect(this)">
+          <option value="0">关闭</option>
+          <option value="15">15</option>
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <span class="row__label">记住窗口位置</span>
+        <label class="toggle">
+          <input type="checkbox" data-key="rememberPosition" checked onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="row__label">启动音效</span>
+        <label class="toggle">
+          <input type="checkbox" data-key="startupSound" checked onchange="onToggle(this)">
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <span class="row__label">音效音量</span>
+        <div class="slider-wrap">
+          <input type="range" data-key="audioVolume" min="0" max="100" value="50" step="1" oninput="onSlider(this)">
+          <span class="slider-value" data-for="audioVolume">50%</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============ Tab: Hermes ============ -->
+    <div class="section" data-section="hermes">
+
+      <div class="row">
+        <span class="row__label">Hermes 控制端口</span>
+        <input type="number" data-key="hermesPort" value="9190" min="1024" max="65535" onchange="onNumber(this)">
+      </div>
+
+      <div class="row">
+        <span class="row__label">连接状态</span>
+        <div class="row__right">
+          <span class="status-dot status-dot--disconnected" id="statusDot"></span>
+          <span class="status-text" id="statusText">未连接</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row__label"></span>
+        <button class="btn btn--accent" onclick="restartWS()">重启 WS 服务</button>
+      </div>
+
+    </div>
+
+    <!-- ============ Tab: 关于 ============ -->
+    <div class="section" data-section="about">
+
+      <div class="about">
+        <div class="about__icon">🐱</div>
+        <div class="about__name">Hermes Live2D Desktop Pet</div>
+        <div class="about__ver">v1.1.4</div>
+        <div class="about__meta">
+          基于 CucumberVPet 移植<br>
+          引擎: Electron + PixiJS + Live2D Cubism 4/5
+        </div>
+        <div class="about__credits">
+          <strong>原作</strong> CucumberVPet (SevenVoxel)<br>
+          <strong>移植 &amp; Hermes 集成</strong> jixiong233<br>
+          <strong>Live2D SDK</strong> &copy; Live2D Inc.<br>
+          <strong>角色模型</strong> BanG Dream! It's MyGO!!!!!
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <button class="btn btn--danger" onclick="resetAll()">重置为默认</button>
+  </div>
+
+</div>
+
+<script>
+// ============================================================================
+// State
+// ============================================================================
+const DEFAULTS = {
+  alwaysOnTop: true,
+  clickThrough: false,
+  streamingMode: false,
+  sizePercent: 100,
+  maxFPS: 0,
+  mouseFollow: true,
+  followFps: 30,
+  rememberPosition: true,
+  startupSound: true,
+  audioVolume: 50,
+  hermesPort: 9190
+};
+
+let currentSettings = { ...DEFAULTS };
+let toastTimer = null;
+
+// ============================================================================
+// API abstraction — handles both contextBridge and direct access
+// ============================================================================
+const api = {
+  async getSettings() {
+    if (window.electronAPI && typeof window.electronAPI.getSettings === 'function') {
+      return await window.electronAPI.getSettings();
+    }
+    if (window.electronAPI && typeof window.electronAPI.invoke === 'function') {
+      return await window.electronAPI.invoke('settings-load');
+    }
+    // Fallback: try ipcRenderer directly (contextIsolation: false)
+    try {
+      const { ipcRenderer } = require('electron');
+      return await ipcRenderer.invoke('settings-load');
+    } catch (_) {
+      console.warn('[Settings] No IPC available, using defaults');
+      return { ...DEFAULTS };
+    }
+  },
+
+  async setSetting(key, value) {
+    if (window.electronAPI && typeof window.electronAPI.setSetting === 'function') {
+      return await window.electronAPI.setSetting(key, value);
+    }
+    if (window.electronAPI && typeof window.electronAPI.invoke === 'function') {
+      return await window.electronAPI.invoke('settings-set', key, value);
+    }
+    try {
+      const { ipcRenderer } = require('electron');
+      return await ipcRenderer.invoke('settings-set', key, value);
+    } catch (_) {
+      console.warn('[Settings] No IPC available, setting stored locally only');
+      return null;
+    }
+  },
+
+  async resetSettings() {
+    if (window.electronAPI && typeof window.electronAPI.resetSettings === 'function') {
+      return await window.electronAPI.resetSettings();
+    }
+    if (window.electronAPI && typeof window.electronAPI.invoke === 'function') {
+      return await window.electronAPI.invoke('settings-reset');
+    }
+    try {
+      const { ipcRenderer } = require('electron');
+      return await ipcRenderer.invoke('settings-reset');
+    } catch (_) {
+      console.warn('[Settings] No IPC available for reset');
+      return null;
+    }
+  }
+};
+
+// ============================================================================
+// Toast
+// ============================================================================
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('toast--show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('toast--show'), 2000);
+}
+
+// ============================================================================
+// Populate controls from settings object
+// ============================================================================
+function populateControls(settings) {
+  currentSettings = { ...settings };
+
+  // Toggles
+  document.querySelectorAll('input[type="checkbox"][data-key]').forEach(cb => {
+    const key = cb.dataset.key;
+    if (key in settings) cb.checked = !!settings[key];
+  });
+
+  // Sliders
+  document.querySelectorAll('input[type="range"][data-key]').forEach(sl => {
+    const key = sl.dataset.key;
+    if (key in settings) {
+      sl.value = settings[key];
+      const label = document.querySelector(`.slider-value[data-for="${key}"]`);
+      if (label) label.textContent = settings[key] + '%';
+    }
+  });
+
+  // Selects
+  document.querySelectorAll('select[data-key]').forEach(sel => {
+    const key = sel.dataset.key;
+    if (key in settings) sel.value = settings[key];
+  });
+
+  // Number inputs
+  document.querySelectorAll('input[type="number"][data-key]').forEach(inp => {
+    const key = inp.dataset.key;
+    if (key in settings) inp.value = settings[key];
+  });
+
+  // Hermes status (non-persisted, derive from WS)
+  updateHermesStatus(false);
+}
+
+// ============================================================================
+// Hermes connection status
+// ============================================================================
+function updateHermesStatus(connected) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  if (connected) {
+    dot.className = 'status-dot status-dot--connected';
+    text.textContent = '已连接';
+  } else {
+    dot.className = 'status-dot status-dot--disconnected';
+    text.textContent = '未连接';
+  }
+}
+
+// ============================================================================
+// Event handlers
+// ============================================================================
+function onToggle(el) {
+  const key = el.dataset.key;
+  const value = el.checked;
+  currentSettings[key] = value;
+  api.setSetting(key, value);
+  showToast(key + ' → ' + (value ? '开' : '关'));
+}
+
+function onSlider(el) {
+  const key = el.dataset.key;
+  const value = parseInt(el.value, 10);
+  currentSettings[key] = value;
+  const label = document.querySelector(`.slider-value[data-for="${key}"]`);
+  if (label) label.textContent = value + '%';
+  api.setSetting(key, value);
+}
+
+function onSelect(el) {
+  const key = el.dataset.key;
+  const raw = el.value;
+  const value = raw === '' ? 0 : parseInt(raw, 10);
+  currentSettings[key] = value;
+  api.setSetting(key, value);
+  showToast(key + ' → ' + (value === 0 ? '无限制' : value));
+}
+
+function onNumber(el) {
+  const key = el.dataset.key;
+  const value = parseInt(el.value, 10) || DEFAULTS[key] || 9190;
+  currentSettings[key] = value;
+  api.setSetting(key, value);
+  showToast(key + ' → ' + value);
+}
+
+// Debounced slider handler (live preview without spamming IPC)
+let sliderTimers = {};
+document.querySelectorAll('input[type="range"]').forEach(sl => {
+  sl.addEventListener('input', () => {
+    const key = sl.dataset.key;
+    const value = parseInt(sl.value, 10);
+    const label = document.querySelector(`.slider-value[data-for="${key}"]`);
+    if (label) label.textContent = value + '%';
+    // Debounce IPC, fire immediately for preview
+    clearTimeout(sliderTimers[key]);
+    sliderTimers[key] = setTimeout(() => {
+      currentSettings[key] = value;
+      api.setSetting(key, value);
+    }, 120);
+  });
+});
+
+// ============================================================================
+// Reset all
+// ============================================================================
+async function resetAll() {
+  await api.resetSettings();
+  currentSettings = { ...DEFAULTS };
+  populateControls(DEFAULTS);
+  updateHermesStatus(false);
+  showToast('已重置为默认设置');
+}
+
+// ============================================================================
+// Restart WS
+// ============================================================================
+async function restartWS() {
+  showToast('正在重启 WS 服务…');
+  if (window.electronAPI && typeof window.electronAPI.restartWS === 'function') {
+    await window.electronAPI.restartWS();
+  } else if (window.electronAPI && typeof window.electronAPI.invoke === 'function') {
+    await window.electronAPI.invoke('ws-restart');
+  } else {
+    try {
+      const { ipcRenderer } = require('electron');
+      await ipcRenderer.invoke('ws-restart');
+    } catch (_) {
+      console.warn('[Settings] No IPC for WS restart');
+    }
+  }
+  // Simulate status after restart — actual status should come from main process
+  setTimeout(() => {
+    updateHermesStatus(true);
+    showToast('WS 服务已重启');
+  }, 600);
+}
+
+// ============================================================================
+// Tab switching
+// ============================================================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    // Update tab active state
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab--active'));
+    tab.classList.add('tab--active');
+
+    // Update section visibility
+    const target = tab.dataset.tab;
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('section--active'));
+    const section = document.querySelector(`[data-section="${target}"]`);
+    if (section) section.classList.add('section--active');
+  });
+});
+
+// ============================================================================
+// Init
+// ============================================================================
+async function init() {
+  try {
+    const settings = await api.getSettings();
+    // Merge with defaults for any missing keys
+    const merged = { ...DEFAULTS, ...settings };
+    populateControls(merged);
+  } catch (err) {
+    console.error('[Settings] Failed to load:', err);
+    populateControls(DEFAULTS);
+    showToast('无法加载设置，使用默认值');
+  }
+}
+
+// Listen for settings updates from main process (optional)
+if (window.electronAPI && typeof window.electronAPI.onSettingsUpdate === 'function') {
+  window.electronAPI.onSettingsUpdate((settings) => {
+    populateControls(settings);
+  });
+}
+
+init();
+</script>
+
+</body>
+</html>

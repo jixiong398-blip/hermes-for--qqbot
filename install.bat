@@ -1,7 +1,7 @@
 ﻿@echo off
 chcp 65001 >nul 2>nul
 set PYTHONIOENCODING=utf-8
-title QQBot Installer v0.9.0
+title QQBot Installer v0.10.0
 cd /d "%~dp0"
 cls
 
@@ -11,13 +11,13 @@ set "SCRIPT_DIR=%~dp0"
 
 echo.
 echo   ================================================
-echo         QQBot - Offline-First Installer v0.9.0
+echo         QQBot - Offline-First Installer v0.10.0
 echo   ================================================
 echo.
 echo   Built-in offline packages:
 echo     [*] Python 3.12  - python-installer.exe
 echo     [*] Node.js      - nodejs.zip
-echo     [*] Live2D models - figures.zip
+echo     [*] Live2D models (Cubism 4/5) - pre-installed
 echo     [*] Live2D engine - electron-offline.zip (if present)
 echo.
 echo   Internet needed (once):
@@ -66,33 +66,18 @@ set "PATH=%PY_ROOT%;%PY_ROOT%\Scripts;%PATH%"
 echo   Python 3.12 installed -- OK
 :step2
 
-:: ===== Step 2: Live2D Models =====
+:: Live2D Models are now bundled in models/ directory (Cubism 4/5), no extraction needed.
 echo.
-echo   [2/6] Live2D Models...
+echo   [2/5] Live2D Models (Cubism 4/5) -- pre-installed
 echo.
-if exist "modules\live2d\assets\figure\" (
-    echo   Already extracted -- skipped
-    goto :step3
-)
-if not exist "modules\live2d\assets\figures.zip" (
-    echo   [SKIP] figures.zip not found
-    goto :step3
-)
-echo   Extracting 11 character models (offline)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'modules\live2d\assets\figures.zip' -DestinationPath 'modules\live2d\assets\figure' -Force" 2>nul
-if %errorlevel% neq 0 (
-    tar -xf "modules\live2d\assets\figures.zip" -C "modules\live2d\assets" 2>nul
-)
-if exist "modules\live2d\assets\figure\" (
-    echo   Live2D models extracted -- OK
-) else (
-    echo   [WARNING] Extraction failed - extract figures.zip manually
-)
+echo   Live2D models are included in modules\live2d\assets\models\
+echo   No extraction needed.
+echo.
 :step3
 
 :: ===== Step 3: Node.js =====
 echo.
-echo   [3/6] Node.js...
+echo   [3/5] Node.js...
 echo.
 if exist "node\node.exe" (
     echo   Already set up -- skipped
@@ -118,7 +103,7 @@ if exist "node\node.exe" (echo   Node.js extracted -- OK) else if exist "node\np
 
 :: ===== Step 4: Live2D Electron =====
 echo.
-echo   [4/6] Live2D Engine (Electron)...
+echo   [4/5] Live2D Engine (Electron)...
 echo.
 if exist "modules\live2d\node_modules\electron\" (
     echo   Already installed -- skipped
@@ -135,6 +120,10 @@ if exist "electron-offline.zip.001" (
         )
         if exist "modules\live2d\node_modules\electron\" (
             echo   Live2D engine extracted -- OK
+            echo   Installing JS dependencies...
+            cd modules\live2d
+            call ..\..\node\npm.cmd install --registry=https://registry.npmmirror.com 2>&1
+            cd ..\..
             del "electron-offline.zip" 2>nul
             goto :step5
         )
@@ -165,7 +154,7 @@ if exist "modules\live2d\node_modules\electron\" (echo   Live2D engine installed
 
 :: ===== Step 5: Hermes Engine (modified) =====
 echo.
-echo   [5/6] Hermes Engine (our modified version)...
+echo   [5/5] Hermes Engine (our modified version)...
 echo.
 if exist ".venv\Scripts\python.exe" (
     echo   Already installed -- skipped
@@ -195,7 +184,7 @@ echo   Hermes engine installed -- OK
 
 :: ===== Step 6: Base Config =====
 echo.
-echo   [6/6] Base Config...
+echo   Config...
 echo.
 if not exist ".venv\Scripts\python.exe" (
     echo   [ERROR] Hermes not installed
@@ -213,7 +202,7 @@ echo.
 echo   Environment status:
 if exist ".venv\Scripts\python.exe" (echo     [OK] Hermes Engine) else (echo     [!!] Hermes Engine MISSING)
 if exist "node\node.exe" (echo     [OK] Node.js) else (echo     [--] Node.js (optional))
-if exist "modules\live2d\assets\figure\" (echo     [OK] Live2D Models) else (echo     [--] Live2D Models)
+if exist "modules\live2d\assets\models\" (echo     [OK] Live2D Models) else (echo     [--] Live2D Models)
 if exist "modules\live2d\node_modules\electron\" (echo     [OK] Live2D Engine) else (echo     [--] Live2D Engine)
 echo.
 echo   Next Steps:

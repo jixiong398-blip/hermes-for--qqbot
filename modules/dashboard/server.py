@@ -36,7 +36,12 @@ from urllib.parse import urlparse, parse_qs
 import urllib.request
 from socketserver import ThreadingMixIn
 
-ROOT = Path(__file__).resolve().parent.parent.parent  # bot-template root
+DASHBOARD_DIR = Path(__file__).resolve().parent
+BOT_DIR = DASHBOARD_DIR.parent.parent
+STATIC_DIR = DASHBOARD_DIR / "static"
+VENV_PYTHON = str(BOT_DIR / ".venv" / "Scripts" / "python.exe")
+
+sys.path.insert(0, str(BOT_DIR / "hermes"))
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -45,45 +50,53 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8899"))
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
-DASHBOARD_DIR = Path(__file__).resolve().parent
-STATIC_DIR = DASHBOARD_DIR / "static"
 
 SERVICES = {
-    "gptsovits": {
-        "name": "GPT-SoVITS",
-        "port": 9880,
-        "cwd": str(ROOT / "modules" / "tts"),
-        "cmd": ["python", "api_v2.py"],
-        "color": "#FF9500"
-},
     "tts_adapter": {
-        "name": "TTS 适配器",
+        "name": "TTS 适配器 (So-VITS)",
         "port": 5000,
-        "cwd": str(ROOT / "modules" / "tts"),
-        "cmd": ["python", "ts_adapter.py"],
-        "color": "#FF6B35"
-},
+        "cwd": str(BOT_DIR / "modules" / "tts"),
+        "cmd": [VENV_PYTHON, "ts_adapter.py"],
+        "color": "#FF6B35",
+    },
     "napcat": {
         "name": "NapCat (QQ)",
         "port": 3000,
-        "cwd": str(ROOT / "napcat"),
+        "cwd": str(BOT_DIR / "napcat"),
         "cmd": ["cmd", "/c", "napcat.bat"],
-        "color": "#34C759"
-},
+        "color": "#34C759",
+    },
     "hermes_gateway": {
         "name": "Hermes 网关",
         "port": 18789,
-        "cwd": str(ROOT),
-        "cmd": [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-X", "utf8", "-m", "hermes_cli.main", "gateway"],
-        "env": {"HERMES_HOME": str(Path.home() / ".hermes")},
-        "color": "#007AFF"
-},
+        "cwd": str(BOT_DIR),
+        "cmd": [VENV_PYTHON, "-X", "utf8", "-m", "hermes_cli.main", "gateway"],
+        "env": {"HERMES_HOME": os.path.expanduser("~/.hermes")},
+        "color": "#007AFF",
+    },
     "live2d": {
-        "name": "Live2D",
+        "name": "Live2D (Cubism 4/5)",
         "port": 19919,
-        "cwd": str(ROOT / "modules" / "live2d"),
+        "cwd": str(BOT_DIR / "modules" / "live2d"),
         "cmd": ["cmd", "/c", "npm", "start"],
-        "color": "#AF52DE"
+        "color": "#AF52DE",
+    },
+    "local_vision": {
+        "name": "本地视觉 (可选)",
+        "port": 8010,
+        "cwd": os.getenv("LOCAL_VISION_CWD", ""),
+        "cmd": [
+            os.getenv("LOCAL_VISION_EXE", "llama-server.exe"),
+            "-m", os.getenv("LOCAL_VISION_MODEL", ""),
+            "--mmproj", os.getenv("LOCAL_VISION_MMPROJ", ""),
+            "--host", "127.0.0.1",
+            "--port", "8010",
+            "-ngl", "99",
+            "-c", "2048",
+            "--cont-batching",
+            "--parallel", "1",
+        ],
+        "color": "#FF2D55",
     },
 }
 
@@ -129,7 +142,7 @@ def _build_today_summary(stm_daily, ltm_daily, wiki_daily):
 
 # Service log file paths (fallback when buffer is empty)
 _SERVICE_LOG_FILES = {
-    "hermes_gateway": HERMES_HOME / "logs" / "agent.log"
+    "hermes_gateway": HERMES_HOME / "logs" / "agent.log",
 }
 
 
@@ -295,13 +308,6 @@ def _save_voice_modes(data: Dict):
 
 class DashboardHandler(BaseHTTPRequestHandler):
 
-    def handle_one_request(self):
-        """Suppress connection-aborted noise from browser tab closes."""
-        try:
-            super().handle_one_request()
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            pass
-
     def log_message(self, format, *args):
         logger.debug("%s - %s", self.client_address[0], format % args)
 
@@ -378,17 +384,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/sessions":
             return self._handle_sessions()
 
-        elif path == "/api/onboarding/status":
-            return self._handle_onboarding_status()
+        elif path == "/api/live2d/models":
+            return self._handle_live2d_models()
+
+        elif path == "/api/live2d/default":
+            return self._handle_live2d_default_get()
+
+        elif path == "/api/napcat/port-status":
+            return self._handle_napcat_port_status()
 
         elif path == "/api/updates/check":
             return self._handle_updates_check()
 
-        elif path == "/api/live2d/models":
-            return self._handle_live2d_models()
+        elif path == "/api/onboarding/status":
+            return self._handle_onboarding_status()
 
-        elif path == "/onboarding" or path == "/onboarding.html":
-            return self._serve_onboarding()
+        # Static file serving (onboarding.html, etc.)
+        elif "." in path.split("/")[-1]:
+            return self._serve_static(path)
 
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -399,18 +412,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/voice":
             return self._handle_voice_set(body)
-
-        elif path == "/api/onboarding/provider":
-            return self._handle_onboarding_provider(body)
-
-        elif path == "/api/onboarding/soul":
-            return self._handle_onboarding_soul(body)
-
-        elif path == "/api/onboarding/onebot":
-            return self._handle_onboarding_onebot(body)
-
-        elif path == "/api/onboarding/restart":
-            return self._handle_onboarding_restart()
 
         elif path == "/api/services/start":
             return self._handle_services_start(body)
@@ -439,11 +440,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/napcat/stop":
             return self._handle_napcat_stop()
 
+        elif path == "/api/napcat/anti-detection":
+            return self._handle_napcat_anti_detection()
+
         elif path == "/api/live2d/models":
             return self._handle_live2d_models()
 
         elif path == "/api/live2d/switch":
             return self._handle_live2d_switch(body)
+
+        elif path == "/api/live2d/default":
+            if self.command == "GET":
+                return self._handle_live2d_default_get()
+            else:
+                return self._handle_live2d_default_set(body)
 
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -457,6 +467,73 @@ class DashboardHandler(BaseHTTPRequestHandler):
             html = "<h1>Dashboard</h1><p>Static files not found.</p>"
         self._send_html(html)
 
+    def _serve_static(self, path: str):
+        """Serve static files from STATIC_DIR."""
+        safe_path = path.lstrip("/")
+        filepath = STATIC_DIR / safe_path
+        # Prevent directory traversal
+        try:
+            filepath.resolve().relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        if not filepath.is_file():
+            self._send_json({"error": "Not found"}, 404)
+            return
+        ext = filepath.suffix.lower()
+        ct = {".html": "text/html; charset=utf-8", ".js": "application/javascript",
+              ".css": "text/css", ".json": "application/json", ".png": "image/png",
+              ".svg": "image/svg+xml"}.get(ext, "application/octet-stream")
+        try:
+            data = filepath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception:
+            self._send_json({"error": "Read error"}, 500)
+
+    # ── Updates check ─────────────────────────────────────────
+
+    def _handle_updates_check(self):
+        """Check GitHub for latest release version."""
+        import urllib.request
+        try:
+            url = "https://api.github.com/repos/jixiong398-blip/hermes-for--qqbot/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": "QQBot-Dashboard"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "").lstrip("v")
+            current = ""
+            version_file = BOT_DIR / "VERSION"
+            if version_file.exists():
+                current = version_file.read_text(encoding="utf-8").strip()
+            has_update = latest and latest != current
+            self._send_json({
+                "has_update": has_update,
+                "current_version": current,
+                "latest_version": latest,
+                "release_url": data.get("html_url", ""),
+            })
+        except Exception as e:
+            self._send_json({"has_update": False, "error": str(e)}, 200)
+
+    # ── Onboarding ────────────────────────────────────────────
+
+    def _handle_onboarding_status(self):
+        """Check if onboarding is needed."""
+        cfg = HERMES_HOME / "config.yaml"
+        env = HERMES_HOME / ".env"
+        soul = HERMES_HOME / "SOUL.md"
+        self._send_json({
+            "config_exists": cfg.exists(),
+            "env_exists": env.exists(),
+            "soul_exists": soul.exists(),
+            "venv_exists": (BOT_DIR / ".venv" / "Scripts" / "python.exe").exists(),
+            "napcat_exists": (BOT_DIR / "napcat" / "napcat.bat").exists(),
+        })
+
     # ── Status ────────────────────────────────────────────────
 
     def _handle_status(self):
@@ -467,10 +544,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "timestamp": datetime.now().isoformat(),
             "gateway": {
                 "port": os.getenv("GATEWAY_PORT", "18789"),
-                "running": _check_gateway_process()
-},
-            "voice_modes": voice_modes
-}
+                "running": _check_gateway_process(),
+            },
+            "voice_modes": voice_modes,
+        }
 
         if gw:
             stats = gw.get_stats()
@@ -480,8 +557,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "workflows": stats["store"]["workflow_count"],
                 "wiki_chunks": stats["store"]["wiki_chunk_count"],
                 "active_sessions": stats["active_sessions"],
-                "decay_enabled": stats["workflow_decay_enabled"]
-}
+                "decay_enabled": stats["workflow_decay_enabled"],
+            }
             result["obsidian"] = gw.get_obsidian_stats()
         else:
             result["memory"] = {"error": "Memory system not initialized"}
@@ -504,8 +581,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result["onebot"] = {
                     "connected": login_info.get("status") == "ok",
                     "user_id": login_info.get("data", {}).get("user_id", ""),
-                    "nickname": login_info.get("data", {}).get("nickname", "")
-}
+                    "nickname": login_info.get("data", {}).get("nickname", ""),
+                }
         except Exception:
             result["onebot"] = {"connected": False, "error": "NapCat not reachable"}
 
@@ -561,8 +638,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self._send_json({
             "query": query,
             "long_term": ltm,
-            "workflows": wfm
-})
+            "workflows": wfm,
+        })
 
     def _handle_workflows(self):
         gw = _get_gateway()
@@ -612,8 +689,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "chat_id": data.get("chat_id", ""),
                         "chat_type": data.get("chat_type", data.get("origin", {}).get("chat_type", "dm")),
                         "message_count": len(data.get("messages", [])),
-                        "updated": datetime.fromtimestamp(f.stat().st_mtime).isoformat()
-})
+                        "updated": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                    })
                 except Exception:
                     pass
         self._send_json(sessions[:20])
@@ -647,8 +724,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             "chat_type": entry_data.get("chat_type", "dm"),
                             "display_name": entry_data.get("display_name"),
                             "message_count": msg_count,
-                            "last_activity": entry_data.get("updated_at", "")
-})
+                            "last_activity": entry_data.get("updated_at", ""),
+                        })
                 except Exception:
                     pass
             self._send_json(sessions[:50])
@@ -701,8 +778,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if isinstance(pinfo, dict):
                     clean_platforms[name] = {
                         "state": pinfo.get("state", "unknown"),
-                        "error": pinfo.get("error_message")
-}
+                        "error": pinfo.get("error_message"),
+                    }
 
             result = {
                 "running": gateway_running,
@@ -712,8 +789,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "platforms": list(clean_platforms.keys()),
                 "exit_reason": state_data.get("exit_reason"),
                 "voice_modes": voice_modes,
-                "session_count": session_count
-}
+                "session_count": session_count,
+            }
             # Compute uptime from started_at
             started_at = state_data.get("started_at")
             if started_at and gateway_running:
@@ -763,8 +840,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         {
                             "category": r["category"],
                             "count": r["cnt"],
-                            "avg_confidence": round(r["avg_conf"], 3)
-}
+                            "avg_confidence": round(r["avg_conf"], 3),
+                        }
                         for r in rows
                     ]
 
@@ -781,8 +858,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             "category": r["category"],
                             "key": r["key"],
                             "value": r["value"][:200],
-                            "retrieval_count": r["retrieval_count"]
-}
+                            "retrieval_count": r["retrieval_count"],
+                        }
                         for r in top_rows
                     ]
                 finally:
@@ -824,8 +901,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "short_term": stats["store"]["short_term_count"],
                     "long_term": stats["store"]["long_term_count"],
                     "workflows": stats["store"]["workflow_count"],
-                    "wiki_chunks": stats["store"]["wiki_chunk_count"]
-},
+                    "wiki_chunks": stats["store"]["wiki_chunk_count"],
+                },
                 "database_size_mb": db_size_mb,
                 # Flat fields for frontend readability
                 "ltm_facts": stats["store"]["long_term_count"],
@@ -844,13 +921,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "total": len(decay_report),
                     "active": active,
                     "decaying": decaying,
-                    "forgotten": forgotten
-},
+                    "forgotten": forgotten,
+                },
                 "retrieval_stats": {
                     "total_ltm_retrievals": total_retrievals,
-                    "top_retrieved_facts": top_retrieved
-}
-}
+                    "top_retrieved_facts": top_retrieved,
+                },
+            }
             self._send_json(result)
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
@@ -900,281 +977,98 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "wiki_daily": wiki_daily,
                 # Merged format for frontend
                 "days": _build_timeline_days(stm_daily, ltm_daily, wiki_daily),
-                "today": _build_today_summary(stm_daily, ltm_daily, wiki_daily)
-})
+                "today": _build_today_summary(stm_daily, ltm_daily, wiki_daily),
+            })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
     # ── Live2D Model Control ──────────────────────────────────
 
-    def _handle_live2d_models(self):
-        """Return list of available characters and their outfits."""
-        import glob
-        l2d_dir = str(ROOT / "modules" / "live2d" / "assets" / "figure")
-        models = {}
-        for char_dir in sorted(Path(l2d_dir).iterdir()):
-            if not char_dir.is_dir():
-                continue
-            outfits = []
-            for o_dir in sorted(char_dir.iterdir()):
-                if not o_dir.is_dir() or o_dir.name.startswith('.'):
-                    continue
-                if (o_dir / "model.json").exists():
-                    outfits.append(o_dir.name)
-            if outfits:
-                models[char_dir.name] = {
-                    "name": char_dir.name,
-                    "outfits": outfits
-}
-        self._send_json({"characters": models})
+    LIVE2D_PREF_FILE = BOT_DIR / "modules" / "live2d" / "live2d_pref.json"
 
-    def _handle_live2d_switch(self, body: Dict):
-        """Switch Live2D character/outfit and save as preference."""
-        character = body.get("character", "")
-        outfit = body.get("outfit", body.get("costume", ""))
-        if not character:
-            return self._send_json({"error": "character required"})
-
-        # Save as default
-        pref_file = HERMES_HOME / "live2d_pref.json"
+    def _read_live2d_default(self):
+        """Read saved character/costume from live2d_pref.json, or return defaults."""
         try:
-            pref_file.write_text(json.dumps({"character": character, "outfit": outfit}), encoding="utf-8")
+            if self.LIVE2D_PREF_FILE.exists():
+                data = json.loads(self.LIVE2D_PREF_FILE.read_text(encoding="utf-8"))
+                return data.get("character", "soyo"), data.get("costume", "casual_spring_01")
         except Exception:
             pass
+        return "soyo", "casual_spring_01"
 
-        # Send to Live2D renderer
+    def _save_live2d_default(self, character: str, costume: str):
+        """Save character/costume preference."""
+        self.LIVE2D_PREF_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.LIVE2D_PREF_FILE.write_text(
+            json.dumps({"character": character, "costume": costume}, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+    def _handle_live2d_default_get(self):
+        """Return current default character/costume."""
+        char, cos = self._read_live2d_default()
+        self._send_json({"character": char, "costume": cos})
+
+    def _handle_live2d_default_set(self, body: Dict):
+        """Save default character/costume."""
+        character = str(body.get("character", "soyo")).strip()
+        costume = str(body.get("costume", "casual_spring_01")).strip()
+        if not character or not costume:
+            self._send_json({"error": "character and costume required"}, 400)
+            return
+        self._save_live2d_default(character, costume)
+        self._send_json({"ok": True, "character": character, "costume": costume})
+
+    def _handle_live2d_models(self):
+        """Return list of available characters and their outfits from Cubism 4/5 models."""
+        models = {}
+        default_char, default_costume = self._read_live2d_default()
+
+        # Scan Cubism 4/5 models
+        l2d_models = str(BOT_DIR / "modules" / "live2d" / "assets" / "models")
+        if Path(l2d_models).exists():
+            for char_dir in sorted(Path(l2d_models).iterdir()):
+                if not char_dir.is_dir():
+                    continue
+                outfits = []
+                for o_dir in sorted(char_dir.iterdir()):
+                    if not o_dir.is_dir() or o_dir.name.startswith('.'):
+                        continue
+                    has_model = any(f.name.endswith(".model3.json") for f in o_dir.glob("*.json"))
+                    has_moc3 = any(o_dir.glob("*.moc3"))
+                    if has_model or has_moc3:
+                        outfits.append(o_dir.name)
+                if outfits:
+                    models[char_dir.name] = {
+                        "name": char_dir.name,
+                        "outfits": outfits,
+                        "format": "cubism4",
+                    }
+
+        self._send_json({
+            "characters": models,
+            "default": {"character": default_char, "costume": default_costume},
+        })
+
+    def _handle_live2d_switch(self, body: Dict):
+        """Switch Live2D character/outfit via HTTP, and save as default."""
+        character = body.get("character", "soyo")
+        costume = body.get("costume", "casual_spring_01")
         try:
             import urllib.request
-            data = json.dumps({"type": "switch_model", "character": character, "costume": outfit}).encode()
+            data = json.dumps({"type": "switch_model", "character": character, "costume": costume}).encode()
             req = urllib.request.Request("http://127.0.0.1:19919/cmd", data=data,
                                          headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            pass
-
-        self._send_json({"ok": True, "character": character, "outfit": outfit, "saved": True})
-
-    # ── Onboarding ─────────────────────────────────────────────
-
-    def _serve_onboarding(self):
-        """Serve the onboarding SPA page."""
-        try:
-            html = (STATIC_DIR / "onboarding.html").read_text(encoding="utf-8")
-        except Exception:
-            html = "<h1>Onboarding</h1><p>Onboarding page not found.</p>"
-        self._send_html(html)
-
-    def _handle_onboarding_status(self):
-        """Return what's missing for first-time setup."""
-        cfg = self._load_config()
-        provider_ok = bool(
-            cfg.get("model", {}).get("model")
-            and cfg.get("model", {}).get("provider")
-        )
-        soul_path = HERMES_HOME / "SOUL.md"
-        soul_ok = soul_path.exists() and soul_path.stat().st_size > 0
-        onebot_cfg = cfg.get("platforms", {}).get("onebot", {}) or {}
-        onebot_ok = bool(
-            onebot_cfg.get("enabled")
-            and (onebot_cfg.get("extra", {}) or {}).get("ws_url")
-        )
-        missing = []
-        if not provider_ok:
-            missing.append("provider")
-        if not soul_ok:
-            missing.append("soul")
-        if not onebot_ok:
-            missing.append("onebot")
-        return self._send_json({
-            "onboarding_required": bool(missing),
-            "missing": missing,
-            "provider_ok": provider_ok,
-            "soul_ok": soul_ok,
-            "onebot_ok": onebot_ok,
-            "current_model": cfg.get("model", {}).get("model"),
-            "current_provider": cfg.get("model", {}).get("provider"),
-        })
-
-    def _handle_onboarding_provider(self, body: Dict):
-        """Configure LLM provider."""
-        model = body.get("model", "").strip()
-        provider = body.get("provider", "custom").strip()
-        base_url = body.get("base_url", "").strip()
-        api_key = body.get("api_key", "").strip()
-        if not model:
-            return self._send_json({"error": "model required"}, 400)
-        if not api_key:
-            return self._send_json({"error": "api_key required"}, 400)
-        try:
-            cfg = self._load_config()
-            cfg.setdefault("model", {})
-            cfg["model"]["model"] = model
-            cfg["model"]["provider"] = provider
-            if base_url:
-                cfg["model"]["base_url"] = base_url
-            self._save_config(cfg)
-            # Write .env in HERMES_HOME
-            env_path = HERMES_HOME / ".env"
-            env_lines = []
-            if env_path.exists():
-                env_lines = env_path.read_text(encoding="utf-8").splitlines()
-            env_map = {}
-            for line in env_lines:
-                if "=" in line and not line.startswith("#"):
-                    k, v = line.split("=", 1)
-                    env_map[k.strip()] = v.strip()
-            env_map["OPENAI_API_KEY"] = api_key
-            env_map["OPENAI_BASE_URL"] = base_url or "https://opencode.ai/zen/go/v1"
-            env_map["OPENAI_MODEL"] = model
-            new_lines = [f"{k}={v}" for k, v in env_map.items()]
-            env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-            return self._send_json({"ok": True, "message": f"Provider {provider} configured"})
+            self._save_live2d_default(character, costume)
+            self._send_json({"ok": True, "character": character, "costume": costume, "saved": True})
         except Exception as e:
-            logger.exception("POST /api/onboarding/provider failed")
-            return self._send_json({"error": str(e)}, 500)
-
-    def _handle_onboarding_soul(self, body: Dict):
-        """Write SOUL.md from onboarding."""
-        content = body.get("content", "").strip()
-        preset = body.get("preset", "").strip()
-        overwrite = body.get("overwrite", False)
-        if not content and not preset:
-            return self._send_json({"error": "content or preset required"}, 400)
-        soul_path = HERMES_HOME / "SOUL.md"
-        if soul_path.exists() and not overwrite:
-            return self._send_json({"error": "SOUL.md already exists. Set overwrite=true to replace."}, 409)
-        try:
-            # If a preset is chosen, load the template
-            if preset:
-                template_path = ROOT / "templates" / f"SOUL-{preset}.md"
-                if not template_path.exists():
-                    template_path = ROOT / "templates" / "SOUL-template.md"
-                if template_path.exists():
-                    content = template_path.read_text(encoding="utf-8")
-            if not content:
-                return self._send_json({"error": "No content to write"}, 400)
-            soul_path.parent.mkdir(parents=True, exist_ok=True)
-            soul_path.write_text(content, encoding="utf-8")
-            # Also seed CORTEX.md and CEREBELLUM.md if missing
-            for fname in ("CORTEX.md", "CEREBELLUM.md"):
-                fp = HERMES_HOME / fname
-                if not fp.exists():
-                    tpl = ROOT / "templates" / fname
-                    if tpl.exists():
-                        fp.write_text(tpl.read_text(encoding="utf-8"), encoding="utf-8")
-            return self._send_json({"ok": True, "message": "SOUL.md written"})
-        except Exception as e:
-            logger.exception("POST /api/onboarding/soul failed")
-            return self._send_json({"error": str(e)}, 500)
-
-    def _handle_onboarding_onebot(self, body: Dict):
-        """Configure OneBot / QQ platform."""
-        ws_url = body.get("ws_url", "").strip()
-        access_token = body.get("access_token", "").strip()
-        home_channel = body.get("home_channel", "").strip()
-        if not ws_url:
-            return self._send_json({"error": "ws_url required"}, 400)
-        try:
-            cfg = self._load_config()
-            cfg.setdefault("platforms", {})
-            cfg["platforms"]["onebot"] = {
-                "enabled": True,
-                "extra": {
-                    "ws_url": ws_url,
-                    "access_token": access_token,
-                    "http_url": "http://127.0.0.1:3000",
-                    "require_mention": False,
-                },
-                "home_channel": {
-                    "chat_id": home_channel,
-                    "name": body.get("channel_name", ""),
-                },
-            }
-            self._save_config(cfg)
-            return self._send_json({"ok": True, "message": "OneBot configured"})
-        except Exception as e:
-            logger.exception("POST /api/onboarding/onebot failed")
-            return self._send_json({"error": str(e)}, 500)
-
-    def _handle_onboarding_restart(self):
-        """Restart the Gateway after onboarding."""
-        try:
-            # Kill existing gateway
-            import signal
-            gw_pid_file = HERMES_HOME / "gateway.pid"
-            if gw_pid_file.exists():
-                try:
-                    old_pid = int(gw_pid_file.read_text().strip())
-                    os.kill(old_pid, signal.SIGTERM)
-                except Exception:
-                    pass
-            # Restart
-            subprocess.Popen(
-                [str(ROOT / ".venv" / "Scripts" / "python.exe"), "-X", "utf8",
-                 "-m", "hermes_cli.main", "gateway"],
-                cwd=str(ROOT),
-                creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
-            )
-            return self._send_json({"ok": True, "message": "Gateway restarting"})
-        except Exception as e:
-            logger.exception("Failed to restart gateway after onboarding")
-            return self._send_json({"error": str(e)}, 500)
-
-    # ── Updates ────────────────────────────────────────────────
-
-    def _handle_updates_check(self):
-        """Check GitHub for latest release version."""
-        try:
-            import urllib.request
-            url = "https://api.github.com/repos/jixiong398-blip/hermes-for--qqbot/releases/latest"
-            req = urllib.request.Request(url, headers={"User-Agent": "Hermes-Dashboard"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            latest = data.get("tag_name", "").lstrip("v")
-            # Read current version
-            version_path = ROOT / "VERSION"
-            current = "0.0.0"
-            if version_path.exists():
-                current = version_path.read_text(encoding="utf-8").strip()
-            return self._send_json({
-                "current": current,
-                "latest": latest,
-                "update_available": latest > current if latest and current else False,
-                "release_url": data.get("html_url", ""),
-                "release_notes": data.get("body", "")[:500],
-            })
-        except Exception as e:
-            logger.debug("Update check failed: %s", e)
-            return self._send_json({"error": str(e), "current": "unknown", "latest": "unknown", "update_available": False})
-
-    # ── Config helpers ─────────────────────────────────────────
-
-    def _load_config(self) -> Dict:
-        """Load config.yaml from HERMES_HOME."""
-        import yaml as _yaml_mod
-        cfg_path = HERMES_HOME / "config.yaml"
-        if not cfg_path.exists():
-            return {}
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                return _yaml_mod.safe_load(f) or {}
-        except Exception:
-            return {}
-
-    def _save_config(self, cfg: Dict):
-        """Save config.yaml atomically."""
-        import yaml as _yaml_mod
-        cfg_path = HERMES_HOME / "config.yaml"
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = str(cfg_path) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            _yaml_mod.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        os.replace(tmp, str(cfg_path))
+            self._send_json({"error": str(e)}, 500)
 
     # ── NapCat Control ────────────────────────────────────────
 
     def _handle_napcat_start(self):
-        napcat_dir = str(ROOT / "napcat")
+        napcat_dir = str(BOT_DIR / "napcat")
         try:
             proc = subprocess.Popen(
                 ["cmd", "/c", "napcat.bat"],
@@ -1231,6 +1125,50 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"success": False, "error": str(e)}, 500)
 
+    def _handle_napcat_port_status(self):
+        """Check if NapCat WS/HTTP ports are open."""
+        ws_ok = self._check_port(3001)
+        http_ok = self._check_port(3000)
+        self._send_json({
+            "ws_3001": ws_ok,
+            "http_3000": http_ok,
+            "napcat_running": self._check_port(6099),
+        })
+
+    def _handle_napcat_anti_detection(self):
+        """Enable anti-detection settings in NapCat config."""
+        try:
+            cfg_dir = BOT_DIR / "napcat" / "napcat" / "config"
+            # Detect current QQ from newest protocol file
+            qq = None
+            protocol_files = sorted(cfg_dir.glob("napcat_protocol_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for f in protocol_files:
+                m = __import__("re").match(r"napcat_protocol_(\d+)", f.name)
+                if m: qq = m.group(1); break
+            if not qq:
+                self._send_json({"success": False, "error": "No logged-in QQ found"}, 400)
+                return
+            f = cfg_dir / f"napcat_{qq}.json"
+            if f.exists():
+                cfg = __import__("json").loads(f.read_text(encoding="utf-8"))
+                # Enable all anti-detection settings
+                cfg["o3HookMode"] = 1
+                cfg["autoTimeSync"] = True
+                cfg["bypass"] = {
+                    "hook": True,
+                    "window": True,
+                    "module": True,
+                    "process": True,
+                    "container": True,
+                    "js": True,
+                }
+                f.write_text(__import__("json").dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+                self._send_json({"success": True, "message": f"Anti-detection fully enabled for QQ {qq}"})
+                return
+            self._send_json({"success": False, "error": "No napcat config found"}, 400)
+        except Exception as e:
+            self._send_json({"success": False, "error": str(e)}, 500)
+
     # ── Service Management ────────────────────────────────────
 
     @classmethod
@@ -1254,8 +1192,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             for key in SERVICES:
                 self._force_kill_service(key)
             time.sleep(2)
-            results.append(self._start_one_service("gptsovits"))
-            time.sleep(25)
             results.append(self._start_one_service("tts_adapter"))
             results.append(self._start_one_service("napcat"))
             results.append(self._start_one_service("hermes_gateway"))
@@ -1309,8 +1245,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "name": svc["name"],
                 "port": svc["port"],
                 "status": "running" if is_running else "stopped",
-                "color": svc["color"]
-}
+                "color": svc["color"],
+            }
         self._send_json(result)
 
     def _handle_logs(self, params: Dict):
@@ -1349,8 +1285,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     data = json.dumps({
                         "service": svc,
                         "line": entry["line"],
-                        "ts": entry["ts"]
-}, ensure_ascii=False)
+                        "ts": entry["ts"],
+                    }, ensure_ascii=False)
                     self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
         self.wfile.flush()
 
@@ -1383,8 +1319,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             data = json.dumps({
                                 "service": svc,
                                 "line": entry["line"],
-                                "ts": entry["ts"]
-}, ensure_ascii=False)
+                                "ts": entry["ts"],
+                            }, ensure_ascii=False)
                             self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
                             has_new = True
                         if new_lines:
@@ -1399,8 +1335,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             data = json.dumps({
                                 "service": svc,
                                 "line": entry["line"],
-                                "ts": entry["ts"]
-}, ensure_ascii=False)
+                                "ts": entry["ts"],
+                            }, ensure_ascii=False)
                             self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
                             has_new = True
                     file_offsets[svc] = new_offset
@@ -1428,8 +1364,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "text": True,
                 "bufsize": 1,
                 "encoding": "utf-8",
-                "errors": "replace"
-}
+                "errors": "replace",
+            }
             if "env" in svc:
                 new_env = os.environ.copy()
                 new_env.update(svc["env"])
@@ -1461,20 +1397,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _force_kill_service(self, key: str):
         """Kill any running instance of a service by its process pattern."""
         patterns = {
-            "gptsovits": ["api_v2.py"],
             "tts_adapter": ["ts_adapter.py"],
-            "napcat": ["NapCatWinBootMain", "qq", "napcat.mjs", "napcat"],
+            "napcat": ["NapCat.Shell.exe", "NapCatWinBootMain"],
             "hermes_gateway": ["hermes_cli.main", "gateway"],
-            "live2d": ["electron", "live2d", "node.exe"]
-}
+            "live2d": ["live2d-electron", "electron"],
+        }
         pats = patterns.get(key, [])
-        # kill by process name pattern (python.exe for most, node.exe for napcat/live2d)
         for pat in pats:
-            exe_filter = "node.exe" if key in ("napcat", "live2d") else "python.exe"
             try:
                 subprocess.run(
                     ["powershell", "-NoProfile", "-Command",
-                     f"Get-CimInstance Win32_Process -Filter \"Name='{exe_filter}'\" | "
+                     f"Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
                      f"Where-Object {{ $_.CommandLine -like '*{pat}*' }} | "
                      f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
                     capture_output=True, timeout=15,
@@ -1486,20 +1419,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if key in SERVICES:
             port = SERVICES[key]["port"]
             if key == "napcat":
-                # Multi-method: kill node.exe running napcat, QQ process, and port
-                for exe in ('node.exe', 'QQ.exe', 'qq.exe'):
+                # Multi-method kill: pattern + port + cmd wrapper
+                for pattern in ('*NapCat.Shell*', '*NapCatWinBootMain*'):
                     try:
                         subprocess.run(
                             ["powershell", "-NoProfile", "-Command",
-                             f"Get-CimInstance Win32_Process -Filter \"Name='{exe}'\" | "
-                             "Where-Object { $_.CommandLine -like '*napcat*' -or $_.CommandLine -like '*NapCat*' } | "
+                             "Get-CimInstance Win32_Process | "
+                             f"Where-Object {{ $_.CommandLine -like '{pattern}' }} | "
                              "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
                             capture_output=True, timeout=15,
                             creationflags=subprocess.CREATE_NO_WINDOW,
                         )
                     except Exception:
                         pass
-                for port in (3000, 3001, 6099):
+                for port in (3000, 3001):
                     try:
                         subprocess.run(
                             ["powershell", "-NoProfile", "-Command",
@@ -1513,18 +1446,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         pass
             elif key == "live2d":
                 # Live2D runs inside Electron — kill electron.exe processes in the project dir
-                for pattern in ("electron", "live2d", "node.exe"):
-                    try:
-                        subprocess.run(
-                            ["powershell", "-NoProfile", "-Command",
-                             f"Get-CimInstance Win32_Process -Filter \"Name='{pattern}'\" | "
-                             f"Where-Object {{ $_.CommandLine -like '*live2d*' }} | "
-                             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-                            capture_output=True, timeout=15,
-                            creationflags=subprocess.CREATE_NO_WINDOW,
-                        )
-                    except Exception:
-                        pass
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "Get-CimInstance Win32_Process -Filter \"Name='electron.exe'\" | "
+                         "Where-Object { $_.CommandLine -like '*live2d-electron*' } | "
+                         "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
+                        capture_output=True, timeout=15,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                except Exception:
+                    pass
+                # Also kill node processes with live2d-electron
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+                         "Where-Object { $_.CommandLine -like '*live2d-electron*' } | "
+                         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                        capture_output=True, timeout=15,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                except Exception:
+                    pass
                 _kill_process_on_port(port)
             elif key == "local_vision":
                 try:

@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName     "Hermes QQ Bot"
-#define MyAppVersion  "0.9.2"
+#define MyAppVersion  "0.10.0"
 #define MyAppPublisher "Hermes QQ Bot"
 #define MyAppURL      "https://github.com/jixiong398-blip/hermes-for--qqbot"
 #define MyAppExeName  "start.bat"
@@ -39,7 +39,7 @@ Name: "custom";  Description: "Custom installation"; Flags: iscustom
 
 [Components]
 Name: "core";    Description: "Hermes Core Engine (required)"; Types: full compact custom; Flags: fixed
-Name: "live2d";  Description: "Live2D Desktop Pet (~320MB)"; Types: full
+Name: "live2d";  Description: "Live2D Desktop Pet (Cubism 4/5, ~320MB)"; Types: full
 Name: "napcat";  Description: "NapCat QQ Bridge"; Types: full compact
 Name: "dash";    Description: "Web Dashboard"; Types: full compact; Flags: fixed
 

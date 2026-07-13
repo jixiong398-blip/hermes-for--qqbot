@@ -57,8 +57,10 @@ auto_join:
   deliver: onebot
   enabled: false
   schedule: '*/30 * * * *'
-  model: deepseek-v4-flash
-  provider: deepseek
+  model: {{LLM_MODEL}}
+  provider: custom
+  api_key: {{DEEPSEEK_API_KEY}}
+  base_url: {{LLM_BASE_URL}}
   task: 用 auto-join-check 脚本检查群聊是否需要插话。先检查最近30分钟内你是否已经在这个话题上回复过了——如果已经说过，就跳过。如果群友们聊到了你能自然参与的话题、而且你最近没说过话，就写一段20-50字的完整回复。必须是一句完整的话，绝对不能说到一半就停（禁止只输出几个字）。不要重复已经表达过的观点。如果不需要插话，就什么都不做。
 compression:
   enabled: true
@@ -71,10 +73,14 @@ display:
   tool_progress: 'off'
 gateway:
   allow_all_users: true
+  auth_token: {{GATEWAY_AUTH_TOKEN}}
   bind: loopback
   port: 18789
   reconnect_base_delay: 5
   reconnect_max_attempts: 100
+# v0.10.0: Live2D Cubism 4/5 — Hermes WS on :19919/hermes
+live2d:
+  ws_url: ws://127.0.0.1:19919/hermes
 image:
   input_mode: text
 memory:
@@ -85,27 +91,28 @@ memory:
   user_char_limit: 1375
   user_profile_enabled: true
 model:
-  model: deepseek-v4-flash
-  provider: deepseek
+  model: {{LLM_MODEL}}
+  provider: custom
+  api_key: {{DEEPSEEK_API_KEY}}
+  base_url: {{LLM_BASE_URL}}
 platform_toolsets:
   onebot:
   - hermes-onebot
 platforms:
   feishu:
-    enabled: true
-    extra:
-      app_id: cli_aa8b624036e1dcbd
+    enabled: false
   onebot:
     enabled: true
     extra:
+      access_token: ''  # 从 NapCat WebUI → OneBot11 设置中获取，登录后回填
       http_url: http://127.0.0.1:3000
       require_mention: false
       ws_url: ws://127.0.0.1:3001/
-      admin_id: {{OWNER_QQ}}
+      admin_id: '{{OWNER_QQ}}'
     gateway_restart_notification: false
     home_channel:
-      chat_id: '{{HOME_CHANNEL}}'
-      name: '{{CHANNEL_NAME}}'
+      chat_id: ''
+      name: ''
       platform: onebot
 plugins:
   enabled:
@@ -115,7 +122,7 @@ mcp_servers:
   anysearch:
     url: https://api.anysearch.com/mcp
     headers:
-      Authorization: Bearer as_sk_fa89133f38499c61450b89a2a46fde4a
+      Authorization: Bearer {{ANYSEARCH_KEY}}
 stt:
   enabled: true
   provider: local
@@ -132,8 +139,10 @@ terminal:
   cwd: /home/{{USERNAME}}/ai/ai
 auxiliary:
   vision:
-    provider: xiaomi
-    model: mimo-v2.5
+    provider: custom
+    model: {{VISION_MODEL}}
+    api_key: {{MIMO_TOKEN}}
+    base_url: {{VISION_BASE_URL}}
     timeout: 120
     download_timeout: 30
 skills:

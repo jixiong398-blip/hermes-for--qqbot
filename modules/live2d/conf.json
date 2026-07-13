@@ -1,7 +1,28 @@
 {
-  "character": "soyo",
-  "costume": "live_event_297_ur",
+  "character": "rana",
+  "costume": "live_01",
   "wsPort": 9190,
-  "width": 600,
-  "height": 800
+  "hermesPort": 9190,
+  "width": 460,
+  "height": 680,
+  "modelRegistry": "https://cucumbervpet.sevenvoxel.com/manifest.json",
+  "modelCDN": "https://assets.cucumbervpet.com",
+  "followFps": 60,
+  "version": "1.1.4",
+  "mainCharacters": [
+    "anon",
+    "mutsumi",
+    "nyamu",
+    "rana",
+    "sakiko",
+    "soyo",
+    "taki",
+    "tomori",
+    "uika",
+    "umiri"
+  ],
+  "subCharacters": [
+    "sub",
+    "yachiyo"
+  ]
 }

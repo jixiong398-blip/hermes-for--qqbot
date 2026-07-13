@@ -1,260 +1,420 @@
-const params = new URLSearchParams(window.location.search);
-let CHARACTER = params.get('character') || 'soyo';
-let COSTUME = params.get('costume') || 'casual-2023';
-const WS_PORT = params.get('wsPort') || '9190';
-const ASSETS_BASE = 'http://127.0.0.1:19919/assets/';
+const canvas = document.getElementById("stage");
+const statusEl = document.getElementById("status");
+const renderQualityScale = 2;
+const maxRendererResolution = 4;
 
-let pixiApp = null;
-let model = null;
-let currentState = 'idle';
-let ws = null;
-let wsTimer = null;
-let idleTimer = null;
-let manualPauseUntil = 0;
-const MANUAL_PAUSE_MS = 10000;
+PIXI.settings.ROUND_PIXELS = true;
 
-const STATE_REPERTOIRE = {
-  idle: { expressions: ['default', 'idle01', 'nf01', 'nf02', 'nf03'], motions: ['idle01', 'nf01', 'nf02'], interval: 8000 },
-  thinking: { expressions: ['thinking01', 'thinking02_01', 'thinking02_02', 'serious01'], motions: ['thinking01', 'thinking02_01'], interval: 3000 },
-  tool_call: { expressions: ['kime01', 'serious01', 'serious02'], motions: ['kime01'], interval: 5000 },
-  replying: { expressions: ['smile01', 'smile02', 'smile03'], motions: ['smile01'], interval: 6000 },
-  speaking: { expressions: ['default', 'smile01'], motions: ['idle01', 'nf01'], interval: 4000 },
-};
-
-const EMOTION_MAP = {
-  smile:     { expressions: ['smile01','smile02','smile03','smile04','smile05','smile06','wink01'], motions: ['smile01','smile02','smile03','smile04','smile05','smile06','smile01_ingameV2'] },
-  angry:     { expressions: ['angry01','angry02','angry03','angry04'], motions: ['angry01','angry02','angry03','angry04','angry05','angry06'] },
-  sad:       { expressions: ['sad01','sad02','sad03'], motions: ['sad01','sad02','sad03'] },
-  cry:       { expressions: ['cry01','cry02'], motions: ['cry01','cry02'] },
-  surprised: { expressions: ['surprised01'], motions: ['surprised01'] },
-  serious:   { expressions: ['serious01','serious02','serious03','serious04','kime01'], motions: ['serious01','serious02','serious03','serious04','kime01'] },
-  shame:     { expressions: ['shame01','shame02'], motions: ['shame01','shame02'] },
-  wink:      { expressions: ['wink01'], motions: ['wink01'] },
-  thinking:  { expressions: ['thinking01','thinking02'], motions: ['thinking01','thinking02_01','thinking02_02','thinking02_ingameV2'] },
-  goodbye:   { expressions: ['bye01','bye02'], motions: ['bye01','bye02'] },
-  nervous:   { expressions: ['odoodo01'], motions: ['odoodo01'] },
-  relieved:  { expressions: ['ando01'], motions: ['ando01'] },
-  excited:   { expressions: ['kandou01'], motions: ['kandou01'] },
-  scared:    { expressions: ['default'], motions: ['scared01'] },
-  default:   { expressions: ['default','idle01'], motions: ['idle01','nf01','nf02','nf03','nf04','nf05'] },
-};
-
-function modelUrl() {
-  return `${ASSETS_BASE}figure/${CHARACTER}/${COSTUME}/model.json`;
+function getRendererResolution() {
+    const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
+    return Math.min(maxRendererResolution, deviceRatio * renderQualityScale);
 }
 
-function setIPCStatus(ok, detail) {
-  const el = document.getElementById('ipc-status');
-  if (el) {
-    el.textContent = ok ? 'IPC ✓' : 'IPC ✗';
-    el.className = ok ? 'connected' : 'disconnected';
-    el.title = detail || '';
-  }
-}
-
-function setStatus(ok) {
-  const el = document.getElementById('ws-status');
-  el.textContent = ok ? '● 接続済' : '● 未接続';
-  el.className = ok ? 'connected' : 'disconnected';
-}
-
-function setLabel(s) {
-  const m = { idle: '待機', thinking: '思考中', tool_call: 'ツール実行', replying: '返信中', speaking: '通話中' };
-  document.getElementById('state-label').textContent = m[s] || s;
-}
-
-async function initPixi() {
-  const canvas = document.getElementById('live2d-canvas');
-  pixiApp = new PIXI.Application({
-    view: canvas, width: window.innerWidth, height: window.innerHeight,
-    backgroundAlpha: 0, antialias: true,
-    resolution: window.devicePixelRatio || 1, autoDensity: true,
+const app = new PIXI.Application({
+    view: canvas,
+    autoStart: true,
+    autoDensity: true,
+    backgroundAlpha: 0,
+    antialias: true,
     preserveDrawingBuffer: true,
-  });
-  pixiApp.stage.sortableChildren = true;
-  pixiApp.stage.eventMode = 'none';
-  pixiApp.stage.interactiveChildren = false;
-}
+    resolution: getRendererResolution(),
+    resizeTo: window,
+});
 
-async function loadModel() {
-  const url = modelUrl();
-  model = await window.Live2DModel.from(url, { autoInteract: false, autoUpdate: true });
-  if (!model) throw new Error('Model creation returned null');
-  model.visible = true;
-  model.eventMode = 'none';
-  model.interactiveChildren = false;
-  pixiApp.stage.addChild(model);
-  fitModel();
-  window.addEventListener('resize', fitModel);
-}
+let currentModel = null;
+let lookEnabled = false;
+let targetLookX = 0;
+let targetLookY = 0;
+let currentLookX = 0;
+let currentLookY = 0;
+let pendingFitFrames = 0;
+let desiredSizePercent = 100;
+let loadRequestId = 0;
+let startupAudio = null;
+let startupVolume = 0.6;
+let lastHitTest = { x: -9999, y: -9999, hit: false, time: 0 };
 
-function fitModel() {
-  if (!model || !model.width) return;
-  const cw = window.innerWidth, ch = window.innerHeight;
-  const mw = model.width, mh = model.height;
-  const s = Math.min((cw * 0.85) / mw, (ch * 0.9) / mh);
-  model.scale.set(s);
-  model.anchor.set(0.5, 0.5);
-  model.x = cw / 2;
-  model.y = ch / 2;
-}
+const baseWindowWidth = 460;
+const baseWindowHeight = 680;
+const fitMarginLeft = 0.14;
+const fitMarginRight = 0.14;
+const fitMarginTop = 0.003;
+const fitMarginBottom = 0.16;
 
-function pickRandom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function setExpression(name) {
-  if (!model || !name) return;
-  const key = `${CHARACTER}/${name}`;
-  try { model.expression(key); } catch (_) {}
-}
-
-function playMotion(name) {
-  if (!model || !name) return;
-  try { model.motion(`${CHARACTER}/${name}`, 0, 3); } catch (_) {}
-}
-
-function startIdleCycle(repertoire) {
-  stopIdleCycle();
-  let idx = 0;
-  idleTimer = setInterval(() => {
-    if (Date.now() < manualPauseUntil) return;
-    if (!repertoire || !repertoire.expressions) return;
-    const exp = repertoire.expressions[idx % repertoire.expressions.length];
-    setExpression(exp);
-    if (repertoire.motions && Math.random() < 0.5) {
-      playMotion(pickRandom(repertoire.motions));
+function post(type, payload = {}) {
+    if (window.chrome?.webview) {
+        window.chrome.webview.postMessage({ type, ...payload });
     }
-    idx++;
-  }, repertoire.interval || 8000);
 }
 
-function stopIdleCycle() {
-  if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+function setStatus(text, hidden = false) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle("hidden", hidden);
 }
 
-function applyEmotion(emotionName) {
-  const r = EMOTION_MAP[emotionName];
-  if (!r) return;
-  setExpression(pickRandom(r.expressions));
-  playMotion(pickRandom(r.motions));
-  manualPauseUntil = Date.now() + MANUAL_PAUSE_MS;
+function resizeModel() {
+    if (!currentModel) {
+        return;
+    }
+
+    currentModel.scale.set(1);
+    currentModel.position.set(0, 0);
+    currentModel.updateTransform();
+
+    const bounds = currentModel.getBounds();
+    if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height) || bounds.width <= 0 || bounds.height <= 0) {
+        return;
+    }
+
+    const screenWidth = app.screen.width;
+    const screenHeight = app.screen.height;
+    const targetWidth = screenWidth * (1 - fitMarginLeft - fitMarginRight);
+    const targetHeight = screenHeight * (1 - fitMarginTop - fitMarginBottom);
+    const fitScale = Math.min(targetWidth / bounds.width, targetHeight / bounds.height);
+    const actualWindowPercent = Math.min(
+        screenWidth / baseWindowWidth,
+        screenHeight / baseWindowHeight,
+    ) * 100;
+    const visualBoost = actualWindowPercent > 0
+        ? Math.max(1, Math.min(1.22, desiredSizePercent / actualWindowPercent))
+        : 1;
+    const scale = fitScale * visualBoost;
+
+    currentModel.scale.set(scale);
+    currentModel.x = Math.round(screenWidth * fitMarginLeft + (targetWidth - bounds.width * scale) / 2 - bounds.x * scale);
+    currentModel.y = Math.round(screenHeight * fitMarginTop - bounds.y * scale);
+    currentModel.roundPixels = true;
 }
 
-function changeState(state) {
-  if (state === currentState) return;
-  currentState = state;
-  setLabel(state);
-
-  const r = STATE_REPERTOIRE[state];
-  if (!r) return;
-
-  if (Date.now() < manualPauseUntil) {
-    startIdleCycle(r);
-    return;
-  }
-
-  setExpression(pickRandom(r.expressions));
-  playMotion(pickRandom(r.motions));
-  startIdleCycle(r);
+function syncRendererResolution() {
+    const ratio = getRendererResolution();
+    if (Math.abs(app.renderer.resolution - ratio) > 0.001) {
+        app.renderer.resolution = ratio;
+        app.renderer.resize(window.innerWidth, window.innerHeight);
+        scheduleFit(12);
+    }
 }
 
-function handleMsg(raw) {
-  try {
-    const m = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    switch (m.type) {
-      case 'state': changeState(m.state); break;
-      case 'expression':
-        setExpression(m.name.replace(`${CHARACTER}/`, ''));
-        manualPauseUntil = Date.now() + MANUAL_PAUSE_MS;
-        break;
-      case 'motion':
-        playMotion(m.name.replace(`${CHARACTER}/`, ''));
-        manualPauseUntil = Date.now() + MANUAL_PAUSE_MS;
-        break;
-      case 'speaking':
-        if (m.state) { changeState('speaking'); }
-        else { manualPauseUntil = 0; changeState('idle'); }
-        break;
-      case 'emotion':
-        applyEmotion(m.emotion);
-        break;
-      case 'screenshot_request':
-        try {
-          if (window.electronAPI && window.electronAPI.sendScreenshot) {
-            const canvas = document.getElementById('live2d-canvas');
-            if (canvas) {
-              const dataUrl = canvas.toDataURL('image/png');
-              window.electronAPI.sendScreenshot(dataUrl);
-            } else if (pixiApp && pixiApp.renderer) {
-              pixiApp.renderer.render(pixiApp.stage);
-              const c = pixiApp.renderer.extract.canvas ? 
-                pixiApp.renderer.extract.canvas(pixiApp.stage) :
-                pixiApp.renderer.view;
-              const dataUrl = c.toDataURL('image/png');
-              window.electronAPI.sendScreenshot(dataUrl);
+function setSizePercent(percent) {
+    desiredSizePercent = Math.max(50, Math.min(200, Number(percent) || 100));
+    resizeModel();
+    scheduleFit(12);
+}
+
+function scheduleFit(frames = 24) {
+    pendingFitFrames = Math.max(pendingFitFrames, frames);
+}
+
+function destroyModel(model) {
+    if (!model) {
+        return;
+    }
+
+    try {
+        if (model.parent) {
+            model.parent.removeChild(model);
+        }
+    } catch {
+        // Ignore stale Pixi parent state from interrupted model switches.
+    }
+
+    try {
+        if (typeof model.destroy === "function" && !model.destroyed) {
+            model.destroy({ children: true, texture: false, baseTexture: false });
+        }
+    } catch {
+        // A broken or interrupted model load can leave Pixi internals half-initialized.
+    }
+}
+
+function clearStageExcept(keptModel) {
+    for (const child of [...app.stage.children]) {
+        if (child !== keptModel) {
+            destroyModel(child);
+        }
+    }
+}
+
+function stopStartupAudio() {
+    if (!startupAudio) {
+        return;
+    }
+
+    try {
+        startupAudio.pause();
+        startupAudio.currentTime = 0;
+    } catch {
+        // Audio cleanup should not affect model switching.
+    }
+
+    startupAudio = null;
+}
+
+function playStartupSound(url) {
+    stopStartupAudio();
+    if (!url) {
+        return;
+    }
+
+    try {
+        startupAudio = new Audio(url);
+        startupAudio.volume = startupVolume;
+        const playResult = startupAudio.play();
+        if (playResult && typeof playResult.catch === "function") {
+            playResult.catch((error) => {
+                post("audioError", { message: error?.message ?? String(error) });
+                stopStartupAudio();
+            });
+        }
+    } catch (error) {
+        post("audioError", { message: error?.message ?? String(error) });
+        stopStartupAudio();
+    }
+}
+
+function setAudioVolume(percent) {
+    const normalized = Math.max(0, Math.min(1, (Number(percent) || 0) / 100));
+    startupVolume = normalized;
+    if (startupAudio) {
+        startupAudio.volume = startupVolume;
+    }
+}
+
+async function loadModel(url, startupSoundUrl = null) {
+    const requestId = ++loadRequestId;
+    setStatus("Loading Live2D...");
+    stopStartupAudio();
+
+    let nextModel = null;
+    try {
+        nextModel = await PIXI.live2d.Live2DModel.from(url, {
+            autoInteract: false,
+        });
+    } catch (error) {
+        if (requestId === loadRequestId) {
+            throw error;
+        }
+
+        return;
+    }
+
+    if (requestId !== loadRequestId) {
+        destroyModel(nextModel);
+        return;
+    }
+
+    currentModel = nextModel;
+    clearStageExcept(currentModel);
+    if (!currentModel.parent) {
+        app.stage.addChild(currentModel);
+    }
+
+    resizeModel();
+    scheduleFit(36);
+    playStartupSound(startupSoundUrl);
+    currentLookX = 0;
+    currentLookY = 0;
+    targetLookX = 0;
+    targetLookY = 0;
+
+    setStatus("", true);
+}
+
+function playExpression(name) {
+    if (!currentModel || !name) {
+        return;
+    }
+
+    try {
+        currentModel.expression(name);
+    } catch {
+        const expressions = currentModel.internalModel?.settings?.expressions ?? [];
+        const index = expressions.findIndex((item) => item.Name === name || item.name === name);
+        if (index >= 0) {
+            currentModel.expression(index);
+        }
+    }
+
+    scheduleFit(18);
+}
+
+function playMotion(group, index) {
+    if (!currentModel || !group) {
+        return;
+    }
+
+    currentModel.motion(group, index ?? 0);
+    scheduleFit(60);
+}
+
+function setModelParameter(id, value, weight = 1) {
+    const coreModel = currentModel?.internalModel?.coreModel;
+    if (!coreModel) {
+        return;
+    }
+
+    if (typeof coreModel.setParameterValueById === "function") {
+        coreModel.setParameterValueById(id, value, weight);
+    } else if (typeof coreModel.addParameterValueById === "function") {
+        coreModel.addParameterValueById(id, value, weight);
+    }
+}
+
+function updateLookTarget(x, y, enabled) {
+    lookEnabled = enabled !== false;
+    targetLookX = lookEnabled ? Math.max(-1, Math.min(1, Number(x) || 0)) : 0;
+    targetLookY = lookEnabled ? Math.max(-1, Math.min(1, Number(y) || 0)) : 0;
+}
+
+function applyLook() {
+    if (!currentModel) {
+        return;
+    }
+
+    const ease = 0.24;
+    currentLookX += (targetLookX - currentLookX) * ease;
+    currentLookY += (targetLookY - currentLookY) * ease;
+
+    const angleX = currentLookX * 26;
+    const angleY = -currentLookY * 18;
+    const eyeX = currentLookX;
+    const eyeY = -currentLookY * 0.65;
+    const bodyX = currentLookX * 7;
+
+    setModelParameter("ParamAngleX", angleX, 1);
+    setModelParameter("ParamAngleY", angleY, 1);
+    setModelParameter("ParamEyeBallX", eyeX, 1);
+    setModelParameter("ParamEyeBallY", eyeY, 1);
+    setModelParameter("ParamBodyAngleX", bodyX, 0.55);
+}
+
+function isCharacterHit(event) {
+    const rect = canvas.getBoundingClientRect();
+    return hitTestAtCssPoint(event.clientX - rect.left, event.clientY - rect.top);
+}
+
+function readAlphaAtCssPoint(x, y) {
+    if (!currentModel || !app.renderer?.gl) {
+        return 0;
+    }
+
+    const resolution = app.renderer.resolution || window.devicePixelRatio || 1;
+    const pixelX = Math.floor(x * resolution);
+    const pixelY = Math.floor((canvas.clientHeight - y) * resolution);
+    if (pixelX < 0 || pixelY < 0 || pixelX >= canvas.width || pixelY >= canvas.height) {
+        return 0;
+    }
+
+    const gl = app.renderer.gl;
+    const pixel = new Uint8Array(4);
+    try {
+        gl.readPixels(pixelX, pixelY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return pixel[3] || 0;
+    } catch {
+        return 0;
+    }
+}
+
+function hitTestAtCssPoint(x, y) {
+    if (!currentModel) {
+        return false;
+    }
+
+    const now = performance.now();
+    if (now - lastHitTest.time < 16
+        && Math.abs(lastHitTest.x - x) < 2
+        && Math.abs(lastHitTest.y - y) < 2) {
+        return lastHitTest.hit;
+    }
+
+    const bounds = currentModel.getBounds();
+    const coarsePadding = 4;
+    if (x < bounds.x - coarsePadding
+        || x > bounds.x + bounds.width + coarsePadding
+        || y < bounds.y - coarsePadding
+        || y > bounds.y + bounds.height + coarsePadding) {
+        lastHitTest = { x, y, hit: false, time: now };
+        return false;
+    }
+
+    const threshold = 8;
+    const offsets = [
+        [0, 0],
+        [2, 0],
+        [-2, 0],
+        [0, 2],
+        [0, -2],
+        [3, 3],
+        [-3, 3],
+        [3, -3],
+        [-3, -3],
+    ];
+    const hit = offsets.some(([dx, dy]) => readAlphaAtCssPoint(x + dx, y + dy) >= threshold);
+    lastHitTest = { x, y, hit, time: now };
+    return hit;
+}
+
+window.cucumberVPetHitTest = (x, y) => hitTestAtCssPoint(Number(x) || 0, Number(y) || 0);
+
+window.chrome?.webview?.addEventListener("message", async (event) => {
+    const message = event.data ?? {};
+
+    try {
+        if (message.type === "loadModel") {
+            if (message.sizePercent) {
+                desiredSizePercent = Math.max(50, Math.min(200, Number(message.sizePercent) || 100));
             }
-          }
-        } catch (_) {}
-        break;
+            if (message.audioVolumePercent !== undefined) {
+                setAudioVolume(message.audioVolumePercent);
+            }
+            await loadModel(message.url, message.startupSoundUrl);
+        } else if (message.type === "expression") {
+            playExpression(message.name);
+        } else if (message.type === "motion") {
+            playMotion(message.group, message.index);
+        } else if (message.type === "look") {
+            updateLookTarget(message.x, message.y, message.enabled);
+        } else if (message.type === "size") {
+            setSizePercent(message.percent);
+        } else if (message.type === "audioVolume") {
+            setAudioVolume(message.percent);
+        }
+    } catch (error) {
+        setStatus(error?.message ?? "Live2D load failed");
+        post("error", { message: error?.message ?? String(error) });
     }
-  } catch (_) {}
-}
+});
 
-function connectWS() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  clearTimeout(wsTimer); wsTimer = null;
-  try {
-    ws = new WebSocket(`ws://127.0.0.1:${WS_PORT}`);
-    ws.onopen = () => setStatus(true);
-    ws.onmessage = e => handleMsg(e.data);
-    ws.onclose = () => { setStatus(false); wsTimer = setTimeout(connectWS, 3000); };
-    ws.onerror = () => { wsTimer = setTimeout(connectWS, 3000); };
-  } catch (_) { wsTimer = setTimeout(connectWS, 3000); }
-}
-
-async function init() {
-  try {
-    await initPixi();
-    await loadModel();
-    changeState('idle');
-    console.log('[Live2D] Ready');
-  } catch (e) {
-    console.error('[Live2D] Error:', e.message);
-    document.body.innerHTML = `<div style="color:white;padding:20px;font-family:sans-serif;">エラー: ${e.message}</div>`;
-    return;
-  }
-  connectWS();
-}
-
-document.addEventListener('DOMContentLoaded', init);
-
-// IPC: switch model without page reload
-window._switchModel = async (newChar, newOutfit) => {
-  if (!model || !pixiApp) return;
-  pixiApp.stage.removeChild(model);
-  model = null;
-  stopIdleCycle();
-
-  CHARACTER = newChar;
-  COSTUME = newOutfit;
-  const url = new URL(window.location.href);
-  url.searchParams.set('character', newChar);
-  url.searchParams.set('costume', newOutfit);
-  window.history.replaceState({}, '', url.toString());
-
-  await loadModel();
-  changeState('idle');
-  document.getElementById('state-label').textContent = newChar + '/' + newOutfit;
-  setTimeout(() => setLabel(currentState), 3000);
-};
-
-if (window.electronAPI && window.electronAPI.onLive2dCmd) {
-  window.electronAPI.onLive2dCmd((data) => {
-    if (data.type === 'switch_model') {
-      window._switchModel(data.character, data.costume);
-      return;
+app.ticker.add(applyLook, undefined, PIXI.UPDATE_PRIORITY.LOW);
+app.ticker.add(() => {
+    if (pendingFitFrames > 0) {
+        resizeModel();
+        pendingFitFrames -= 1;
     }
-    handleMsg(data);
-  });
-}
+}, undefined, PIXI.UPDATE_PRIORITY.LOW);
+window.addEventListener("resize", resizeModel);
+window.addEventListener("resize", syncRendererResolution);
+
+canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+});
+
+document.addEventListener("pointerdown", (event) => {
+    if (event.button === 0 && isCharacterHit(event)) {
+        post("drag");
+        event.preventDefault();
+    } else if (event.button === 2) {
+        event.preventDefault();
+    }
+});
+
+document.addEventListener("pointerup", (event) => {
+    if (event.button === 2 && isCharacterHit(event)) {
+        post("contextMenu");
+        event.preventDefault();
+    } else if (event.button === 2) {
+        event.preventDefault();
+    }
+});
+
+post("ready");
