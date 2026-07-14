@@ -1048,6 +1048,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({
             "characters": models,
             "default": {"character": default_char, "costume": default_costume},
+            "empty": len(models) == 0,
+            "hint": "No models installed. Click 'Manage Models' to download from CDN." if len(models) == 0 else None,
         })
 
     def _handle_live2d_switch(self, body: Dict):

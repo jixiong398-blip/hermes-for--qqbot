@@ -13,14 +13,7 @@ const { spawn } = require('child_process');
 const MANIFEST_URL = 'https://cucumbervpet.sevenvoxel.com/manifest.json';
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
 const MODELS_DIR = path.join(__dirname, 'assets', 'models');
-const DECRYPT_SCRIPT = path.join(
-  process.env.USERPROFILE || '',
-  '.config',
-  'opencode',
-  'skills',
-  'cvpkg-decrypt',
-  'decrypt_cvpkg.py'
-);
+const DECRYPT_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'decrypt_cvpkg.py');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

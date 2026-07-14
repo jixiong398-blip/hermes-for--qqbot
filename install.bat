@@ -68,7 +68,7 @@ echo   Python 3.12 installed -- OK
 
 :: Live2D Models are now bundled in models/ directory (Cubism 4/5), no extraction needed.
 echo.
-echo   [2/5] Live2D Models (Cubism 4/5) -- pre-installed
+echo   [2/5] Live2D Models — download via Dashboard
 echo.
 echo   Live2D models are included in modules\live2d\assets\models\
 echo   No extraction needed.
