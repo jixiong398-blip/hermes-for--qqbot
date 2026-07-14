@@ -1,5 +1,12 @@
 ﻿# bot-template 更新日志
 
+
+## v0.10.2 (2026-07-14)
+- **CDN 模型分发**: 移除 Git LFS 模型追踪，改为 CDN 下载 + 内置 decrypt_cvpkg.py 解密
+- **解密脚本内置**: scripts/decrypt_cvpkg.py（纯 stdlib，141 行），download-backend.js 路径改为相对
+- **Dashboard 空模型检测**: /api/live2d/models 返回 empty 字段 + hint 提示
+- **install.bat**: Live2D 步骤从"预安装"改为"Dashboard 下载"
+
 ## v0.10.1 (2026-07-14)
 - **qzone-post.py 修复**: {{ONEBOT_TOKEN}} 占位符替换为运行时自动检测（env → config.yaml → NapCat onebot11_*.json），用户不再需要手动填 token
 
@@ -118,4 +125,5 @@
 
 ## v0.4.x (2026-05-25)
 - NapCat 升级 v9.9.27 / WS 心跳优化 / 图片识别 / 隐私清洗 / 多供应商 API 配置
+
 
