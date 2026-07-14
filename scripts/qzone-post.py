@@ -1,10 +1,37 @@
 #!/usr/bin/env python3
 """Post QQ Space 说说 and log to memory — with lock, dedup, and robust error handling."""
-import sys, json, time, requests, sqlite3, os
+import sys, json, time, requests, sqlite3, os, yaml
 from pathlib import Path
 
 ONEBOT_HTTP = "http://127.0.0.1:3000"
-TOKEN = "{{ONEBOT_TOKEN}}"
+
+def _load_token():
+    """Read OneBot access_token from .env or config.yaml."""
+    # 1. env
+    tok = os.getenv("ONEBOT_ACCESS_TOKEN", "")
+    if tok: return tok
+    # 2. config.yaml
+    cfg = Path.home() / ".hermes" / "config.yaml"
+    if cfg.exists():
+        try:
+            data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+            tok = data.get("platforms", {}).get("onebot", {}).get("extra", {}).get("access_token", "")
+            if tok: return tok
+        except Exception:
+            pass
+    # 3. NapCat onebot11 config
+    import glob as _glob
+    for f in sorted(_glob.glob(str(Path("napcat/napcat/config/onebot11_*.json"))), reverse=True):
+        try:
+            d = json.loads(Path(f).read_text(encoding="utf-8"))
+            for srv in d.get("network", {}).get("httpServers", []):
+                t = srv.get("token", "").strip()
+                if t: return t
+        except Exception:
+            continue
+    return ""
+
+TOKEN = _load_token()
 DB = Path.home() / ".hermes" / "memory_store.db"
 
 def get_cookies():
