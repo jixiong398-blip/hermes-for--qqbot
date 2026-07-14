@@ -1,5 +1,9 @@
 ﻿# bot-template 更新日志
 
+## v0.10.1 (2026-07-14)
+- **qzone-post.py 修复**: {{ONEBOT_TOKEN}} 占位符替换为运行时自动检测（env → config.yaml → NapCat onebot11_*.json），用户不再需要手动填 token
+
+
 ## v0.10.0 (2026-07-13)
 
 ### Live2D Cubism 5 — 完整重写
@@ -114,3 +118,4 @@
 
 ## v0.4.x (2026-05-25)
 - NapCat 升级 v9.9.27 / WS 心跳优化 / 图片识别 / 隐私清洗 / 多供应商 API 配置
+
