@@ -303,6 +303,8 @@ class OneBotAdapter(BasePlatformAdapter):
                 for attempt in range(3):
                     try:
                         db = sqlite3.connect(db_path, timeout=10)
+                        db.execute("PRAGMA journal_mode=WAL")
+                        db.execute("PRAGMA synchronous=NORMAL")
                         db.execute("PRAGMA busy_timeout=30000")
                         if not _corpus_inited:
                             db.executescript("""

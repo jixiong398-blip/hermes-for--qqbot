@@ -1,6 +1,22 @@
 ﻿# bot-template 更新日志
 
 
+
+## v0.10.3 (2026-07-16)
+- **state.db 损坏修复**: persist worker 缺 PRAGMA journal_mode=WAL 导致 SQLite B-tree 损坏（#bug-report），新增 WAL + NORMAL synchronous
+- **数据恢复指南**: 见下方「数据库恢复」章节
+
+### 数据库恢复
+如果 state.db 损坏（database disk image is malformed），恢复步骤：
+1. 停止 Hermes Gateway
+2. 删除损坏的 state.db（~/.hermes/state.db）
+3. 重启 Gateway — persist worker 会自动建表
+4. 通过 NapCat debug WS 重新加载 dbexport 插件解密 QQ 本地数据库
+5. 如有备份，从 ~/.hermes/state.db.bak.* 恢复
+6. 运行 hermes/scripts/qq-db-recover.py 补入群聊历史
+
+> 更多细节参考 hermes/skills/devops/qq-db-decrypt/SKILL.md
+
 ## v0.10.2 (2026-07-14)
 - **CDN 模型分发**: 移除 Git LFS 模型追踪，改为 CDN 下载 + 内置 decrypt_cvpkg.py 解密
 - **解密脚本内置**: scripts/decrypt_cvpkg.py（纯 stdlib，141 行），download-backend.js 路径改为相对
@@ -125,5 +141,6 @@
 
 ## v0.4.x (2026-05-25)
 - NapCat 升级 v9.9.27 / WS 心跳优化 / 图片识别 / 隐私清洗 / 多供应商 API 配置
+
 
 
