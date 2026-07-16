@@ -108,7 +108,7 @@ def main():
 
     # Get group list
     groups = src.execute(
-        "SELECT DISTINCT [40021] FROM group_msg_table WHERE [40021] IS NOT NULL AND [40021] != ''"
+        "SELECT DISTINCT [40030] FROM group_msg_table WHERE [40030] IS NOT NULL AND [40030] != '' AND [40030] != '0'"
     ).fetchall()
 
     total_inserted = 0
@@ -118,28 +118,28 @@ def main():
         # Only recover text-type messages: 2=text 8=forward 9=reply 11=@mention
         inserted = 0
         for row in src.execute(
-            """SELECT [40001], [40002], [40021], [40050], [40090], [40093], [40800],
-                      [40011], [40850], [40100], [40003], [40010]
-               FROM group_msg_table
-               WHERE [40021] = ? AND [40009] = 1 AND [40011] IN (2, 8, 9, 11)
+        """SELECT [40001], [40002], [40030], [40021], [40050], [40090], [40093], [40800],
+                  [40011], [40850], [40100], [40003], [40010]
+           FROM group_msg_table
+           WHERE [40030] = ? AND [40009] = 1 AND [40011] IN (2, 8, 9, 11)
                ORDER BY [40050] ASC""",
             (gid,),
         ):
             msg_id = str(row[0])
-            msg_time = row[3]
+            msg_time = row[4]  # [40050] timestamp
             if msg_time <= 0:
                 continue
             if msg_id in existing:
                 continue
 
-            sender_uin = row[10] or row[1] or 0  # [40003] is real sender UID
-            msg_type = row[7] or 0
-            reply_to_seq = row[8] or 0
-            direction = row[9] or 0
+            sender_uin = row[11] or row[1] or 0  # [40003] is real sender UID
+            msg_type = row[8] or 0   # [40011]
+            reply_to_seq = row[9] or 0  # [40850]
+            direction = row[10] or 0  # [40100]
             
             # Extract real text from [40800] protobuf, fallback to [40090]
-            raw = str(row[4] or "")  # [40090] kept as content_raw
-            text = extract_text(row[6], str(row[4] or ""))  # [40800] primary
+            raw = str(row[5] or "")  # [40090] kept as content_raw
+            text = extract_text(row[7], str(row[5] or ""))  # [40800] primary
             
             if not text.strip():
                 continue  # Skip messages with no recoverable text
@@ -151,11 +151,11 @@ def main():
             # @mention detection
             at_targets = "[]"
             if direction == 6:  # @ME
-                sender_name = str(row[2] or f"QQ{sender_uin}")
+                sender_name = str(row[3] or f"QQ{sender_uin}")
                 at_targets = json.dumps([sender_name])
             
             # Sender name: prefer [40021] (display name), fallback to QQ number
-            sender_name = str(row[2] or f"QQ{sender_uin}")
+            sender_name = str(row[3] or f"QQ{sender_uin}")
             
             try:
                 dst.execute(
@@ -182,10 +182,10 @@ def main():
 
         if inserted > 0:
             t0_src = src.execute(
-                "SELECT MIN([40050]) FROM group_msg_table WHERE [40021]=? AND [40050]>0", (gid,)
+                "SELECT MIN([40050]) FROM group_msg_table WHERE [40030]=? AND [40050]>0", (gid,)
             ).fetchone()
             t1_src = src.execute(
-                "SELECT MAX([40050]) FROM group_msg_table WHERE [40021]=?", (gid,)
+                "SELECT MAX([40050]) FROM group_msg_table WHERE [40030]=?", (gid,)
             ).fetchone()
             t0 = datetime.fromtimestamp(t0_src[0]).strftime("%m-%d %H:%M") if t0_src else "?"
             t1 = datetime.fromtimestamp(t1_src[0]).strftime("%m-%d %H:%M") if t1_src else "?"
