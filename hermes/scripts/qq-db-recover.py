@@ -197,11 +197,7 @@ def main():
     dst.close()
 
     print(f"\nTotal inserted: {total_inserted}")
-
-    # Clean up decrypted DB
-    if os.path.exists(DECRYPTED_DB):
-        os.remove(DECRYPTED_DB)
-        print(f"Deleted {DECRYPTED_DB}")
+    print(f"Decrypted DB kept for backup: {DECRYPTED_DB}")
 
 if __name__ == "__main__":
     main()

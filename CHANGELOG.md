@@ -2,6 +2,12 @@
 
 
 
+
+## v0.10.4 (2026-07-16)
+- **qq-db-recover.py 重写**: 修复致命 bug — [40090] 列是群名片不是消息文本，改为从 [40800] protobuf BLOB 提取真文本（CJK 片段过滤）
+- **文本提取方法**: UTF-8 解码 → 去 protobuf 噪音（文件引用/下载URL/hex hash） → 留 CJK 片段拼接
+- **解密 DB 保留**: 不再自动删除解密后的 QQ 数据库，供用户自行备份
+
 ## v0.10.3 (2026-07-16)
 - **state.db 损坏修复**: persist worker 缺 PRAGMA journal_mode=WAL 导致 SQLite B-tree 损坏（#bug-report），新增 WAL + NORMAL synchronous
 - **数据恢复指南**: 见下方「数据库恢复」章节
@@ -141,6 +147,7 @@
 
 ## v0.4.x (2026-05-25)
 - NapCat 升级 v9.9.27 / WS 心跳优化 / 图片识别 / 隐私清洗 / 多供应商 API 配置
+
 
 
 
