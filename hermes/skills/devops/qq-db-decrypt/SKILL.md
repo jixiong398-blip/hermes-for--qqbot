@@ -74,8 +74,8 @@ The running instance's napcat.mjs is at:
 Note: this is NOT the same as `~/ai/ai/NapCat.Shell/napcat.mjs` (which may be an
 older/unused copy). Check the running process to find the correct path:
 ```bash
-ps aux | grep 'qq.*3560998016' | grep -v grep
-# Look for: /home/ji/Napcat/opt/QQ/qq --no-sandbox -q 3560998016
+ps aux | grep 'qq.*{{BOT_QQ}}' | grep -v grep
+# Look for: ~/Napcat/opt/QQ/qq --no-sandbox -q {{BOT_QQ}}
 ```
 
 ---
@@ -148,11 +148,11 @@ If the whitelist hasn't been patched yet (step in "Critical" section above):
 # 2. Kill NapCat:
 XVPID=$(pgrep -f 'xvfb-run.*qq' 2>/dev/null)
 kill -9 $XVPID 2>/dev/null
-pkill -9 -f '3560998016' 2>/dev/null
+pkill -9 -f '{{BOT_QQ}}' 2>/dev/null
 sleep 3
 
 # 3. Restart with log capture (consoleLog=true, fileLog=false):
-nohup /bin/xvfb-run -a /home/ji/Napcat/opt/QQ/qq --no-sandbox -q 3560998016 \
+nohup /bin/xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox -q {{BOT_QQ}} \
   > /tmp/napcat-boot.log 2>&1 &
 
 # 4. Wait for NapCat to fully start (~30s)
@@ -271,7 +271,7 @@ Ensure `import { homedir } from 'os'` and use `homedir()` in the code.
 
 - Stop the Hermes gateway first (`systemctl --user stop hermes-gateway`)
 - Check if dashboard (port 8899) or other processes hold a lock
-- `fuser /home/ji/.hermes/state.db` to find the locking process
+- `fuser ~/.hermes/state.db` to find the locking process
 
 ### Plugin loaded but no decrypted DB created
 
