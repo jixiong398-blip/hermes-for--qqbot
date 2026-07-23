@@ -3,6 +3,28 @@
 
 
 
+
+## v0.10.5 (2026-07-16)
+
+### 消息处理架构重构 — 延迟降低 40-70%
+- **移除群锁**：Phase 1（buffer/persist/图片/judge）并发处理，Phase 2（agent/摘要）群锁串行
+- **图片 fire-and-forget**：_preload_group_images 异步下载+识别，不阻塞消息处理
+- **judge 延迟判定**：非对话态 1s timer 聚合，对话态/@@直接触发
+- **_dispatch_to_agent** 统一入口：群锁 + 滚动摘要注入 + 连续对话检测
+
+### 滚动摘要 + 连续对话
+- **_update_rolling_summary**：agent 跑完后 DeepSeek 生成 2-3 句摘要，注入下一轮上下文
+- **_check_continuation**：agent 跑完检查积压消息，持续对话循环（max 3 轮）
+- **generate_rolling_summary**（semantic_judge.py）：摘要生成函数
+- **group_state.py**：新增 olling_summary + last_agent_ts 字段
+
+### 延迟对比
+| 场景 | 旧 | 新 |
+|------|-----|-----|
+| 对话态 | 19s | 10s |
+| @mentioned | 19s | 10s |
+| 潜水态 | 19s | ~12s |
+| 50条刷屏 | 450s | ~12s |
 ## v0.10.4 (2026-07-16)
 - **qq-db-recover.py 重写**: 修复致命 bug — [40090] 列是群名片不是消息文本，改为从 [40800] protobuf BLOB 提取真文本（CJK 片段过滤，178K/182K 覆盖率）
 - **新增 extract_qq_chat.py**: 独立聊天导出工具，纯文本输出
@@ -155,6 +177,7 @@
 
 ## v0.4.x (2026-05-25)
 - NapCat 升级 v9.9.27 / WS 心跳优化 / 图片识别 / 隐私清洗 / 多供应商 API 配置
+
 
 
 

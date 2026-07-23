@@ -235,6 +235,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Prevents concurrent agent runs from clobbering each other's context
         self._group_locks: Dict[str, asyncio.Lock] = {}
         self._dm_locks: Dict[str, asyncio.Lock] = {}
+        self._judge_timers: Dict[str, asyncio.Task] = {}
 
         # Message dedup: prevent processing the same message twice
         self._seen_msg_ids: Dict[str, float] = {}  # msg_id → seen_at timestamp
@@ -376,6 +377,29 @@ class OneBotAdapter(BasePlatformAdapter):
                                     topic_keywords TEXT DEFAULT '[]',
                                     topic_updated_at REAL DEFAULT 0
                                 );
+                            """)
+                            db.executescript("""
+                                CREATE TABLE IF NOT EXISTS chat_message_buffer (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    chat_id TEXT NOT NULL,
+                                    chat_type TEXT NOT NULL DEFAULT 'group',
+                                    user_id INTEGER,
+                                    sender_name TEXT NOT NULL DEFAULT '',
+                                    content TEXT NOT NULL,
+                                    is_bot INTEGER DEFAULT 0,
+                                    created_at REAL NOT NULL,
+                                    message_id TEXT DEFAULT ''
+                                );
+                                CREATE INDEX IF NOT EXISTS idx_cmb_chat_time ON chat_message_buffer(chat_id, created_at);
+                                CREATE TABLE IF NOT EXISTS qzone_posts (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    content TEXT NOT NULL,
+                                    images TEXT DEFAULT '[]',
+                                    created_at REAL NOT NULL,
+                                    posted_at REAL,
+                                    status TEXT DEFAULT 'draft'
+                                );
+                                CREATE INDEX IF NOT EXISTS idx_qzone_status ON qzone_posts(status);
                             """)
                             _corpus_inited = True
                             try:
@@ -1148,6 +1172,31 @@ class OneBotAdapter(BasePlatformAdapter):
         self._voice_transcripts[voice_path] = "语音"
         return "语音"
 
+    async def _preload_group_images(self, msg: dict) -> tuple:
+        """Download and describe images in parallel. Returns (image_hint, image_descs)."""
+        _image_hint = ""
+        _image_descs = []
+        try:
+            _img_paths = await self._get_image_files(msg)
+            if _img_paths:
+                _image_hint = " [image:" + ",".join(_img_paths) + "]"
+                _is_sticker = self._has_sticker_message(msg)
+                for _ip in _img_paths[:5]:
+                    for _p in _ip.split(","):
+                        _p = _p.strip()
+                        if _p and _p != "download_failed":
+                            try:
+                                _d = await self._describe_image(_p)
+                                _tag = "表情包" if _is_sticker else "图片"
+                                _image_descs.append(f"[{_tag}: {_d}]")
+                            except Exception:
+                                pass
+            else:
+                _image_hint = " [image:download_failed]"
+        except Exception:
+            _image_hint = " [image:download_failed]"
+        return _image_hint, _image_descs
+
     async def _describe_image(self, image_path: str) -> str:
         """Describe an image via cloud MiMo v2.5. Cached per path, 500 FIFO."""
         if image_path in self._image_descriptions:
@@ -1486,7 +1535,7 @@ class OneBotAdapter(BasePlatformAdapter):
                 "[OneBot] Flushing image batch %s (text_len=%d, images=%d)",
                 key, len(event.text or ""), len(event.media_urls or []),
             )
-            await self.handle_message(event)
+            await self._dispatch_to_agent(event)
         except asyncio.CancelledError:
             pass
         finally:
@@ -1567,6 +1616,92 @@ class OneBotAdapter(BasePlatformAdapter):
         msg["_skip_mention_batch"] = True
         msg["_skip_dedup"] = True
         await self._process_message(msg)
+
+    async def _dispatch_to_agent(self, event) -> None:
+        _chat_id = event.source.chat_id
+        if _chat_id.startswith("group:"):
+            _gid = _chat_id.split(":", 1)[1]
+            _agent_lock = self._get_group_lock(_gid)
+            async with _agent_lock:
+                await self.handle_message(event)
+                _gs = self._group_states.get(_gid)
+                _gs.last_agent_ts = time.time()
+                await self._update_rolling_summary(_gid)
+                await self._check_continuation(_gid)
+        else:
+            await self.handle_message(event)
+
+    async def _update_rolling_summary(self, group_id: str) -> None:
+        _gs = self._group_states.get(group_id)
+        _recent = _gs.get_recent()
+        if not _recent:
+            return
+        _self_id_str = str(self._self_id) if self._self_id else ""
+
+        def _annotate_at(text: str) -> str:
+            if not _self_id_str or not text:
+                return text
+            text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', '@Soyo', text)
+            text = re.sub(r'@QQ\d+(?!\d)', '@群友', text)
+            return text
+
+        _recent_dicts = [
+            {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
+             "name": m.name, "text": _annotate_at(m.text)[:150], "is_bot": m.is_bot}
+            for m in _recent[-20:]
+        ]
+        try:
+            from .semantic_judge import generate_rolling_summary
+            _gs.rolling_summary = await generate_rolling_summary(
+                _recent_dicts, prev_summary=_gs.rolling_summary
+            )
+        except Exception as e:
+            logger.warning("[OneBot] Rolling summary failed: %s", e)
+
+    async def _check_continuation(self, group_id: str, max_rounds: int = 3) -> None:
+        for _round in range(max_rounds):
+            _gs = self._group_states.get(group_id)
+            if not _gs.is_attentive():
+                return
+            _recent = _gs.get_recent()
+            _new_msgs = [m for m in _recent if m.ts > _gs.last_agent_ts and not m.is_bot]
+            if not _new_msgs:
+                return
+            _latest = _new_msgs[-1]
+            logger.info("[OneBot] Continuation round %d: %d new msgs, latest from %s",
+                        _round + 1, len(_new_msgs), _latest.name)
+            _lines = []
+            for m in _recent[-10:]:
+                _ts = time.strftime('%m-%d %H:%M', time.localtime(m.ts))
+                _lines.append(f"[{_ts}] {m.name}: {m.text[:150]}")
+            _cont_prompt = f"[对话模式] 你刚回复完，群里有新消息。\n\n[群聊上下文]\n" + "\n".join(_lines)
+            if _gs.rolling_summary:
+                _cont_prompt += f"\n\n[对话摘要] {_gs.rolling_summary}"
+            _cont_prompt += (
+                "\n\n[工具] 你可以用以下标记控制行为：\n"
+                "- 不想回话就只输出 [SILENT]（无其他文字）\n"
+                "- 想引用某条消息就在回复里用 [reply:消息ID]"
+            )
+            from gateway.session import SessionSource
+            _source = SessionSource(
+                platform=self.platform,
+                chat_id=f"group:{group_id}",
+                user_id=_latest.uid,
+                user_name=_latest.name,
+                chat_type="group",
+            )
+            _cont_event = MessageEvent(
+                text=_latest.text,
+                message_type=MessageType.TEXT,
+                source=_source,
+                raw_message={},
+                message_id=_latest.mid,
+                channel_prompt=_cont_prompt,
+            )
+            _gs.last_agent_ts = time.time()
+            await self.handle_message(_cont_event)
+            _gs.last_agent_ts = time.time()
+            await self._update_rolling_summary(group_id)
 
     async def _recover_missed_messages(self):
         """After reconnect, fetch recent group history and respond to fresh @mentions."""
@@ -1756,8 +1891,6 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.debug("[OneBot] Skipping duplicate message %s", msg_id)
             return
 
-        # Forward dedup: skip sub-messages of the same forwarded content
-        # NapCat sends each forwarded sub-message as a separate event with unique message_id
         _fwd_id = self._extract_forward_id(msg)
         if _fwd_id:
             now = time.time()
@@ -1776,12 +1909,8 @@ class OneBotAdapter(BasePlatformAdapter):
         if self_id:
             self._self_id = self_id
 
-        # Per-group lock: serialize message processing within a group
-        # Prevents concurrent agent runs from context interference / truncation
         if msg_type == "group" and group_id:
-            group_lock = self._get_group_lock(str(group_id))
-            async with group_lock:
-                return await self._process_message_impl(msg)
+            return await self._process_message_impl(msg)
         elif msg_type == "private":
             dm_lock = self._get_dm_lock(str(user_id))
             async with dm_lock:
@@ -1856,18 +1985,6 @@ class OneBotAdapter(BasePlatformAdapter):
             if fm:
                 forward_id = fm.group(1)
 
-        # Fallback: any segment with a non-zero "id" (logs the unknown type for diagnosis)
-        if not forward_id:
-            for seg in segments:
-                if not isinstance(seg, dict):
-                    continue
-                sid = self._get_seg_data(seg, "id", "")
-                if sid and sid != "0":
-                    forward_id = sid
-                    logger.info("[OneBot] Forward ID from unknown type=%s, id=%s",
-                                seg.get("type", "?"), sid)
-                    break
-
         if not forward_id:
             return "", "", []
 
@@ -1892,7 +2009,6 @@ class OneBotAdapter(BasePlatformAdapter):
 
         # Try 2: get_forward_msg API (fallback for expired or non-inline forwards)
         if not fwd_msgs:
-            await asyncio.sleep(3)
             for param_key in ("message_id", "id"):
                 try:
                     fwd_data = await self._send_action("get_forward_msg", {param_key: forward_id})
@@ -1992,6 +2108,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Group trigger check: reply only if @mentioned
         is_mentioned = False
         effective_self_id = self_id or self._self_id
+        _image_task = None
 
         _early_reply_id = self._get_reply_message_id(msg) if not msg.get("_skip_reply_context") else None
         _early_reply_text = ""
@@ -2029,29 +2146,11 @@ class OneBotAdapter(BasePlatformAdapter):
             raw_text = re.sub(r'^\[Re[^\]]*\]\s*', '', raw_text)
             raw_text = raw_text.strip()
 
-            # Pre-download images in group messages for context (even if lurking)
             _image_hint = ""
             _image_descs = []
             if self._has_image_message(msg):
-                try:
-                    _img_paths = await self._get_image_files(msg)
-                    if _img_paths:
-                        _image_hint = " [image:" + ",".join(_img_paths) + "]"
-                        _is_sticker = self._has_sticker_message(msg)
-                        for _ip in _img_paths[:5]:
-                            for _p in _ip.split(","):
-                                _p = _p.strip()
-                                if _p and _p != "download_failed":
-                                    try:
-                                        _d = await self._describe_image(_p)
-                                        _tag = "表情包" if _is_sticker else "图片"
-                                        _image_descs.append(f"[{_tag}: {_d}]")
-                                    except Exception:
-                                        pass
-                    else:
-                        _image_hint = " [image:download_failed]"
-                except Exception:
-                    _image_hint = " [image:download_failed]"
+                _image_task = asyncio.create_task(self._preload_group_images(msg))
+                _image_hint = " [image:pending]"
 
             _clean_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
             if _fwd_images:
@@ -2098,85 +2197,122 @@ class OneBotAdapter(BasePlatformAdapter):
                 _preview_text = "[图片消息]"
             else:
                 _preview_text = self._cq_to_readable(self._get_raw_text(msg) or "")
-            # Annotate @-mentions for the judge: @Soyo is explicit, all other
-            # @QQ targets become @群友 so the LLM can't mistake a @-mention
-            # of another user for a @-mention of Soyo.
             _sid = str(self._self_id) if self._self_id else ""
             if _sid and _preview_text:
                 _preview_text = re.sub(r'@QQ' + re.escape(_sid) + r'(?!\d)', '@Soyo', _preview_text)
                 _preview_text = re.sub(r'@QQ\d+(?!\d)', '@群友', _preview_text)
-            try:
-                from .semantic_judge import semantic_judge as _sj
+
+            _gs = self._group_states.get(group_id)
+
+            if _gs.is_attentive():
+                should_trigger = True
+                decision_reason = "对话态自动接话"
+                msg["_decision_mode"] = decision_reason
+                logger.info("[OneBot] Attentive state: skip judge, direct trigger")
+            elif is_mentioned:
+                should_trigger = True
+                decision_reason = "该用户@了你"
+                msg["_decision_mode"] = decision_reason
+                logger.info("[OneBot] @mentioned: skip judge, direct trigger")
+            else:
+                _timer_key = f"judge:{group_id}"
+                if _timer_key in self._judge_timers and not self._judge_timers[_timer_key].done():
+                    logger.debug("[OneBot] Judge timer running for group %s, skip", group_id)
+                    return
+                _timer_task = asyncio.create_task(asyncio.sleep(1.0))
+                self._judge_timers[_timer_key] = _timer_task
+                try:
+                    await _timer_task
+                finally:
+                    if self._judge_timers.get(_timer_key) is _timer_task:
+                        del self._judge_timers[_timer_key]
+
                 _gs = self._group_states.get(group_id)
-                _attentive = _gs.is_attentive()
-                _att_state_str = "对话态" if _attentive else ("旁观态" if _gs.is_episode_active() else "潜水")
-                _last_reply_text = _gs.last_reply[1] if _gs.last_reply else ""
-                _mins = (time.time() - _gs.last_reply[0]) / 60.0 if _gs.last_reply else 0.0
-                _ep_dur = (time.time() - _gs.episode_start) / 60.0 if _gs.episode_start else 0.0
-                _recent = _gs.get_recent()
-                _self_id_str = str(self._self_id) if self._self_id else ""
-                _at_pattern = re.compile(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)')
+                if _gs.is_attentive():
+                    logger.debug("[OneBot] Entered attentive during judge delay, skip")
+                    return
 
-                def _annotate_at(text: str) -> str:
-                    if not _self_id_str or not text:
+                try:
+                    from .semantic_judge import semantic_judge as _sj
+                    _attentive = _gs.is_attentive()
+                    _att_state_str = "对话态" if _attentive else ("旁观态" if _gs.is_episode_active() else "潜水")
+                    _last_reply_text = _gs.last_reply[1] if _gs.last_reply else ""
+                    _mins = (time.time() - _gs.last_reply[0]) / 60.0 if _gs.last_reply else 0.0
+                    _ep_dur = (time.time() - _gs.episode_start) / 60.0 if _gs.episode_start else 0.0
+                    _recent = _gs.get_recent()
+                    _self_id_str = str(self._self_id) if self._self_id else ""
+                    _at_pattern = re.compile(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)')
+
+                    def _annotate_at(text: str) -> str:
+                        if not _self_id_str or not text:
+                            return text
+                        text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', '@Soyo', text)
+                        text = re.sub(r'@QQ\d+(?!\d)', '@群友', text)
                         return text
-                    text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', '@Soyo', text)
-                    text = re.sub(r'@QQ\d+(?!\d)', '@群友', text)
-                    return text
 
-                _recent_dicts = [
-                    {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
-                     "name": m.name, "text": _annotate_at(m.text)[:200], "is_bot": m.is_bot,
-                     "is_at": bool(_self_id_str and _at_pattern.search(m.text))}
-                    for m in _recent[-10:]
-                ]
-                _cur_dict = {
-                    "ts_str": time.strftime('%m-%d %H:%M', time.localtime(msg.get("time", 0) or time.time())),
-                    "name": sender_name, "text": _preview_text[:300],
-                    "msg_type": "image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"),
-                    "is_at": is_mentioned,
-                }
-                _judge_result = await _sj(
-                    recent_messages=_recent_dicts,
-                    current_msg=_cur_dict,
-                    group_name=group_name if 'group_name' in dir() else "",
-                    attentive_state=_att_state_str,
-                    last_reply=_last_reply_text,
-                    mins_since_reply=_mins,
-                    episode_duration=_ep_dur,
-                    reply_count=_gs.reply_count,
-                )
-                if _judge_result.get("should_reply"):
-                    should_trigger = True
-                    if is_mentioned:
-                        decision_reason = "该用户@了你"
-                    elif _judge_result.get("reason"):
-                        decision_reason = _judge_result["reason"][:30]
+                    _recent_dicts = [
+                        {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
+                         "name": m.name, "text": _annotate_at(m.text)[:200], "is_bot": m.is_bot,
+                         "is_at": bool(_self_id_str and _at_pattern.search(m.text))}
+                        for m in _recent[-10:]
+                    ]
+                    _cur_dict = {
+                        "ts_str": time.strftime('%m-%d %H:%M', time.localtime(msg.get("time", 0) or time.time())),
+                        "name": sender_name, "text": _preview_text[:300],
+                        "msg_type": "image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"),
+                        "is_at": is_mentioned,
+                    }
+                    _reply_to_name = ""
+                    _reply_to_uid = ""
+                    if _early_reply_id:
+                        try:
+                            import sqlite3 as _rsql2
+                            _rdb2 = _rsql2.connect(str(get_state_db_path()), timeout=5)
+                            _rrow2 = _rdb2.execute(
+                                "SELECT sender_name, user_id FROM corpus_messages WHERE message_id=? ORDER BY id DESC LIMIT 1",
+                                (str(_early_reply_id),),
+                            ).fetchone()
+                            _rdb2.close()
+                            if _rrow2:
+                                _reply_to_name = _rrow2[0] or ""
+                                _reply_to_uid = str(_rrow2[1] or "")
+                        except Exception:
+                            pass
+                    _judge_result = await _sj(
+                        recent_messages=_recent_dicts,
+                        current_msg=_cur_dict,
+                        group_name=group_name if 'group_name' in dir() else "",
+                        attentive_state=_att_state_str,
+                        last_reply=_last_reply_text,
+                        mins_since_reply=_mins,
+                        episode_duration=_ep_dur,
+                        reply_count=_gs.reply_count,
+                        reply_to_name=_reply_to_name,
+                        reply_to_uid=_reply_to_uid,
+                        bot_self_id=_self_id_str,
+                    )
+                    if _judge_result.get("should_reply"):
+                        should_trigger = True
+                        if _judge_result.get("reason"):
+                            decision_reason = _judge_result["reason"][:30]
+                        else:
+                            decision_reason = "语义判定需要回复"
+                        msg["_decision_mode"] = decision_reason
+                    elif _judge_result.get("should_end") or _judge_result.get("is_loop"):
+                        _gs.end_episode()
+                        self._write_episodic_segment(group_id)
+                        self._generate_group_topic_summary(group_id)
+                        logger.info("[OneBot] Semantic judge ended episode + distillation: %s", _judge_result.get("reason", "")[:60])
+                        return
                     else:
-                        decision_reason = "语义判定需要回复"
-                    msg["_decision_mode"] = decision_reason
-                elif _judge_result.get("should_end") or _judge_result.get("is_loop"):
-                    _gs.end_episode()
-                    self._write_episodic_segment(group_id)
-                    self._generate_group_topic_summary(group_id)
-                    logger.info("[OneBot] Semantic judge ended episode + distillation: %s", _judge_result.get("reason", "")[:60])
-                    return
-                else:
-                    logger.info("[OneBot] Semantic judge: no reply. %s", _judge_result.get("reason", "")[:60])
-                    return
-            except Exception as e:
-                logger.warning("[OneBot] Semantic judge failed: %s, degrade to @-only trigger", e)
-                if is_mentioned:
-                    should_trigger = True
-                    decision_reason = "该用户@了你"
-                    msg["_decision_mode"] = decision_reason
-                else:
+                        logger.info("[OneBot] Semantic judge: no reply. %s", _judge_result.get("reason", "")[:60])
+                        return
+                except Exception as e:
+                    logger.warning("[OneBot] Semantic judge failed: %s, skip", e)
                     return
 
             if should_trigger:
-                _dm = msg.get("_decision_mode", "")
-                if is_mentioned or "提到了" in _dm or "回复你" in _dm or "语义判定" in _dm:
-                    _gs.enter_attentive()
+                _gs.enter_attentive()
 
         # Multi-@mention batching: merge nearby @mentions into one agent run
         if msg_type == "group" and is_mentioned and not msg.get("_skip_mention_batch"):
@@ -2194,6 +2330,25 @@ class OneBotAdapter(BasePlatformAdapter):
                 self._flush_mention_batch(key, group_id)
             )
             return
+
+        if _image_task is not None:
+            try:
+                _real_hint, _real_descs = await _image_task
+                if _real_hint:
+                    _image_hint = _real_hint
+                if _real_descs:
+                    _image_descs = _real_descs
+                    _gs_obj = self._group_states.get(group_id)
+                    if _gs_obj and _gs_obj.buffer:
+                        _base = (_clean_text + _image_hint)
+                        if _image_descs:
+                            _base += " " + " ".join(_image_descs)
+                        if _early_reply_text:
+                            _base = _early_reply_text + " " + _base
+                        _gs_obj.buffer[-1].text = _base
+                        _gs_obj.buffer[-1].descriptions = _image_descs
+            except Exception as e:
+                logger.debug("[OneBot] Image preload await failed: %s", e)
 
         # Get sender info
         sender = msg.get("sender", {})
@@ -2369,6 +2524,9 @@ class OneBotAdapter(BasePlatformAdapter):
                     channel_prompt += f"\n\n{_topic_line}"
             except Exception:
                 pass
+            _gs_for_summary = self._group_states.get(group_id)
+            if _gs_for_summary and _gs_for_summary.rolling_summary:
+                channel_prompt += f"\n\n[对话摘要] {_gs_for_summary.rolling_summary}"
             channel_prompt = (channel_prompt or "") + (
                 "\n\n[工具] 你可以用以下标记控制行为：\n"
                 "- 不想回话就只输出 [SILENT]（无其他文字），下次有人说话你还可以接\n"
@@ -2530,7 +2688,7 @@ class OneBotAdapter(BasePlatformAdapter):
                         media_types=["audio/ogg"],
                         channel_prompt=channel_prompt,
                     )
-                await self.handle_message(event)
+                await self._dispatch_to_agent(event)
             else:
                 logger.warning("[OneBot] Voice message received but failed to download file")
             return
@@ -2631,6 +2789,10 @@ class OneBotAdapter(BasePlatformAdapter):
         if _fwd_detail and channel_prompt:
             channel_prompt += f"\n\n{_fwd_detail}"
 
+        if channel_prompt and len(channel_prompt) > 500000:
+            channel_prompt = channel_prompt[-500000:]
+            logger.info("[OneBot] channel_prompt truncated to 500K chars")
+
         # Build text message event
         _all_media_urls = list(reply_media_urls) if reply_media_urls else []
         _all_media_types = list(reply_media_types) if reply_media_types else []
@@ -2666,7 +2828,7 @@ class OneBotAdapter(BasePlatformAdapter):
             return
 
         # Normal text dispatch
-        await self.handle_message(text_event)
+        await self._dispatch_to_agent(text_event)
 
     async def _process_notice(self, msg: dict) -> None:
         """Process notice events (group increase, file upload, etc.)."""

@@ -47,6 +47,8 @@ class GroupState:
         self.episode_start: float = 0.0
         self.reply_count: int = 0
         self.episode_archived: bool = False
+        self.rolling_summary: str = ""
+        self.last_agent_ts: float = 0.0
 
     def append_message(self, msg: BufferedMessage):
         self.buffer.append(msg)

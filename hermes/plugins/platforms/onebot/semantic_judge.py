@@ -31,6 +31,58 @@ def _get_api_model() -> str:
     return os.getenv("DEEPSEEK_MODEL", "")
 
 
+# ── Group noise level calculation (pure rules, as context for LLM) ──
+
+_ACTIVE_WINDOW_SECONDS = 180
+_QUICK_COLLISION_SECONDS = 90
+_ACTIVE_WINDOW_MAX_MESSAGES = 10
+
+
+def _calculate_group_attention(
+    recent_messages: List[Dict[str, Any]],
+    bot_self_id: str = "",
+) -> str:
+    """Calculate group noise level from recent message metadata.
+
+    Returns one of: low_noise / medium_noise / high_noise / chaotic_noise.
+    This is passed to the LLM as context, NOT used as a pre-filter.
+    """
+    capped = recent_messages[-_ACTIVE_WINDOW_MAX_MESSAGES:]
+    if not capped:
+        return "low_noise"
+
+    non_bot = [m for m in capped if not m.get("is_bot", False)]
+    if not non_bot:
+        return "low_noise"
+
+    has_at_bot = any(m.get("is_at", False) for m in capped)
+    if has_at_bot:
+        return "low_noise"
+
+    distinct_speakers = {m.get("name", "") for m in non_bot if m.get("name")}
+
+    if len(distinct_speakers) >= 3 and len(non_bot) >= 4:
+        return "chaotic_noise"
+    if len(distinct_speakers) >= 2 and len(non_bot) >= 2:
+        return "high_noise"
+    if len(non_bot) >= 4:
+        return "high_noise"
+    if non_bot:
+        return "medium_noise"
+    return "low_noise"
+
+
+def _has_bot_turn_continuity(
+    recent_messages: List[Dict[str, Any]],
+    bot_self_id: str = "",
+) -> bool:
+    """Check if the latest message in the buffer is from the bot."""
+    if not recent_messages:
+        return False
+    latest = recent_messages[-1]
+    return latest.get("is_bot", False)
+
+
 JUDGE_SYSTEM_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 QQ 群聊里的 AI 参与者。
 你需要判断 Soyo 在当前这个时刻该不该回复这条消息，以及话题是否应该结束。
 
@@ -41,9 +93,37 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 
 但注意：群聊是多人的，群友之间讨论同一个话题很正常。一个话题不会因为"群友之间在聊"就闭合——只要话题还在讨论同一件事，就还在活跃。
 
+## 指向证据层级
+
+按以下顺序判断，不要跳步：
+
+### 1. 结构化指向（最强证据）
+- 有人直接 @Soyo：强正向指向
+- 有人用 QQ 回复功能回复了 Soyo 的消息（reply_to_name=Soyo）：强正向指向
+- 有人用 QQ 回复功能回复了**别人**的消息（reply_to_name 不是 Soyo）：强反证——即使正文提到 Soyo 的名字，也大概率是在跟别人聊 Soyo，不是对 Soyo 说话
+
+### 2. 群聊噪音等级（参考信息，不是硬性过滤）
+- low_noise：群聊干净，门槛较低
+- medium_noise：有一些活动，需要更明确的指向
+- high_noise：多人多消息，只有明确指向才回复
+- chaotic_noise：群聊混乱，几乎只在被直接 @ 或回复 Soyo 时才回复
+注意：噪音等级只是参考，最终决定由你做。
+
+### 3. 正文语法和历史连续性
+- Soyo 刚说完话（bot 连续性=true），对方直接在回应 Soyo：对话延续，该回复
+- 名字后接第二人称提问/命令（"素世，你在干嘛"）：直接对话
+- 名字作主语/宾语被讨论（"素世会不会觉得好笑"）：第三人称谈论，不该回复
+- 泛称（"bot""伙伴""她"）不可作为指向证据
+
+### 4. 间接对话检测
+区分"对 Soyo 说"和"跟别人聊 Soyo"：
+- "素世，你怎么看？" → 对 Soyo 说 → 可能该回复
+- "素世会不会觉得这个好笑？" → 跟别人聊 Soyo → 不该回复
+- "那个 bot 怎么不说话" → 谈论 bot → 不该回复
+
 ## 判定维度
 
-### should_reply — Soyo 该不该说话
+### should_reply - Soyo 该不该说话
 
 该回复的情况（必须明确指向 Soyo）：
 - 有人直接 @Soyo 问问题或说话
@@ -55,13 +135,13 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 不该回复的情况：
 - 纯闲聊，和 Soyo 无关（即使话题 Soyo 了解也不主动插嘴）
 - 有人提到 Soyo 的名字但是在讨论名字本身，不是在叫 Soyo
-- 有人在说"正在同步""别着急""你安静吧"之类的自言自语或对别人说的话
+- 有人回复了别人的消息，虽然正文里提到了 Soyo——这是在跟别人聊 Soyo
 - 恶意调戏或刷屏测试
 - 纯图片/卡片/链接分享且无文字引导 Soyo 参与的
 - 检测到 bot 之间在循环对话
 - 检测到对话内容在空转趋同
 
-### should_end — 话题该不该结束
+### should_end - 话题该不该结束
 
 只有以下情况判 true，否则一律 false：
 - 对方明确要求结束对话（"你安静吧""行了别说了""够了"）
@@ -70,28 +150,31 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 
 注意：群友之间混着聊天不算话题结束。即使话题被短暂岔开，
 只要没明确表示结束，就判 should_end=false。
-不要因为"群友之间在聊"就判话题结束。
 
-不该结束的情况（绝大多数情况都是 false）：
-- 对方在追问或补充信息
-- 群友在讨论同一话题但没在问 Soyo
-- 有人说"好的""嗯"但语气在继续而不是结束
-- 有人 @Soyo 开启新话题（这是新话题，不是旧话题结束）
-
-### topic_active — 话题还在不在
+### topic_active - 话题还在不在
 
 true: 话题正在讨论中，没闭合
 false: 话题已闭合或被转移
 
-### is_loop — 是否检测到循环/空转
+### is_loop - 是否检测到循环/空转
 
 true: 两个 bot 在互相说类似的话，或对话内容在空转趋同
 false: 正常对话
 
+### use_reply_feature - 是否用 QQ 回复功能锚定上下文
+
+true: 当前消息和 Soyo 之前的发言之间夹了其他人的消息（上下文断层），或回复的是很久之前的消息
+false: 线性连贯对话（Soyo 刚说完，对方紧接着回复），或氛围性发言不针对特定人
+
+### indirect_speech_context - 间接对话标注
+
+空字符串: 当前消息是对 Soyo 说的
+非空: 当前消息是在跟别人聊 Soyo，简短说明实际听众是谁
+
 ## 输出格式
 
 只输出 JSON，不要多余文字：
-{"should_reply": true/false, "should_end": true/false, "topic_active": true/false, "is_loop": true/false, "reason": "一句话说明"}"""
+{"should_reply": true/false, "should_end": true/false, "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "reason": "一句话说明"}"""
 
 
 def _build_judge_prompt(
@@ -103,16 +186,31 @@ def _build_judge_prompt(
     reply_count: int,
     recent_messages: List[Dict[str, Any]],
     current_msg: Dict[str, Any],
+    group_attention: str = "",
+    bot_continuity: bool = False,
+    reply_to_name: str = "",
+    reply_to_uid: str = "",
+    bot_self_id: str = "",
 ) -> str:
     parts = []
     parts.append(f"群名：{group_name or '未知'}")
     parts.append(f"Soyo 当前状态：{attentive_state}")
+    if group_attention:
+        parts.append(f"群聊噪音等级：{group_attention}")
+    parts.append(f"Soyo 上一条消息后有人接话：{'是' if bot_continuity else '否'}")
     if last_reply:
         parts.append(f"Soyo 上次回复：'{last_reply[:100]}'（{mins_since_reply:.0f}分钟前）")
     else:
         parts.append("Soyo 上次回复：（无，首次被叫或新话题）")
     parts.append(f"本轮话题已持续：{episode_duration:.0f}分钟")
     parts.append(f"本轮 Soyo 已回复：{reply_count}次")
+
+    if reply_to_name:
+        is_reply_to_bot = (reply_to_uid == bot_self_id) if bot_self_id else False
+        parts.append(f"当前消息回复目标：{reply_to_name}{'（即 Soyo）' if is_reply_to_bot else '（不是 Soyo）'}")
+    else:
+        parts.append("当前消息回复目标：无（非回复消息）")
+
     parts.append("")
     parts.append("## 最近消息（时间正序，最新在下）")
     for m in recent_messages:
@@ -150,16 +248,31 @@ async def semantic_judge(
     episode_duration: float = 0.0,
     reply_count: int = 0,
     timeout: float = 30.0,
+    reply_to_name: str = "",
+    reply_to_uid: str = "",
+    bot_self_id: str = "",
 ) -> Dict[str, Any]:
     async with _get_semaphore():
         api_key = _get_api_key()
         if not api_key or not _get_api_base() or not _get_api_model():
             logger.warning("[SemanticJudge] No API key, defaulting to reply")
-            return {"should_reply": True, "should_end": False, "topic_active": True, "is_loop": False, "reason": "no api key fallback"}
+            return {
+                "should_reply": True, "should_end": False, "topic_active": True,
+                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
+                "reason": "no api key fallback",
+            }
+
+        group_attention = _calculate_group_attention(recent_messages, bot_self_id)
+        bot_continuity = _has_bot_turn_continuity(recent_messages, bot_self_id)
 
         prompt = _build_judge_prompt(
             group_name, attentive_state, last_reply, mins_since_reply,
             episode_duration, reply_count, recent_messages, current_msg,
+            group_attention=group_attention,
+            bot_continuity=bot_continuity,
+            reply_to_name=reply_to_name,
+            reply_to_uid=reply_to_uid,
+            bot_self_id=bot_self_id,
         )
 
         try:
@@ -197,19 +310,95 @@ async def semantic_judge(
             result.setdefault("should_end", False)
             result.setdefault("topic_active", True)
             result.setdefault("is_loop", False)
+            result.setdefault("use_reply_feature", False)
+            result.setdefault("indirect_speech_context", "")
             result.setdefault("reason", "")
             logger.info(
-                "[SemanticJudge] reply=%s end=%s loop=%s reason=%s",
+                "[SemanticJudge] reply=%s end=%s loop=%s noise=%s continuity=%s reply_to=%s reason=%s",
                 result["should_reply"], result["should_end"],
-                result["is_loop"], result["reason"][:60],
+                result["is_loop"], group_attention, bot_continuity,
+                reply_to_name or "none", result["reason"][:60],
             )
             return result
 
         except asyncio.TimeoutError:
             logger.warning("[SemanticJudge] Timeout, defaulting to reply for @")
             fallback_reply = current_msg.get("is_at", False)
-            return {"should_reply": fallback_reply, "should_end": False, "topic_active": True, "is_loop": False, "reason": "timeout fallback"}
+            return {
+                "should_reply": fallback_reply, "should_end": False, "topic_active": True,
+                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
+                "reason": "timeout fallback",
+            }
         except Exception as e:
             logger.warning("[SemanticJudge] Error: %s, fallback", e)
             fallback_reply = current_msg.get("is_at", False)
-            return {"should_reply": fallback_reply, "should_end": False, "topic_active": True, "is_loop": False, "reason": f"error fallback: {e}"}
+            return {
+                "should_reply": fallback_reply, "should_end": False, "topic_active": True,
+                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
+                "reason": f"error fallback: {e}",
+            }
+
+
+_SUMMARY_SYSTEM_PROMPT = """你是群聊摘要生成器。用2-3句话总结群聊最近的内容要点。
+聚焦：讨论了什么话题、谁参与了、有没有结论或未解决的问题。
+不要罗列每条消息，要提炼要点。"""
+
+
+async def generate_rolling_summary(
+    recent_messages: List[Dict[str, Any]],
+    prev_summary: str = "",
+    timeout: float = 15.0,
+) -> str:
+    async with _get_semaphore():
+        api_key = _get_api_key()
+        if not api_key or not _get_api_base() or not _get_api_model():
+            return prev_summary
+
+        capped = recent_messages[-20:]
+        lines = []
+        for m in capped:
+            ts = m.get("ts_str", "")
+            name = m.get("name", "")
+            text = m.get("text", "")[:150]
+            tag = " [bot]" if m.get("is_bot") else ""
+            lines.append(f"[{ts}] {name}{tag}: {text}")
+
+        user_prompt = ""
+        if prev_summary:
+            user_prompt += f"之前的总结：{prev_summary}\n\n"
+        user_prompt += "最新消息：\n" + "\n".join(lines) + "\n\n更新后的总结："
+
+        try:
+            import requests as _r
+            _base = _get_api_base()
+            _model = _get_api_model()
+            resp = await asyncio.to_thread(
+                _r.post,
+                f"{_base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": _model,
+                    "messages": [
+                        {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 300,
+                },
+                timeout=timeout,
+            )
+            data = resp.json()
+            content = (data["choices"][0]["message"].get("content") or "").strip()
+            if not content:
+                reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+                import re as _re
+                _match = _re.search(r'[\s\S]{10,}', reasoning)
+                if _match:
+                    content = _match.group()[:300]
+            if not content:
+                return prev_summary
+            logger.info("[RollingSummary] Updated: %s", content[:80])
+            return content
+        except Exception as e:
+            logger.warning("[RollingSummary] Error: %s, keeping prev", e)
+            return prev_summary
