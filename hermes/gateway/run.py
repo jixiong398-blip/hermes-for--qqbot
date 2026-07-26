@@ -1411,19 +1411,21 @@ class GatewayRunner:
             if not adapter:
                 return True
 
-            thread_meta = {"thread_id": event.source.thread_id} if event.source.thread_id else None
-            if self._queue_during_drain_enabled():
-                self._queue_or_replace_pending_event(session_key, event)
-                message = f"⏳ Gateway {self._status_action_gerund()} — queued for the next turn after it comes back."
-            else:
-                message = f"⏳ Gateway is {self._status_action_gerund()} and is not accepting another turn right now."
+            _plat_supports_sys = getattr(adapter, "SUPPORTS_SYSTEM_MESSAGES", True)
+            if _plat_supports_sys:
+                thread_meta = {"thread_id": event.source.thread_id} if event.source.thread_id else None
+                if self._queue_during_drain_enabled():
+                    self._queue_or_replace_pending_event(session_key, event)
+                    message = f"⏳ Gateway {self._status_action_gerund()} — queued for the next turn after it comes back."
+                else:
+                    message = f"⏳ Gateway is {self._status_action_gerund()} and is not accepting another turn right now."
 
-            await adapter._send_with_retry(
-                chat_id=event.source.chat_id,
-                content=message,
-                reply_to=event.message_id,
-                metadata=thread_meta,
-            )
+                await adapter._send_with_retry(
+                    chat_id=event.source.chat_id,
+                    content=message,
+                    reply_to=event.message_id,
+                    metadata=thread_meta,
+                )
             return True
 
         # --- Normal busy case (agent actively running a task) ---
@@ -1488,16 +1490,21 @@ class GatewayRunner:
             f"I'll respond to your message shortly."
         )
 
-        thread_meta = {"thread_id": event.source.thread_id} if event.source.thread_id else None
-        try:
-            await adapter._send_with_retry(
-                chat_id=event.source.chat_id,
-                content=message,
-                reply_to=event.message_id,
-                metadata=thread_meta,
-            )
-        except Exception as e:
-            logger.debug("Failed to send busy-ack: %s", e)
+        # Skip system messages for chat platforms that don't support
+        # them (QQ/OneBot, IRC, etc.). The interrupt itself still fires
+        # — the agent processes the new message on the next turn.
+        _plat_supports_sys = getattr(adapter, "SUPPORTS_SYSTEM_MESSAGES", True)
+        if _plat_supports_sys:
+            thread_meta = {"thread_id": event.source.thread_id} if event.source.thread_id else None
+            try:
+                await adapter._send_with_retry(
+                    chat_id=event.source.chat_id,
+                    content=message,
+                    reply_to=event.message_id,
+                    metadata=thread_meta,
+                )
+            except Exception as e:
+                logger.debug("Failed to send busy-ack: %s", e)
 
         return True
 
@@ -2026,7 +2033,7 @@ class GatewayRunner:
         # Build initial channel directory for send_message name resolution
         try:
             from gateway.channel_directory import build_channel_directory
-            directory = build_channel_directory(self.adapters)
+            directory = await build_channel_directory(self.adapters)
             ch_count = sum(len(chs) for chs in directory.get("platforms", {}).values())
             logger.info("Channel directory built: %d target(s)", ch_count)
         except Exception as e:
@@ -2301,7 +2308,7 @@ class GatewayRunner:
                         # Rebuild channel directory with the new adapter
                         try:
                             from gateway.channel_directory import build_channel_directory
-                            build_channel_directory(self.adapters)
+                            await build_channel_directory(self.adapters)
                         except Exception:
                             pass
                     else:
@@ -9010,6 +9017,8 @@ class GatewayRunner:
         def _status_callback_sync(event_type: str, message: str) -> None:
             if not _status_adapter:
                 return
+            if not getattr(_status_adapter, "SUPPORTS_SYSTEM_MESSAGES", True):
+                return
             try:
                 asyncio.run_coroutine_threadsafe(
                     _status_adapter.send(
@@ -10178,7 +10187,7 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, loop=None, in
         if tick_count % CHANNEL_DIR_EVERY == 0 and adapters:
             try:
                 from gateway.channel_directory import build_channel_directory
-                build_channel_directory(adapters)
+                asyncio.run(build_channel_directory(adapters))
             except Exception as e:
                 logger.debug("Channel directory refresh error: %s", e)
 
@@ -10212,8 +10221,24 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         config: Optional gateway configuration override.
         replace: If True, kill any existing gateway instance before starting.
                  Useful for systemd services to avoid restart-loop deadlocks
-                 when the previous process hasn't fully exited yet.
+                  when the previous process hasn't fully exited yet.
     """
+    # ── SOCKS proxy guard ────────────────────────────────────────────
+    # httpx (used by OneBot/QQBot adapters) does not support socks:// schemes.
+    # If any proxy env var contains socks://, the adapter crashes during
+    # httpx.AsyncClient() init. Clear them early so both Linux and Windows
+    # gateways survive without per-OS systemd/crontab workarounds.
+    import os as _os
+    for _pv in ("ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY",
+                "all_proxy", "http_proxy", "https_proxy"):
+        _val = _os.environ.get(_pv, "")
+        if "socks://" in _val.lower() and "socks5h://" not in _val.lower():
+            logger.warning(
+                "[Gateway] Clearing %s (socks:// not supported by httpx): %s",
+                _pv, _val,
+            )
+            _os.environ.pop(_pv, None)
+
     # ── Duplicate-instance guard ──────────────────────────────────────
     # Prevent two gateways from running under the same HERMES_HOME.
     # The PID file is scoped to HERMES_HOME, so future multi-profile
@@ -10486,19 +10511,21 @@ def main():
     parser = argparse.ArgumentParser(description="Hermes Gateway - Multi-platform messaging")
     parser.add_argument("--config", "-c", help="Path to gateway config file")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    
+    parser.add_argument("--replace", "-r", action="store_true",
+                        help="Kill any existing gateway instance before starting")
+
     args = parser.parse_args()
-    
+
     config = None
     if args.config:
         import yaml
         with open(args.config, encoding="utf-8") as f:
             data = yaml.safe_load(f)
             config = GatewayConfig.from_dict(data)
-    
+
     # Run the gateway - exit with code 1 if no platforms connected,
     # so systemd Restart=on-failure will retry on transient errors (e.g. DNS)
-    success = asyncio.run(start_gateway(config))
+    success = asyncio.run(start_gateway(config, replace=args.replace))
     if not success:
         sys.exit(1)
 
