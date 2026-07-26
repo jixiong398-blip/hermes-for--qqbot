@@ -8,15 +8,24 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_JUDGE_CONCURRENCY = 100
+_JUDGE_CONCURRENCY = 16
+_SUMMARY_CONCURRENCY = 8
 _judge_semaphore: Optional[asyncio.Semaphore] = None
+_summary_semaphore: Optional[asyncio.Semaphore] = None
 
 
-def _get_semaphore() -> asyncio.Semaphore:
+def _get_judge_semaphore() -> asyncio.Semaphore:
     global _judge_semaphore
     if _judge_semaphore is None:
         _judge_semaphore = asyncio.Semaphore(_JUDGE_CONCURRENCY)
     return _judge_semaphore
+
+
+def _get_summary_semaphore() -> asyncio.Semaphore:
+    global _summary_semaphore
+    if _summary_semaphore is None:
+        _summary_semaphore = asyncio.Semaphore(_SUMMARY_CONCURRENCY)
+    return _summary_semaphore
 
 
 def _get_api_key() -> str:
@@ -31,10 +40,48 @@ def _get_api_model() -> str:
     return os.getenv("DEEPSEEK_MODEL", "")
 
 
-# ── Group noise level calculation (pure rules, as context for LLM) ──
+# ── expected JSON schema ────────────────────────────────────
+
+_EXPECTED_KEYS = {"should_reply", "should_end", "topic_active", "is_loop", "use_reply_feature", "indirect_speech_context", "reason"}
+
+_FALLBACK_CLOSED: Dict[str, Any] = {
+    "should_reply": False,
+    "should_end": False,
+    "topic_active": True,
+    "is_loop": False,
+    "use_reply_feature": False,
+    "indirect_speech_context": "",
+    "reason": "fail-closed fallback",
+}
+
+_FALLBACK_MENTIONED: Dict[str, Any] = {
+    "should_reply": True,
+    "should_end": False,
+    "topic_active": True,
+    "is_loop": False,
+    "use_reply_feature": False,
+    "indirect_speech_context": "",
+    "reason": "fail-closed (mentioned)",
+}
+
+
+def _validate_judge_result(raw: Dict[str, Any], is_mentioned: bool = False) -> Dict[str, Any]:
+    for key in _EXPECTED_KEYS:
+        if key not in raw:
+            if key == "should_reply":
+                raw[key] = is_mentioned
+            else:
+                raw[key] = _FALLBACK_CLOSED[key]
+    for k, v in raw.items():
+        if k in ("should_reply", "should_end", "topic_active", "is_loop", "use_reply_feature"):
+            if not isinstance(v, bool):
+                raw[k] = _FALLBACK_CLOSED[k]
+    return raw
+
+
+# ── noise level ─────────────────────────────────────────────
 
 _ACTIVE_WINDOW_SECONDS = 180
-_QUICK_COLLISION_SECONDS = 90
 _ACTIVE_WINDOW_MAX_MESSAGES = 10
 
 
@@ -42,25 +89,16 @@ def _calculate_group_attention(
     recent_messages: List[Dict[str, Any]],
     bot_self_id: str = "",
 ) -> str:
-    """Calculate group noise level from recent message metadata.
-
-    Returns one of: low_noise / medium_noise / high_noise / chaotic_noise.
-    This is passed to the LLM as context, NOT used as a pre-filter.
-    """
     capped = recent_messages[-_ACTIVE_WINDOW_MAX_MESSAGES:]
     if not capped:
         return "low_noise"
-
     non_bot = [m for m in capped if not m.get("is_bot", False)]
     if not non_bot:
         return "low_noise"
-
     has_at_bot = any(m.get("is_at", False) for m in capped)
     if has_at_bot:
         return "low_noise"
-
     distinct_speakers = {m.get("name", "") for m in non_bot if m.get("name")}
-
     if len(distinct_speakers) >= 3 and len(non_bot) >= 4:
         return "chaotic_noise"
     if len(distinct_speakers) >= 2 and len(non_bot) >= 2:
@@ -76,12 +114,16 @@ def _has_bot_turn_continuity(
     recent_messages: List[Dict[str, Any]],
     bot_self_id: str = "",
 ) -> bool:
-    """Check if the latest message in the buffer is from the bot."""
+    """Check if the message immediately before current was from the bot.
+    Caller MUST pass recent_messages WITHOUT the current message as last entry.
+    """
     if not recent_messages:
         return False
     latest = recent_messages[-1]
     return latest.get("is_bot", False)
 
+
+# ── judge prompt ────────────────────────────────────────────
 
 JUDGE_SYSTEM_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 QQ 群聊里的 AI 参与者。
 你需要判断 Soyo 在当前这个时刻该不该回复这条消息，以及话题是否应该结束。
@@ -238,6 +280,8 @@ def _build_judge_prompt(
     return "\n".join(parts)
 
 
+# ── semantic judge ──────────────────────────────────────────
+
 async def semantic_judge(
     recent_messages: List[Dict[str, Any]],
     current_msg: Dict[str, Any],
@@ -252,15 +296,13 @@ async def semantic_judge(
     reply_to_uid: str = "",
     bot_self_id: str = "",
 ) -> Dict[str, Any]:
-    async with _get_semaphore():
+    is_mentioned = current_msg.get("is_at", False)
+
+    async with _get_judge_semaphore():
         api_key = _get_api_key()
         if not api_key or not _get_api_base() or not _get_api_model():
-            logger.warning("[SemanticJudge] No API key, defaulting to reply")
-            return {
-                "should_reply": True, "should_end": False, "topic_active": True,
-                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
-                "reason": "no api key fallback",
-            }
+            logger.warning("[SemanticJudge] No API config, fail-closed (mentioned=%s)", is_mentioned)
+            return _FALLBACK_MENTIONED if is_mentioned else dict(_FALLBACK_CLOSED)
 
         group_attention = _calculate_group_attention(recent_messages, bot_self_id)
         bot_continuity = _has_bot_turn_continuity(recent_messages, bot_self_id)
@@ -294,6 +336,7 @@ async def semantic_judge(
                 },
                 timeout=timeout,
             )
+            resp.raise_for_status()
             data = resp.json()
             msg = data["choices"][0]["message"]
             content = (msg.get("content") or "").strip()
@@ -304,15 +347,10 @@ async def semantic_judge(
                 if json_match:
                     content = json_match.group()
             if not content:
-                raise ValueError("Empty content from LLM (reasoning ate all tokens?)")
-            result = json.loads(content)
-            result.setdefault("should_reply", True)
-            result.setdefault("should_end", False)
-            result.setdefault("topic_active", True)
-            result.setdefault("is_loop", False)
-            result.setdefault("use_reply_feature", False)
-            result.setdefault("indirect_speech_context", "")
-            result.setdefault("reason", "")
+                raise ValueError("Empty content from LLM")
+
+            raw = json.loads(content)
+            result = _validate_judge_result(raw, is_mentioned)
             logger.info(
                 "[SemanticJudge] reply=%s end=%s loop=%s noise=%s continuity=%s reply_to=%s reason=%s",
                 result["should_reply"], result["should_end"],
@@ -322,26 +360,17 @@ async def semantic_judge(
             return result
 
         except asyncio.TimeoutError:
-            logger.warning("[SemanticJudge] Timeout, defaulting to reply for @")
-            fallback_reply = current_msg.get("is_at", False)
-            return {
-                "should_reply": fallback_reply, "should_end": False, "topic_active": True,
-                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
-                "reason": "timeout fallback",
-            }
+            logger.warning("[SemanticJudge] Timeout, fail-closed (mentioned=%s)", is_mentioned)
+            return _FALLBACK_MENTIONED if is_mentioned else dict(_FALLBACK_CLOSED)
         except Exception as e:
-            logger.warning("[SemanticJudge] Error: %s, fallback", e)
-            fallback_reply = current_msg.get("is_at", False)
-            return {
-                "should_reply": fallback_reply, "should_end": False, "topic_active": True,
-                "is_loop": False, "use_reply_feature": False, "indirect_speech_context": "",
-                "reason": f"error fallback: {e}",
-            }
+            logger.warning("[SemanticJudge] Error: %s, fail-closed (mentioned=%s)", e, is_mentioned)
+            return _FALLBACK_MENTIONED if is_mentioned else dict(_FALLBACK_CLOSED)
 
 
-_SUMMARY_SYSTEM_PROMPT = """你是群聊摘要生成器。用2-3句话总结群聊最近的内容要点。
-聚焦：讨论了什么话题、谁参与了、有没有结论或未解决的问题。
-不要罗列每条消息，要提炼要点。"""
+# ── rolling summary ─────────────────────────────────────────
+
+_SUMMARY_SYSTEM_PROMPT = """你是群聊摘要生成器。直接输出2-3句话的中文总结，聚焦：讨论了什么、谁参与、有无结论。
+禁止输出"根据之前的总结""最新消息显示"等废话。不要解释你在做什么，直接给出总结本身。"""
 
 
 async def generate_rolling_summary(
@@ -349,7 +378,7 @@ async def generate_rolling_summary(
     prev_summary: str = "",
     timeout: float = 15.0,
 ) -> str:
-    async with _get_semaphore():
+    async with _get_summary_semaphore():
         api_key = _get_api_key()
         if not api_key or not _get_api_base() or not _get_api_model():
             return prev_summary
@@ -363,10 +392,9 @@ async def generate_rolling_summary(
             tag = " [bot]" if m.get("is_bot") else ""
             lines.append(f"[{ts}] {name}{tag}: {text}")
 
-        user_prompt = ""
+        user_prompt = "\n".join(lines)
         if prev_summary:
-            user_prompt += f"之前的总结：{prev_summary}\n\n"
-        user_prompt += "最新消息：\n" + "\n".join(lines) + "\n\n更新后的总结："
+            user_prompt = f"之前：{prev_summary}\n\n{user_prompt}"
 
         try:
             import requests as _r
@@ -387,6 +415,7 @@ async def generate_rolling_summary(
                 },
                 timeout=timeout,
             )
+            resp.raise_for_status()
             data = resp.json()
             content = (data["choices"][0]["message"].get("content") or "").strip()
             if not content:

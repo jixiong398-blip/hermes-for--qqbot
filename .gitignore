@@ -33,3 +33,7 @@ napcat/napcat/logs/
 napcat/beacon_report.log
 .curator_state
 .curator_backups/
+
+# Live2D runtime files
+modules/live2d/live2d_pref.json
+modules/live2d/window_state.json
