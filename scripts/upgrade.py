@@ -22,22 +22,41 @@ HERMES_HOME = Path.home() / ".hermes"
 
 # Files to upgrade (source -> destination relative to BOT_DIR)
 UPGRADE_MAP = [
-    # Hermes core
-    ("hermes/plugins/platforms/onebot/adapter.py", "hermes/plugins/platforms/onebot/adapter.py"),
+    # Hermes core — gateway
+    ("hermes/gateway/run.py", "hermes/gateway/run.py"),
     ("hermes/gateway/platforms/onebot/adapter.py", "hermes/gateway/platforms/onebot/adapter.py"),
+    # Hermes plugins — OneBot (v0.10.5+ three-phase pipeline)
+    ("hermes/plugins/platforms/onebot/adapter.py", "hermes/plugins/platforms/onebot/adapter.py"),
+    ("hermes/plugins/platforms/onebot/semantic_judge.py", "hermes/plugins/platforms/onebot/semantic_judge.py"),
+    ("hermes/plugins/platforms/onebot/group_state.py", "hermes/plugins/platforms/onebot/group_state.py"),
+    ("hermes/plugins/platforms/onebot/group_executor.py", "hermes/plugins/platforms/onebot/group_executor.py"),
+    ("hermes/plugins/platforms/onebot/trigger_coordinator.py", "hermes/plugins/platforms/onebot/trigger_coordinator.py"),
+    ("hermes/plugins/platforms/onebot/media_pipeline.py", "hermes/plugins/platforms/onebot/media_pipeline.py"),
+    # Hermes plugins — Knowledge Base
     ("hermes/plugins/knowledge-base/__init__.py", "hermes/plugins/knowledge-base/__init__.py"),
     ("hermes/plugins/knowledge-base/knowledge_base_tool.py", "hermes/plugins/knowledge-base/knowledge_base_tool.py"),
+    # Hermes memory system (v0.11.0 EPI layer)
     ("hermes/agent/memory/gateway.py", "hermes/agent/memory/gateway.py"),
+    ("hermes/agent/memory/episodic_index.py", "hermes/agent/memory/episodic_index.py"),
+    ("hermes/agent/memory/short_term.py", "hermes/agent/memory/short_term.py"),
+    ("hermes/agent/memory/retrieval.py", "hermes/agent/memory/retrieval.py"),
     ("hermes/agent/memory/obsidian.py", "hermes/agent/memory/obsidian.py"),
     ("hermes/tools/memory_gateway_tool.py", "hermes/tools/memory_gateway_tool.py"),
+    ("hermes/tools/chat_history_search_tool.py", "hermes/tools/chat_history_search_tool.py"),
     ("hermes/requirements.txt", "hermes/requirements.txt"),
+    # Hermes scripts
+    ("hermes/scripts/qq-db-recover.py", "hermes/scripts/qq-db-recover.py"),
+    ("hermes/scripts/extract_qq_chat.py", "hermes/scripts/extract_qq_chat.py"),
+    ("hermes/scripts/qq_chat_restore.py", "hermes/scripts/qq_chat_restore.py"),
+    ("hermes/scripts/bandori_sync.py", "hermes/scripts/bandori_sync.py"),
     # Dashboard
     ("modules/dashboard/server.py", "modules/dashboard/server.py"),
     ("modules/dashboard/static/index.html", "modules/dashboard/static/index.html"),
     # Scripts
     ("scripts/install.py", "scripts/install.py"),
     ("scripts/setup_config.py", "scripts/setup_config.py"),
-    ("scripts/fix_napcat.py", "scripts/fix_napcat.py"),
+    ("scripts/decrypt_cvpkg.py", "scripts/decrypt_cvpkg.py"),
+    ("scripts/qzone-post.py", "scripts/qzone-post.py"),
     # Templates
     ("templates/config-template.yaml", "templates/config-template.yaml"),
     ("templates/SOUL-template.md", "templates/SOUL-template.md"),
@@ -47,13 +66,23 @@ UPGRADE_MAP = [
     # Bat files
     ("install.bat", "install.bat"),
     ("PeiZhiAPI.bat", "PeiZhiAPI.bat"),
-    ("FixNapCat.bat", "FixNapCat.bat"),
     ("start.bat", "start.bat"),
-    ("setup.bat", "setup.bat"),
-    # NapCat node_modules (if present in source)
+    ("Stop-All.bat", "Stop-All.bat"),
+    # NapCat
     ("napcat/napcat/node_modules", "napcat/napcat/node_modules"),
-    # TTS template
+    # TTS & Live2D
     ("modules/tts/ts_adapter_template.py", "modules/tts/ts_adapter_template.py"),
+    ("modules/live2d/main.js", "modules/live2d/main.js"),
+    ("modules/live2d/preload.js", "modules/live2d/preload.js"),
+    ("modules/live2d/conf.json", "modules/live2d/conf.json"),
+    ("modules/live2d/hermes-ws.js", "modules/live2d/hermes-ws.js"),
+    ("modules/live2d/download-backend.js", "modules/live2d/download-backend.js"),
+    ("modules/live2d/renderer/app.js", "modules/live2d/renderer/app.js"),
+    ("modules/live2d/renderer/index.html", "modules/live2d/renderer/index.html"),
+    # Docs
+    ("CHANGELOG.md", "CHANGELOG.md"),
+    ("README.md", "README.md"),
+    ("VERSION", "VERSION"),
 ]
 
 # Files to NEVER overwrite (user configs)

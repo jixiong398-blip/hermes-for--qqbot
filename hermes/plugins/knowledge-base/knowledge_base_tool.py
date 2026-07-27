@@ -4,13 +4,13 @@ for the Nagasaki Soyo knowledge base at ~/knowledge/
 """
 from __future__ import annotations
 
-import logging, os, re
+import json, logging, os, re
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_ROOT = Path.home() / "ai/ai/knowledge"
+KNOWLEDGE_ROOT = Path(os.environ.get("OBSIDIAN_VAULT_PATH", str(Path.home() / ".hermes" / "knowledge")))
 
 
 def knowledge_search(query: str, limit: int = 5) -> str:
