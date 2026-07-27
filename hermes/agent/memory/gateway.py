@@ -71,6 +71,7 @@ from .workflow import WorkflowMemory, DECAY_MIN_WEIGHT
 from .wiki import WikiKnowledgeBase, KARPATHY_WIKI_REPO
 from .retrieval import MemoryRetriever
 from .consolidation import MemoryConsolidator
+from .episodic_index import EpisodeIndex
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,11 @@ class UnifiedMemoryGateway:
                  wiki_dirs: Optional[List[Path]] = None,
                  enable_wiki: bool = True,
                  enable_workflow_decay: bool = True,
-                 consolidation_min_turns: int = 6):
+                 consolidation_min_turns: int = 6,
+                 enable_episodes: bool = True,
+                 episode_retention_days: float = 7.0,
+                 episode_reveal_names: bool = False,
+                 episode_include_dm: bool = True):
         self.name = name
         self._store = MemoryStore(db_path=db_path or _memory_db_path())
         self._stm = ShortTermMemory(self._store)
@@ -115,8 +120,15 @@ class UnifiedMemoryGateway:
             wiki_dirs=wiki_dirs or [],
             github_repos=[KARPATHY_WIKI_REPO] if enable_wiki else [],
         )
+        self._epi = EpisodeIndex(
+            self._store,
+            retention_days=episode_retention_days,
+            reveal_names=episode_reveal_names,
+            enable_dm=episode_include_dm,
+        ) if enable_episodes else None
         self._retriever = MemoryRetriever(
             self._store, self._stm, self._ltm, self._wfm, self._wiki,
+            epi=self._epi,
         )
         self._consolidator = MemoryConsolidator(
             self._store, self._stm, self._ltm, self._wfm,
@@ -124,6 +136,7 @@ class UnifiedMemoryGateway:
         self._consolidation_min_turns = consolidation_min_turns
         self._enable_workflow_decay = enable_workflow_decay
         self._enable_wiki = enable_wiki
+        self._enable_episodes = enable_episodes
         self._turn_counters: Dict[str, int] = {}
         self._last_maintenance: float = 0.0
         self._wiki_synced: bool = False
@@ -252,6 +265,16 @@ class UnifiedMemoryGateway:
         parts = [p for p in [recall_prompt, wf_context, wiki_context, obsidian_context] if p]
         prompt = "\n\n".join(parts)
 
+        if self._epi and session_id:
+            surfaced = [r.metadata["id"] for r in results
+                        if r.source == "episode" and r.metadata.get("id")
+                        and r.content in recall_prompt]
+            if surfaced:
+                try:
+                    self._epi.mark_surfaced(surfaced, session_id)
+                except Exception:
+                    logger.debug("mark_surfaced failed", exc_info=True)
+
         return {
             "prompt": prompt,
             "recalled_ids": recalled_ids,
@@ -304,8 +327,44 @@ class UnifiedMemoryGateway:
         This is the "sleep phase" that converts ephemeral session data
         into persistent structured memories.
         """
+        episodes = self._archive_episodes(session_id)
         stats = self._consolidator.consolidate(session_id)
+        if episodes:
+            stats = dict(stats or {})
+            stats["episodes_indexed"] = episodes
         return stats
+
+    def _archive_episodes(self, session_id: str) -> int:
+        if not self._epi:
+            return 0
+        try:
+            entries = self._stm.get_recent(session_id, n=64)
+            if not entries:
+                return 0
+            chat_type = entries[-1].chat_type or self._infer_chat_type(session_id)
+            return self._epi.index_session(session_id, chat_type, entries)
+        except Exception:
+            logger.warning("episode archiving failed for %s", session_id, exc_info=True)
+            return 0
+
+    @staticmethod
+    def _infer_chat_type(session_id: str) -> str:
+        return "group" if ":group:" in (session_id or "") else "dm"
+
+    def recall_episodes(self, query: str, session_id: Optional[str] = None,
+                        limit: int = 2) -> List[Dict[str, Any]]:
+        if not self._epi:
+            return []
+        frags = self._epi.search(query, exclude_session=session_id, limit=limit)
+        return [
+            {"id": f.id, "scope": f.scope, "share_level": f.share_level,
+             "score": round(f.score, 3), "age_days": round(f.age_days(), 1),
+             "text": f.render()}
+            for f in frags
+        ]
+
+    def forget_episodes(self, session_id: str) -> int:
+        return self._epi.forget_session(session_id) if self._epi else 0
 
     def consolidate_if_needed(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Run consolidation only if enough turns have accumulated.
@@ -360,6 +419,12 @@ class UnifiedMemoryGateway:
 
         # Prune old STM entries
         self._store.prune_short_term(max_age_days=1.0)
+
+        if self._epi:
+            try:
+                stats["episodes_pruned"] = self._epi.prune()
+            except Exception:
+                logger.debug("episode prune failed", exc_info=True)
 
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed
@@ -563,7 +628,7 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", os.path.join(os.path.expanduser("~"), "knowledge")))
+            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
             if not vault_path.exists():
                 vault_path = Path.home() / "Documents" / "Obsidian"
 
@@ -697,72 +762,4 @@ class UnifiedMemoryGateway:
 
     def search_workflows(self, query: str) -> List[Dict]:
         """Search workflows."""
-        wfs = self._wfm.get_relevant_workflows(query)
-        return [
-            {"name": w.name, "description": w.description,
-             "weight": w.current_weight, "usage": w.usage_count,
-             "success": w.success_count}
-            for w in wfs
-        ]
-
-    def record_workflow_use(self, name: str, success: bool = True):
-        """Record a workflow being used (manual trigger)."""
-        self._wfm.record_usage(name, success)
-
-    # ── Stats & Diagnostics ───────────────────────────────────
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get comprehensive memory system statistics."""
-        return {
-            "store": self._store.get_store_stats(),
-            "wiki": self._wiki.get_stats(),
-            "active_sessions": len(self._turn_counters),
-            "last_maintenance": self._last_maintenance,
-            "workflow_decay_enabled": self._enable_workflow_decay,
-            "wiki_enabled": self._enable_wiki,
-        }
-
-    def get_workflow_decay_report(self) -> List[Dict]:
-        """Get a report of workflow weights for monitoring."""
-        wfs = self._wfm._store.get_all_workflows()
-        return [
-            {
-                "name": w.name,
-                "current_weight": w.current_weight,
-                "usage_count": w.usage_count,
-                "success_rate": w.success_count / max(1, w.usage_count),
-                "last_used_days_ago": (
-                    (datetime.now(timezone.utc).timestamp() - w.last_used) / 86400.0
-                    if w.last_used > 0 else float("inf")
-                ),
-                "status": (
-                    "forgotten" if w.current_weight <= DECAY_MIN_WEIGHT
-                    else "decaying" if w.current_weight < 0.3
-                    else "active"
-                ),
-            }
-            for w in wfs
-        ]
-
-    # ── Lifecycle ─────────────────────────────────────────────
-
-    def on_session_start(self, session_id: str):
-        """Called when a new session starts."""
-        self._turn_counters[session_id] = 0
-        self.ensure_wiki_synced()
-
-    def on_session_end(self, session_id: str):
-        """Called when a session ends. Triggers consolidation."""
-        self.consolidate_if_needed(session_id)
-        if session_id in self._turn_counters:
-            del self._turn_counters[session_id]
-
-    def shutdown(self):
-        """Clean shutdown."""
-        self._store.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.shutdown()
+        wfs = self._wf

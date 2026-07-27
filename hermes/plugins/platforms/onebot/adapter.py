@@ -2066,7 +2066,7 @@ class OneBotAdapter(BasePlatformAdapter):
         # Unified forward extraction (before group/DM branch so both paths share it)
         _fwd_summary, _fwd_detail, _fwd_images = await self._extract_forward_content(msg)
 
-        # Persist private messages (group messages are persisted inside the block below)
+        # Persist private messages + dispatch to agent
         if msg_type == "private":
             _persist_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
             self._persist_chat_message(str(user_id), "private", int(user_id), sender_name,
@@ -2074,6 +2074,36 @@ class OneBotAdapter(BasePlatformAdapter):
                                        message_id=str(msg.get("message_id", "")),
                                        content_raw=raw_text,
                                        sender_card=sender.get("card", ""))
+
+            from gateway.session import SessionSource
+            from .adapter import MessageEvent, MessageType
+            _dm_source = SessionSource(
+                platform=self.platform,
+                chat_id=user_id_str,
+                user_id=user_id_str,
+                user_name=sender_name,
+                chat_type="dm",
+            )
+            msg_time = msg.get("time", 0)
+            time_str = time.strftime('%m-%d %H:%M', time.localtime(msg_time)) if msg_time else ""
+            _dm_prompt = (
+                f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
+                f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
+            )
+            _dm_recall = self._recall_context(raw_text, user_id_str, sender_name,
+                                               session_id=f"onebot:dm:{user_id_str}")
+            if _dm_recall:
+                _dm_prompt += f"\n{_dm_recall}"
+            _dm_event = MessageEvent(
+                text=self._cq_to_readable(raw_text),
+                message_type=MessageType.TEXT,
+                source=_dm_source,
+                raw_message=msg,
+                message_id=str(msg.get("message_id", "")),
+                channel_prompt=_dm_prompt,
+            )
+            await self._dispatch_to_agent(_dm_event)
+            return
 
         # Group trigger check: reply only if @mentioned
         is_mentioned = False
@@ -2109,6 +2139,8 @@ class OneBotAdapter(BasePlatformAdapter):
 
         if msg_type == "group" and effective_self_id:
             is_mentioned = self._is_mentioned(msg, effective_self_id)
+            msg["_is_mentioned"] = is_mentioned
+            msg["_at_targets"] = _at_targets
             raw_text = self._get_raw_text(msg).strip()
             # Strip reply prefixes that NapCat prepends
             raw_text = re.sub(r'^\[回复[^\]]*\]\s*', '', raw_text)
@@ -2710,7 +2742,4 @@ def register(ctx):
         install_hint="pip install websockets httpx",
         env_enablement_fn=_env_enablement,
         allowed_users_env="ONEBOT_ALLOWED_USERS",
-        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
-        emoji="🐧",
-        pii_safe=False,
-    )
+       

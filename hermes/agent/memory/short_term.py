@@ -108,6 +108,54 @@ def _is_stop_bigram(bigram: str) -> bool:
     return bigram in stop_bigrams
 
 
+ENG_STOPWORDS = {
+    "the", "and", "for", "you", "that", "this", "with", "have", "from",
+    "your", "what", "are", "can", "not", "but", "all", "was", "just",
+    "like", "about", "when", "how", "will", "get", "out", "some", "more",
+}
+
+
+def tokenize_for_match(text: str, limit: int = 64) -> List[str]:
+    """检索用分词 - STM / EpisodeIndex 共用的统一 token 空间。
+
+    产出的 token 与 extract_chinese_topics 同构 (领域标签 / 中文2-gram / 英文词),
+    所以 topics 字段可以直接和这里的 token 求交集。
+    """
+    if not text:
+        return []
+
+    out: List[str] = []
+    seen = set()
+
+    def _add(tok: str):
+        if tok and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+
+    text_lower = text.lower()
+
+    for domain, keywords in CN_TOPIC_DICT.items():
+        for kw in keywords:
+            if kw.lower() in text_lower:
+                _add(domain)
+                break
+
+    for chunk in re.findall(r'[一-鿿]+', text):
+        if len(chunk) == 1:
+            _add(chunk)
+            continue
+        for i in range(len(chunk) - 1):
+            bigram = chunk[i:i + 2]
+            if not _is_stop_bigram(bigram):
+                _add(bigram)
+
+    for word in re.findall(r'[a-z][a-z0-9]{2,15}', text_lower):
+        if word not in ENG_STOPWORDS:
+            _add(word)
+
+    return out[:limit]
+
+
 def detect_chinese_emotion(text: str) -> str:
     """检测中文消息的情感色调."""
     for emotion, keywords in CHINESE_EMOTION_MAP.items():

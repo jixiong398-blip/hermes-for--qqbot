@@ -190,6 +190,14 @@ class GroupExecutor:
         if gs.rolling_summary:
             channel_prompt += f"\n\n[对话摘要] {gs.rolling_summary}"
 
+        if recall_ctx and "别处的印象" in recall_ctx:
+            channel_prompt += (
+                "\n\n[联想] 上面的「别处的印象」是你在**别的群/私聊**里听来的，"
+                "不是本群的对话。可以像人一样自然地提起（比如「我记得好像有人说过」），"
+                "但绝对不要说出是谁说的、在哪说的、什么时候在哪个群说的。"
+                "如果跟当前话题其实不搭，就当没看见。"
+            )
+
         channel_prompt += (
             "\n\n[工具] 你可以用以下标记控制行为：\n"
             "- 不想回话就只输出 [SILENT]（无其他文字），下次有人说话你还可以接\n"
@@ -198,8 +206,7 @@ class GroupExecutor:
             "\n[搜索历史] 你可以调用 search_chat_history 工具搜索群聊历史"
         )
 
-        self._limit_prompt_size(channel_prompt)
-        return channel_prompt
+        return self._limit_prompt_size(channel_prompt)
 
     def _format_group_context(self, snapshot, image_paths, group_id, gs):
         if not snapshot:
