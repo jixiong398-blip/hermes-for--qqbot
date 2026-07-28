@@ -14,7 +14,7 @@ MAX_ROUNDS = 3
 @dataclass
 class AgentOutcome:
     kind: str = "sent"       # "sent" | "silent" | "quiet" | "failed"
-    reply_text: str = ""
+    reply_text: str = ""     # actual reply text (for recorder)
     sent_message_ids: Tuple[str, ...] = ()
 
 
@@ -63,6 +63,9 @@ class GroupExecutor:
                     break
 
                 if gs.last_user_seq > gs.last_consumed_seq:
+                    if gs.episode_state.episode_phase == "exiting":
+                        gs.go_quiet()
+                        break
                     self._pending[group_id] = TriggerRequest(
                         group_id=group_id,
                         origin_seq=gs.last_user_seq,
@@ -100,6 +103,9 @@ class GroupExecutor:
             outcome = await self._run_agent_locked(event)
             gs.mark_consumed(snapshot_seq)
             self._apply_outcome(gid, event, outcome, gs)
+
+            if outcome.kind == "sent" and outcome.reply_text:
+                await self._record_episode_state(request, gs, outcome)
 
             await self._adapter._update_rolling_summary(gid)
 
@@ -190,6 +196,26 @@ class GroupExecutor:
         if gs.rolling_summary:
             channel_prompt += f"\n\n[对话摘要] {gs.rolling_summary}"
 
+        es = gs.episode_state
+        if es.turn_count > 0:
+            parts = []
+            parts.append(f"[对话状态] 第{es.turn_count}轮")
+            if es.episode_label:
+                parts.append(f"话题: {es.episode_label}")
+            if es.episode_phase:
+                parts.append(f"阶段: {es.episode_phase}")
+            if es.conversation_mode:
+                parts.append(f"氛围: {es.conversation_mode}")
+            if es.current_thread:
+                parts.append(f"当前话题: {es.current_thread}")
+            if es.progression_guidance:
+                parts.append(f"指导: {es.progression_guidance}")
+            if es.overused_moves:
+                parts.append(f"避免: {', '.join(es.overused_moves)}")
+            if es.resolved_threads:
+                parts.append(f"已聊完: {', '.join(es.resolved_threads)}")
+            channel_prompt += "\n\n" + "\n".join(parts)
+
         if recall_ctx and "别处的印象" in recall_ctx:
             channel_prompt += (
                 "\n\n[联想] 上面的「别处的印象」是你在**别的群/私聊**里听来的，"
@@ -241,15 +267,17 @@ class GroupExecutor:
 
     async def _run_agent_locked(self, event) -> AgentOutcome:
         try:
-            await self._adapter.handle_message(event)
-            return AgentOutcome(kind="sent")
+            response = await self._adapter.handle_message(event)
+            reply_text = response if isinstance(response, str) else str(response)
+            return AgentOutcome(kind="sent", reply_text=reply_text)
         except Exception as e:
             logger.warning("[GroupExecutor] Agent failed: %s", e)
-            return AgentOutcome(kind="failed")
+            return AgentOutcome(kind="failed", reply_text="")
 
     def _apply_outcome(self, group_id, event, outcome, gs):
         if outcome.kind == "sent":
-            gs.record_reply()
+            if gs.attentive.active:
+                gs.record_reply()
             gs.last_agent_ts = time.time()
         elif outcome.kind == "silent":
             gs.record_silent()
@@ -257,3 +285,39 @@ class GroupExecutor:
         elif outcome.kind == "quiet":
             gs.go_quiet()
             gs.last_agent_ts = time.time()
+
+    async def _record_episode_state(self, request, gs, outcome):
+        try:
+            from .semantic_judge import post_reply_recorder
+
+            recent_raw = gs.get_recent()
+            recent_dicts = [
+                {
+                    "ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
+                    "name": m.name, "text": m.text[:200], "is_bot": m.is_bot,
+                }
+                for m in recent_raw[-15:]
+            ]
+
+            speaker_role = getattr(request, "speaker_role", "") or "unknown"
+
+            new_state = await post_reply_recorder(
+                recent_messages=recent_dicts,
+                soyo_reply=outcome.reply_text,
+                prior_episode_state=gs.episode_state.to_dict(),
+                speaker_role=speaker_role,
+            )
+
+            from .group_state import EpisodeState
+            old_turn = gs.episode_state.turn_count
+            gs.episode_state = EpisodeState.from_dict(new_state)
+            gs.episode_state.turn_count = old_turn + 1
+            gs.episode_state.updated_at = time.time()
+
+            logger.info(
+                "[GroupExecutor] Episode state updated: phase=%s continuity=%s",
+                new_state.get("episode_phase", "?"),
+                new_state.get("continuity", "?"),
+            )
+        except Exception as e:
+            logger.warning("[GroupExecutor] Episode recorder failed: %s", e)

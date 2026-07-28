@@ -43,6 +43,86 @@ class AttentiveState:
         self.active = False
 
 
+@dataclass
+class EpisodeState:
+    """结构化对话状态，跨轮传递 — 对标 Kazusa conversation_progress。
+
+    每轮对话后由 Post-reply Recorder 更新，下一轮 Pre-reply Judge 消费。
+    """
+
+    # ── 生命周期 ──
+    status: str = "active"           # active | winding_down | closed
+    continuity: str = "same_episode" # same_episode | related_shift | sharp_transition
+    turn_count: int = 0
+
+    # ── 话题状态 ──
+    episode_label: str = ""
+    current_thread: str = ""
+    conversation_mode: str = ""      # casual_chat | tech_discussion | playful_banter | group_ambient | serious
+    episode_phase: str = ""          # starting | mid | winding_down | exiting
+
+    # ── 说话人角色 ──
+    last_speaker_role: str = ""      # owner | member | bot | unknown
+
+    # ── Soyo 行为追踪 ──
+    soyo_moves: List[str] = field(default_factory=list)
+    overused_moves: List[str] = field(default_factory=list)
+    open_loops: List[str] = field(default_factory=list)
+    resolved_threads: List[str] = field(default_factory=list)
+
+    # ── 下一轮指导 ──
+    progression_guidance: str = ""
+
+    # ── 元数据 ──
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+    def to_dict(self) -> Dict:
+        """序列化为 judge/recorder 可消费的纯 dict。list 字段转为 list[str]。"""
+        return {
+            "status": self.status,
+            "continuity": self.continuity,
+            "turn_count": self.turn_count,
+            "episode_label": self.episode_label,
+            "current_thread": self.current_thread,
+            "conversation_mode": self.conversation_mode,
+            "episode_phase": self.episode_phase,
+            "last_speaker_role": self.last_speaker_role,
+            "soyo_moves": list(self.soyo_moves),
+            "overused_moves": list(self.overused_moves),
+            "open_loops": list(self.open_loops),
+            "resolved_threads": list(self.resolved_threads),
+            "progression_guidance": self.progression_guidance,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "EpisodeState":
+        """从 recorder/judge 输出重建。容忍缺失键 + 字段名变体。"""
+        return cls(
+            status=str(d.get("status", d.get("episode_status", "active"))),
+            continuity=str(d.get("continuity", "same_episode")),
+            turn_count=int(d.get("turn_count", 0)),
+            episode_label=str(d.get("episode_label", "")),
+            current_thread=str(d.get("current_thread", "")),
+            conversation_mode=str(d.get("conversation_mode", "")),
+            episode_phase=str(d.get("episode_phase", "")),
+            last_speaker_role=str(d.get("last_speaker_role", d.get("speaker_role", ""))),
+            soyo_moves=list(d.get("soyo_moves", [])),
+            overused_moves=list(d.get("overused_moves", [])),
+            open_loops=list(d.get("open_loops", [])),
+            resolved_threads=list(d.get("resolved_threads", [])),
+            progression_guidance=str(d.get("progression_guidance", "")),
+            created_at=float(d.get("created_at", 0.0)),
+            updated_at=float(d.get("updated_at", 0.0)),
+        )
+
+    @classmethod
+    def empty(cls) -> "EpisodeState":
+        return cls()
+
+
 class GroupState:
     WINDOW_SECONDS = 300
 
@@ -64,6 +144,7 @@ class GroupState:
         self.episode_archived: bool = False
         self.rolling_summary: str = ""
         self.last_agent_ts: float = 0.0
+        self.episode_state: EpisodeState = EpisodeState.empty()
 
     # ── ingestion ──────────────────────────────────────────────
 
@@ -184,15 +265,21 @@ class GroupState:
                 self.attentive.deactivate()
 
     def go_quiet(self):
+        """Soyo被赶/主动离开：退出对话态，但保留 episode_state。
+        
+        与 end_episode 的区别：不清空 episode_state，下次被 @ 回来时可继续。
+        """
         self.attentive.deactivate()
         self.last_reply = None
 
     def end_episode(self):
+        """话题彻底结束：退出对话态 + 重置信标 + 清空 episode_state。"""
         self.attentive.deactivate()
         self.last_reply = None
         self.episode_archived = True
         self.reply_count = 0
         self.episode_start = 0.0
+        self.episode_state = EpisodeState.empty()
 
     def is_episode_active(self) -> bool:
         return not self.episode_archived and self.last_reply is not None

@@ -123,7 +123,356 @@ def _has_bot_turn_continuity(
     return latest.get("is_bot", False)
 
 
-# ── judge prompt ────────────────────────────────────────────
+# ── enhanced episode-aware judge prompt ─────────────────────
+
+_PRE_REPLY_JUDGE_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 QQ 群聊里的 AI 参与者。
+你需要判断 Soyo 在当前这个时刻该不该回复这条消息，以及完整的对话状态。
+
+## 核心原则
+
+Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 时才回复。
+宁可少说，不要多说。群聊里大部分消息都和 Soyo 无关，不需要插嘴。
+
+但注意：群聊是多人的，群友之间讨论同一个话题很正常。一个话题不会因为"群友之间在聊"就闭合——只要话题还在讨论同一件事，就还在活跃。
+
+## episode_state 上下文
+
+你会收到上一轮的 episode_state（结构化对话状态）。请用这些信息辅助判断：
+
+- continuity: 上一轮的话题连续性（same_episode / related_shift / sharp_transition）
+- episode_phase: 上一轮对话阶段（starting / mid / winding_down / exiting）
+- soyo_moves: Soyo 上一轮做了什么
+- progression_guidance: 上一轮给的明确指令——这一轮必须遵守
+- overused_moves: 下一轮必须避免的动作——不要重复这些
+
+**关键规则**:
+- 如果 progression_guidance 说"不要再主动说话" → 除非被直接@Soyo，否则 should_reply=false
+- 如果 episode_phase 是 "exiting" → should_reply 门槛大幅提高
+- 如果 soyo_moves 包含离开/道别 → 对方没有明确挽留时 should_reply=false
+
+## 指向证据层级
+
+按以下顺序判断，不要跳步：
+
+### 1. 结构化指向（最强证据）
+- 有人直接 @Soyo：强正向指向
+- 有人用 QQ 回复功能回复了 Soyo 的消息（reply_to_name=Soyo）：强正向指向
+- 有人用 QQ 回复功能回复了**别人**的消息（reply_to_name 不是 Soyo）：强反证——即使正文提到 Soyo 的名字，也大概率是在跟别人聊 Soyo，不是对 Soyo 说话
+
+### 2. 群聊噪音等级（参考信息，不是硬性过滤）
+- low_noise：群聊干净，门槛较低
+- medium_noise：有一些活动，需要更明确的指向
+- high_noise：多人多消息，只有明确指向才回复
+- chaotic_noise：群聊混乱，几乎只在被直接 @ 或回复 Soyo 时才回复
+
+### 3. 正文语法和历史连续性
+- Soyo 刚说完话（bot 连续性=true），对方直接在回应 Soyo：对话延续，该回复
+- 名字后接第二人称提问/命令（"素世，你在干嘛"）：直接对话
+- 名字作主语/宾语被讨论（"素世会不会觉得好笑"）：第三人称谈论，不该回复
+- 泛称（"bot""伙伴""她"）不可作为指向证据
+
+### 4. 间接对话检测
+区分"对 Soyo 说"和"跟别人聊 Soyo"：
+- "素世，你怎么看？" → 对 Soyo 说 → 可能该回复
+- "素世会不会觉得这个好笑？" → 跟别人聊 Soyo → 不该回复
+
+## 判定维度
+
+### should_reply - Soyo 该不该说话
+
+该回复的情况（必须明确指向 Soyo）：
+- 有人直接 @Soyo 问问题或说话
+- 有人在消息里明确叫了 Soyo 的名字（"素世""soyo"）并在对 Soyo 说话
+- 有人用 QQ 回复功能回复了 Soyo 的消息
+- Soyo 刚说完话，对方直接在回应 Soyo 说的话
+
+不该回复的情况：
+- 纯闲聊，和 Soyo 无关
+- 有人提到 Soyo 的名字但是在讨论名字本身
+- 恶意调戏或刷屏测试
+- 检测到 bot 之间在循环对话
+- 上一轮的 progression_guidance 明确说不要主动说话，且本条没有被@
+
+### should_end - 话题该不该结束（彻底结束）
+
+只有以下情况判 true，否则一律 false：
+- 对方明确要求结束对话（"你安静吧""行了别说了""够了"）
+- 两个 bot 陷入循环对话
+- 对话内容明显空转趋同
+
+### soyo_should_exit - Soyo 该不该退出对话（不等于 should_end！）
+
+这是新增维度。Soyo 退出 ≠ 话题结束。Soyo 退出了，话题可能还在继续（只是 Soyo 不该插嘴了）。
+
+判 true 的情况：
+- 对方明确驱赶（"去玩吧""一边去""别说了""闭嘴""退下""stop"）
+- Soyo 上一轮表达了离开意图，对方回应了确认（"嗯""好""去吧""拜拜"）
+- 对话明显冷场，连续3条以上都没有对 Soyo 说话
+- 话题已经转移到 Soyo 完全无法参与的方向
+- 对话在跟另一个 bot 进行，Soyo 插在中间不合适
+
+判 false 的情况：
+- 正常的对话延续
+- 对方只是短暂岔开但还在对 Soyo 说话
+
+### conversation_mode - 交互模式
+
+- casual_chat: 日常闲聊
+- tech_discussion: 技术讨论
+- playful_banter: 玩闹/调笑/角色扮演
+- group_ambient: 群聊背景噪音（群友之间聊天，与Soyo无关）
+- serious: 严肃话题（情绪沉重、心理健康等）
+
+### speaker_role - 当前消息说话人的角色
+
+- owner: 本群主人/管理者/开发者（清尘璃落、蚝爹油等）
+- member: 普通群友
+- bot: 另一个 bot
+- unknown: 无法确定
+
+### episode_phase - 当前对话阶段
+
+- starting: 刚开始被@，话题刚起来
+- mid: 正在对话中
+- winding_down: 话题自然收束中
+- exiting: Soyo 已经/正在退出
+
+### continuity - 话题连续性
+
+- same_episode: 和上一轮是同一个话题
+- related_shift: 话题有联系但转向了
+- sharp_transition: 话题突然断崖式切换
+
+### progression_guidance - 给下一轮的明确指令
+
+一句话告诉下一轮 judge/agent 该怎么做。例如：
+- "Soyo已被要求离开，下一轮除非被@不要再主动接话"
+- "话题正在讨论延迟优化，Soyo可以适当参与但不强行插嘴"
+- "Soyo刚被@回来，进入对话模式"
+
+## 其他维度（保持）
+
+### topic_active - 话题还在不在
+### is_loop - 是否检测到循环/空转
+### use_reply_feature - 是否用 QQ 回复功能锚定上下文
+### indirect_speech_context - 间接对话标注
+### current_thread - 当前在聊什么话题（简短中文描述）
+
+## 输出格式
+
+只输出 JSON，不要多余文字：
+{"should_reply": true/false, "should_end": true/false, "soyo_should_exit": true/false, "continuity": "...", "conversation_mode": "...", "episode_phase": "...", "speaker_role": "...", "current_thread": "...", "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "progression_guidance": "...", "reason": "一句话说明"}"""
+
+
+def _build_pre_reply_judge_prompt(
+    group_name: str,
+    attentive_state: str,
+    recent_messages: List[Dict[str, Any]],
+    current_msg: Dict[str, Any],
+    episode_state: Optional[Dict[str, Any]] = None,
+    group_attention: str = "",
+    bot_continuity: bool = False,
+    reply_to_name: str = "",
+    reply_to_uid: str = "",
+    bot_self_id: str = "",
+) -> str:
+    parts = []
+    parts.append(f"群名：{group_name or '未知'}")
+    parts.append(f"Soyo 当前状态：{attentive_state}")
+    if group_attention:
+        parts.append(f"群聊噪音等级：{group_attention}")
+    parts.append(f"Soyo 上一条消息后有人接话：{'是' if bot_continuity else '否'}")
+
+    if episode_state and episode_state.get("turn_count", 0) > 0:
+        parts.append("")
+        parts.append("## episode_state（上一轮的状态）")
+        parts.append(f"- 话题标签: {episode_state.get('episode_label', '')}")
+        parts.append(f"- 连续性: {episode_state.get('continuity', '')}")
+        parts.append(f"- 阶段: {episode_state.get('episode_phase', '')}")
+        parts.append(f"- 交互模式: {episode_state.get('conversation_mode', '')}")
+        parts.append(f"- 当前话题: {episode_state.get('current_thread', '')}")
+        moves = episode_state.get("soyo_moves", [])
+        if moves:
+            parts.append(f"- Soyo 上一轮做了: {', '.join(moves)}")
+        guidance = episode_state.get("progression_guidance", "")
+        if guidance:
+            parts.append(f"- 上一轮指令: {guidance}")
+        overused = episode_state.get("overused_moves", [])
+        if overused:
+            parts.append(f"- 避免动作: {', '.join(overused)}")
+        resolved = episode_state.get("resolved_threads", [])
+        if resolved:
+            parts.append(f"- 已聊完: {', '.join(resolved)}")
+
+    if reply_to_name:
+        is_reply_to_bot = (reply_to_uid == bot_self_id) if bot_self_id else False
+        parts.append(f"当前消息回复目标：{reply_to_name}{'（即 Soyo）' if is_reply_to_bot else '（不是 Soyo）'}")
+    else:
+        parts.append("当前消息回复目标：无（非回复消息）")
+
+    parts.append("")
+    parts.append("## 最近消息（时间正序，最新在下）")
+    for m in recent_messages:
+        ts = m.get("ts_str", "")
+        name = m.get("name", "")
+        text = m.get("text", "")[:200]
+        is_bot = m.get("is_bot", False)
+        is_at = m.get("is_at", False)
+        tag = " [bot]" if is_bot else ""
+        at_tag = " @Soyo" if is_at else ""
+        parts.append(f"[{ts}] {name}{tag}{at_tag}: {text}")
+    parts.append("")
+    parts.append("## 当前消息")
+    ts = current_msg.get("ts_str", "")
+    name = current_msg.get("name", "")
+    text = current_msg.get("text", "")[:300]
+    msg_type = current_msg.get("msg_type", "text")
+    is_at = current_msg.get("is_at", False)
+    at_tag = " 是" if is_at else " 否"
+    parts.append(f"[{ts}] {name}: {text}")
+    parts.append(f"消息类型：{msg_type}")
+    parts.append(f"是否@Soyo：{at_tag}")
+    parts.append("")
+    parts.append("请判定（包含 episode 新增维度）：")
+    return "\n".join(parts)
+
+
+# ── enhanced pre-reply judge ─────────────────────────────────
+
+_JUDGE_V2_KEYS = {
+    "should_reply", "should_end", "soyo_should_exit",
+    "continuity", "conversation_mode", "episode_phase",
+    "speaker_role", "current_thread",
+    "topic_active", "is_loop", "use_reply_feature",
+    "indirect_speech_context", "progression_guidance", "reason",
+}
+
+_JUDGE_V2_STR_KEYS = {
+    "continuity", "conversation_mode", "episode_phase",
+    "speaker_role", "current_thread",
+    "indirect_speech_context", "progression_guidance", "reason",
+}
+
+_JUDGE_V2_BOOL_KEYS = {
+    "should_reply", "should_end", "soyo_should_exit",
+    "topic_active", "is_loop", "use_reply_feature",
+}
+
+_JUDGE_V2_FALLBACK: Dict[str, Any] = {
+    "should_reply": False, "should_end": False, "soyo_should_exit": False,
+    "continuity": "same_episode", "conversation_mode": "group_ambient",
+    "episode_phase": "mid", "speaker_role": "unknown", "current_thread": "",
+    "topic_active": True, "is_loop": False, "use_reply_feature": False,
+    "indirect_speech_context": "", "progression_guidance": "",
+    "reason": "fail-closed fallback",
+}
+
+
+def _validate_judge_v2(raw: Dict[str, Any], is_mentioned: bool = False) -> Dict[str, Any]:
+    for key in _JUDGE_V2_KEYS:
+        if key not in raw:
+            if key == "should_reply":
+                raw[key] = is_mentioned
+            else:
+                raw[key] = _JUDGE_V2_FALLBACK.get(key, "")
+    for key in _JUDGE_V2_BOOL_KEYS:
+        if key in raw and not isinstance(raw[key], bool):
+            raw[key] = _JUDGE_V2_FALLBACK.get(key, False)
+    for key in _JUDGE_V2_STR_KEYS:
+        if key in raw and not isinstance(raw[key], str):
+            raw[key] = str(raw[key])
+    return raw
+
+
+async def pre_reply_judge(
+    recent_messages: List[Dict[str, Any]],
+    current_msg: Dict[str, Any],
+    group_name: str = "",
+    attentive_state: str = "潜水",
+    episode_state: Optional[Dict[str, Any]] = None,
+    timeout: float = 30.0,
+    reply_to_name: str = "",
+    reply_to_uid: str = "",
+    bot_self_id: str = "",
+) -> Dict[str, Any]:
+    """增强版语义判定 —— 消费 episode_state，输出完整对话状态。
+
+    与旧 semantic_judge 的区别：
+    - 消费上轮 episode_state 作为上下文
+    - 输出新增维度: soyo_should_exit / episode_phase / continuity / etc.
+    """
+    is_mentioned = current_msg.get("is_at", False)
+
+    async with _get_judge_semaphore():
+        api_key, api_base, api_model = _get_api_key(), _get_api_base(), _get_api_model()
+        if not api_key or not api_base or not api_model:
+            logger.warning("[PreReplyJudge] No API config, fail-closed (mentioned=%s)", is_mentioned)
+            fb = dict(_JUDGE_V2_FALLBACK)
+            fb["should_reply"] = is_mentioned
+            return fb
+
+        group_attention = _calculate_group_attention(recent_messages, bot_self_id)
+        bot_continuity = _has_bot_turn_continuity(recent_messages, bot_self_id)
+
+        prompt = _build_pre_reply_judge_prompt(
+            group_name, attentive_state, recent_messages, current_msg,
+            episode_state=episode_state,
+            group_attention=group_attention,
+            bot_continuity=bot_continuity,
+            reply_to_name=reply_to_name,
+            reply_to_uid=reply_to_uid,
+            bot_self_id=bot_self_id,
+        )
+
+        try:
+            import requests as _r
+            resp = await asyncio.to_thread(
+                _r.post,
+                f"{api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": api_model,
+                    "messages": [
+                        {"role": "system", "content": _PRE_REPLY_JUDGE_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.1,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            msg_content = (data["choices"][0]["message"].get("content") or "").strip()
+            if not msg_content:
+                reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+                match = re.search(r'\{[^{}]*\}', reasoning)
+                if match:
+                    msg_content = match.group()
+            if not msg_content:
+                raise ValueError("Empty content from LLM")
+
+            raw = json.loads(msg_content)
+            result = _validate_judge_v2(raw, is_mentioned)
+            logger.info(
+                "[PreReplyJudge] reply=%s end=%s exit=%s phase=%s continuity=%s mode=%s reason=%s",
+                result["should_reply"], result["should_end"],
+                result["soyo_should_exit"], result.get("episode_phase"),
+                result.get("continuity"), result.get("conversation_mode"),
+                result["reason"][:60],
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning("[PreReplyJudge] Timeout, fail-closed (mentioned=%s)", is_mentioned)
+            fb = dict(_JUDGE_V2_FALLBACK)
+            fb["should_reply"] = is_mentioned
+            return fb
+        except Exception as e:
+            logger.warning("[PreReplyJudge] Error: %s, fail-closed (mentioned=%s)", e, is_mentioned)
+            fb = dict(_JUDGE_V2_FALLBACK)
+            fb["should_reply"] = is_mentioned
+            return fb
 
 JUDGE_SYSTEM_PROMPT = """你是 Soyo 的对话状态判定器。Soyo 是一个 QQ 群聊里的 AI 参与者。
 你需要判断 Soyo 在当前这个时刻该不该回复这条消息，以及话题是否应该结束。
@@ -373,6 +722,16 @@ _SUMMARY_SYSTEM_PROMPT = """你是群聊摘要生成器。直接输出2-3句话�
 禁止输出"根据之前的总结""最新消息显示"等废话。不要解释你在做什么，直接给出总结本身。"""
 
 
+def _is_prompt_echo(text: str) -> bool:
+    """Detect whether a rolling summary is actually the model echoing the prompt instructions."""
+    echo_markers = [
+        "我们被问到", "你是群聊摘要生成器", "根据之前的总结",
+        "直接输出2-3句话", "生成一个更新后的总结",
+        "最新消息显示", "之前的总结：",
+    ]
+    return any(marker in text for marker in echo_markers)
+
+
 async def generate_rolling_summary(
     recent_messages: List[Dict[str, Any]],
     prev_summary: str = "",
@@ -393,7 +752,7 @@ async def generate_rolling_summary(
             lines.append(f"[{ts}] {name}{tag}: {text}")
 
         user_prompt = "\n".join(lines)
-        if prev_summary:
+        if prev_summary and not _is_prompt_echo(prev_summary):
             user_prompt = f"之前：{prev_summary}\n\n{user_prompt}"
 
         try:
@@ -431,3 +790,216 @@ async def generate_rolling_summary(
         except Exception as e:
             logger.warning("[RollingSummary] Error: %s, keeping prev", e)
             return prev_summary
+
+
+_PRIVACY_SYSTEM_PROMPT = """你是QQ群聊片段的隐私判定器。判断给定对话片段是否适合被跨群匿名引用（即在其他群的对话中以"有人提到…"的形式被想起）。
+
+判定标准：
+- share_level=0（封存）：包含密码/身份证号/银行卡号/验证码、严重心理健康危机（自杀/自残倾向）、明确要求保密（"别告诉别人"）、极其私密的感情隐私（出轨/流产等具体细节）、个人财务细节（具体工资数额/转账记录）
+- share_level=1（匿名可引用）：普通日常对话、一般性吐槽、闲聊、游戏/动漫/音乐讨论、一般感情烦恼（不涉及极端隐私）
+- share_level=2（具名可引用）：公开信息、一般知识讨论、无隐私内容
+
+只输出JSON，不要多余文字：
+{"share_level": 0或1或2, "reason": "一句话说明"}"""
+
+
+def judge_episode_privacy_sync(text: str, timeout: float = 10.0) -> dict:
+    """Sync LLM privacy judgment for episode fragments.
+
+    Returns {"share_level": int, "reason": str}.
+    Falls back to {"share_level": 1, "reason": "fallback"} on any error.
+    """
+    api_key = _get_api_key()
+    if not api_key or not _get_api_base() or not _get_api_model():
+        return {"share_level": 1, "reason": "no api key, default anonymous"}
+
+    try:
+        import requests as _r
+        _base = _get_api_base()
+        _model = _get_api_model()
+        resp = _r.post(
+            f"{_base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": _model,
+                "messages": [
+                    {"role": "system", "content": _PRIVACY_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"片段内容：\n{text[:800]}"},
+                ],
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = (data["choices"][0]["message"].get("content") or "").strip()
+        if not content:
+            reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+            import re as _re
+            _match = _re.search(r'\{[^{}]*\}', reasoning)
+            if _match:
+                content = _match.group()
+        if not content:
+            return {"share_level": 1, "reason": "empty response"}
+        result = json.loads(content)
+        level = int(result.get("share_level", 1))
+        if level not in (0, 1, 2):
+            level = 1
+        return {"share_level": level, "reason": result.get("reason", "")[:60]}
+    except Exception as e:
+        logger.warning("[EPIPrivacy] Error: %s, fallback to anonymous", e)
+        return {"share_level": 1, "reason": f"error fallback: {e}"}
+
+
+# ── post-reply recorder ─────────────────────────────────────
+
+_POST_REPLY_RECORDER_PROMPT = """你是 SoYo 的对话状态记录器。根据本轮对话和 SoYo 的回复，更新 episode_state。
+
+# 任务
+把"这一轮发生了什么"压成结构化的 episode_state JSON，供下一轮 judge 消费。
+宁可少记，也不要把不确定的内容污染到下一轮。
+
+# 阅读顺序
+1. recent_messages: 本轮群聊中发生了什么
+2. soyo_reply: SoYo 这一轮回复了什么
+3. prior_episode_state: 上一轮的状态
+
+# 字段规则
+
+## episode_status
+- active: 对话正在继续
+- winding_down: 话题正在自然收束
+- closed: 话题已经结束
+
+## continuity
+- same_episode: 和上一轮同一个话题
+- related_shift: 话题有联系但转向了
+- sharp_transition: 话题断崖式切换
+
+## episode_phase
+- starting: 刚被@开始对话
+- mid: 正在对话中
+- winding_down: 话题自然收束
+- exiting: SoYo已经/正在退出
+
+**episode_phase 转换规则**:
+- SoYo 被赶走 / 明确说了要离开 / 连续被冷落 → "exiting"
+- SoYo 说了"我去练贝斯了""你们聊""拜拜""先走了""不打扰了"等 → "exiting"
+- 话题自然聊完了收束 → "winding_down"
+- 对话正常继续 → "mid"
+- 刚被@第一次回复 → "starting"
+
+## conversation_mode
+- casual_chat: 日常闲聊
+- tech_discussion: 技术讨论
+- playful_banter: 玩闹/调笑/角色扮演
+- group_ambient: 群聊背景噪音
+- serious: 严肃话题
+
+## soyo_moves
+用中文短语概括 SoYo 这一轮做了什么（最多5个）。例如：
+["参与技术闲聊", "自嘲不懂技术", "被赶后道别"]
+不要写太长的描述，每个标签控制在10字以内。
+
+## overused_moves
+下一轮应该避免的动作标签。如果 SoYo 这轮已经重复了某个动作多次，或者对话模式开始空转，就写出来。
+
+## open_loops
+还没处理完的未闭合话题。只有本轮明确提出或重新确认的才写。没有就写 []。
+
+## resolved_threads
+这轮已经聊完、处理完毕、不再需要继续的话题。
+
+## progression_guidance
+给下一轮 judge/agent 的明确的一句话指令。例如：
+- "SoYo已被要求离开，下一轮除非被明确@不要再主动接话"
+- "话题已结束，保持沉默"
+- "SoYo刚被@回来，可以继续聊天"
+- "话题正在讨论延迟优化，Soyo可以适当参与"
+
+# 输出格式
+只输出 JSON，不要多余文字：
+{"episode_status": "...", "continuity": "...", "episode_phase": "...", "conversation_mode": "...", "current_thread": "...", "soyo_moves": [...], "overused_moves": [...], "open_loops": [...], "resolved_threads": [...], "progression_guidance": "...", "episode_label": "..."}"""
+
+
+async def post_reply_recorder(
+    recent_messages: List[Dict[str, Any]],
+    soyo_reply: str = "",
+    prior_episode_state: Optional[Dict[str, Any]] = None,
+    speaker_role: str = "unknown",
+    timeout: float = 20.0,
+) -> Dict[str, Any]:
+    """回复后记录器 —— 消费本轮对话+SoYo回复，输出更新后的 episode_state。"""
+
+    async with _get_summary_semaphore():
+        api_key, api_base, api_model = _get_api_key(), _get_api_base(), _get_api_model()
+        if not api_key or not api_base or not api_model:
+            logger.warning("[PostReplyRecorder] No API config, returning prior state")
+            return prior_episode_state or {}
+
+        capped = recent_messages[-15:]
+        lines = []
+        for m in capped:
+            ts = m.get("ts_str", "")
+            name = m.get("name", "")
+            text = m.get("text", "")[:200]
+            tag = " [bot]" if m.get("is_bot") else ""
+            lines.append(f"[{ts}] {name}{tag}: {text}")
+
+        messages_text = "\n".join(lines)
+        prior_json = json.dumps(prior_episode_state, ensure_ascii=False) if prior_episode_state else "null"
+
+        user_prompt = (
+            f"## prior_episode_state\n{prior_json}\n\n"
+            f"## speaker_role\n{speaker_role}\n\n"
+            f"## recent_messages\n{messages_text}\n\n"
+            f"## soyo_reply\n{soyo_reply[:500]}\n\n"
+            f"请输出更新后的 episode_state JSON:"
+        )
+
+        try:
+            import requests as _r
+            resp = await asyncio.to_thread(
+                _r.post,
+                f"{api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": api_model,
+                    "messages": [
+                        {"role": "system", "content": _POST_REPLY_RECORDER_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 400,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = (data["choices"][0]["message"].get("content") or "").strip()
+            if not content:
+                reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+                match = re.search(r'\{[^{}]*\}', reasoning)
+                if match:
+                    content = match.group()
+            if not content:
+                logger.warning("[PostReplyRecorder] Empty LLM response")
+                return prior_episode_state or {}
+
+            result = json.loads(content)
+            logger.info(
+                "[PostReplyRecorder] phase=%s continuity=%s guidance=%s",
+                result.get("episode_phase", "?"),
+                result.get("continuity", "?"),
+                result.get("progression_guidance", "")[:60],
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning("[PostReplyRecorder] Timeout")
+            return prior_episode_state or {}
+        except Exception as e:
+            logger.warning("[PostReplyRecorder] Error: %s", e)
+            return prior_episode_state or {}

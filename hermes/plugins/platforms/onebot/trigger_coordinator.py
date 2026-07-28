@@ -89,13 +89,7 @@ class TriggerCoordinator:
         gs = self._adapter._group_states.get(group_id)
 
         if gs.is_attentive():
-            self._submit_request(TriggerRequest(
-                group_id=group_id,
-                origin_seq=seq,
-                mode="attentive",
-                decision_reason="对话态自动接话",
-                raw_msg=msg,
-            ))
+            self._schedule_judge(group_id, seq, msg)
             return
 
         is_mentioned = msg.get("_is_mentioned", False)
@@ -130,9 +124,6 @@ class TriggerCoordinator:
             if jt.epoch != gs.decision_epoch:
                 logger.debug("[TriggerCoordinator] Judge epoch changed for %s, discarding", jt.group_id)
                 return
-            if gs.is_attentive():
-                logger.debug("[TriggerCoordinator] Group %s is now attentive, discarding judge", jt.group_id)
-                return
 
             latest_user = gs.latest_user_message()
             if latest_user is None:
@@ -151,7 +142,25 @@ class TriggerCoordinator:
                 logger.debug("[TriggerCoordinator] Judge result stale for %s, discarding", jt.group_id)
                 return
 
-            if result.get("should_reply"):
+            if result.get("should_end"):
+                gs.end_episode()
+                self._adapter._write_episodic_segment(jt.group_id)
+                self._adapter._generate_group_topic_summary(jt.group_id)
+                logger.info("[TriggerCoordinator] Judge ended episode for %s", jt.group_id)
+            elif result.get("soyo_should_exit"):
+                from .group_state import EpisodeState
+                old_turn = gs.episode_state.turn_count
+                gs.episode_state = EpisodeState.from_dict(result)
+                gs.episode_state.turn_count = old_turn
+                gs.episode_state.updated_at = time.time()
+                gs.go_quiet()
+                logger.info("[TriggerCoordinator] Soyo exiting for %s: %s",
+                            jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
+            elif result.get("should_reply"):
+                old_turn = gs.episode_state.turn_count
+                gs.episode_state = EpisodeState.from_dict(result)
+                gs.episode_state.turn_count = old_turn
+                gs.episode_state.updated_at = time.time()
                 self._submit_request(TriggerRequest(
                     group_id=jt.group_id,
                     origin_seq=current_seq,
@@ -159,11 +168,6 @@ class TriggerCoordinator:
                     decision_reason=result.get("reason", "语义判定需要回复")[:30],
                     raw_msg=msg,
                 ))
-            elif result.get("should_end") or result.get("is_loop"):
-                gs.end_episode()
-                self._adapter._write_episodic_segment(jt.group_id)
-                self._adapter._generate_group_topic_summary(jt.group_id)
-                logger.info("[TriggerCoordinator] Judge ended episode for %s", jt.group_id)
             else:
                 logger.info("[TriggerCoordinator] Judge: no reply for %s", jt.group_id)
         except asyncio.CancelledError:
@@ -177,7 +181,7 @@ class TriggerCoordinator:
 
     async def _invoke_judge(self, group_id: str, latest_user, msg: dict) -> Optional[Dict[str, Any]]:
         try:
-            from .semantic_judge import semantic_judge as _sj
+            from .semantic_judge import pre_reply_judge as _sj
         except ImportError:
             return None
 
@@ -216,9 +220,8 @@ class TriggerCoordinator:
         reply_to_name, reply_to_uid = self._resolve_reply(msg)
 
         attentive_state = "对话态" if gs.is_attentive() else ("旁观态" if gs.is_episode_active() else "潜水")
-        last_reply_text = gs.last_reply[1] if gs.last_reply else ""
-        mins_since = (time.time() - gs.last_reply[0]) / 60.0 if gs.last_reply else 0.0
-        ep_dur = (time.time() - gs.episode_start) / 60.0 if gs.episode_start else 0.0
+
+        episode_state_dict = gs.episode_state.to_dict() if gs.episode_state.turn_count > 0 else None
 
         try:
             return await _sj(
@@ -226,10 +229,7 @@ class TriggerCoordinator:
                 current_msg=current_dict,
                 group_name="",
                 attentive_state=attentive_state,
-                last_reply=last_reply_text,
-                mins_since_reply=mins_since,
-                episode_duration=ep_dur,
-                reply_count=gs.reply_count,
+                episode_state=episode_state_dict,
                 timeout=JUDGE_TIMEOUT,
                 reply_to_name=reply_to_name,
                 reply_to_uid=reply_to_uid,
@@ -289,6 +289,12 @@ class TriggerCoordinator:
             if not entries:
                 return
 
+            gs = self._adapter._group_states.get(batch.group_id)
+            if gs is not None and self._batch_has_dismissal(entries):
+                last_msg = msgs[-1] if msgs else {}
+                self._schedule_judge(batch.group_id, seqs[-1], last_msg)
+                return
+
             self._adapter._group_states.get(batch.group_id).enter_attentive()
 
             self._submit_request(TriggerRequest(
@@ -305,6 +311,19 @@ class TriggerCoordinator:
             self._mention_batches.pop(batch.group_id, None)
 
     # ── submit to executor ──────────────────────────────────
+
+    def _batch_has_dismissal(self, entries: list) -> bool:
+        _DISMISSAL_PATTERNS = [
+            "去玩吧", "一边去", "别说了", "闭嘴", "够了",
+            "退下", "安静点", "stop", "行了别",
+            "滚", "走开", "别吵", "消停",
+        ]
+        for entry in entries:
+            text = entry.get("text", "")
+            for pat in _DISMISSAL_PATTERNS:
+                if pat in text:
+                    return True
+        return False
 
     def _submit_request(self, request: TriggerRequest):
         self._pending_requests[request.group_id] = request
