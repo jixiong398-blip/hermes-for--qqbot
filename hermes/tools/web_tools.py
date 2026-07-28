@@ -906,7 +906,7 @@ Create a single, unified markdown summary."""
                 {"role": "user", "content": synthesis_prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 20000,
+            "max_tokens": 65536,
         }
         if extra_body:
             call_kwargs["extra_body"] = extra_body

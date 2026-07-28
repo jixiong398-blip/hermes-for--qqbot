@@ -2092,7 +2092,7 @@ def _extract_relevant_content(
         call_kwargs = {
             "task": "web_extract",
             "messages": [{"role": "user", "content": extraction_prompt}],
-            "max_tokens": 4000,
+            "max_tokens": 65536,
             "temperature": 0.1,
         }
         model = _get_extraction_model()
@@ -3085,7 +3085,7 @@ def browser_vision(question: str, annotate: bool = False, task_id: Optional[str]
                     ],
                 }
             ],
-            "max_tokens": 2000,
+            "max_tokens": 65536,
             "temperature": vision_temperature,
             "timeout": vision_timeout,
         }
@@ -3644,4 +3644,3 @@ registry.register(
     handler=lambda args, **kw: browser_console(clear=args.get("clear", False), expression=args.get("expression"), task_id=kw.get("task_id")),
     check_fn=check_browser_requirements,
     emoji="🖥️",
-)

@@ -43,6 +43,11 @@ UPGRADE_MAP = [
     ("hermes/agent/memory/obsidian.py", "hermes/agent/memory/obsidian.py"),
     ("hermes/tools/memory_gateway_tool.py", "hermes/tools/memory_gateway_tool.py"),
     ("hermes/tools/chat_history_search_tool.py", "hermes/tools/chat_history_search_tool.py"),
+    ("hermes/tools/browser_tool.py", "hermes/tools/browser_tool.py"),
+    ("hermes/tools/vision_tools.py", "hermes/tools/vision_tools.py"),
+    ("hermes/tools/web_tools.py", "hermes/tools/web_tools.py"),
+    ("hermes/hermes_cli/hooks.py", "hermes/hermes_cli/hooks.py"),
+    ("hermes/agent/auxiliary_client.py", "hermes/agent/auxiliary_client.py"),
     ("hermes/requirements.txt", "hermes/requirements.txt"),
     # Hermes scripts
     ("hermes/scripts/qq-db-recover.py", "hermes/scripts/qq-db-recover.py"),

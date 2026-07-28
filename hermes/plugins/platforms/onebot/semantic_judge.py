@@ -770,7 +770,7 @@ async def generate_rolling_summary(
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 300,
+                    "max_tokens": 65536,
                 },
                 timeout=timeout,
             )
@@ -826,8 +826,9 @@ def judge_episode_privacy_sync(text: str, timeout: float = 10.0) -> dict:
                     {"role": "system", "content": _PRIVACY_SYSTEM_PROMPT},
                     {"role": "user", "content": f"片段内容：\n{text[:800]}"},
                 ],
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"},
+                    "temperature": 0.1,
+                    "max_tokens": 65536,
+                    "response_format": {"type": "json_object"},
             },
             timeout=timeout,
         )
@@ -971,8 +972,7 @@ async def post_reply_recorder(
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.2,
-                    "max_tokens": 400,
-                    "response_format": {"type": "json_object"},
+                    "max_tokens": 65536,
                 },
                 timeout=timeout,
             )

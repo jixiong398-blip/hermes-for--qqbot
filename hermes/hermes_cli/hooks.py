@@ -156,7 +156,7 @@ _DEFAULT_PAYLOADS = {
         "tool_count": 12,
         "approx_input_tokens": 2048,
         "request_char_count": 8192,
-        "max_tokens": 4096,
+        "max_tokens": 65536,
     },
     "post_api_request": {
         "session_id": "test-session",
