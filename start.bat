@@ -9,6 +9,15 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
+:: Check for existing Gateway
+tasklist /fi "imagename eq python.exe" /fo csv /nh 2>nul | findstr /i "hermes_cli.main" >nul
+if %errorlevel% equ 0 (
+    echo [WARNING] Gateway is already running! Stop it first with Stop-All.bat
+    echo.
+    choice /c yn /m "Continue anyway?"
+    if errorlevel 2 exit /b 0
+)
+
 :: Kill anything already on port 8899
 echo Stopping previous Dashboard instance...
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8899 "') do (

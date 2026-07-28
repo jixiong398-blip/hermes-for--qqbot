@@ -119,4 +119,10 @@ def search_chat_history(args: dict, **kwargs: Any) -> str:
 # ── Registry ──────────────────────────────────────────────────────────────
 
 registry.register(
-    name="
+    name="search_chat_history",
+    toolset="session_search",
+    schema=SEARCH_CHAT_HISTORY_SCHEMA,
+    handler=search_chat_history,
+    emoji="💬",
+    description="搜索 QQ 群聊历史消息（全文检索，返回 [mid:...] 引用）",
+)
