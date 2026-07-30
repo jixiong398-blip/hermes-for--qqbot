@@ -1,7 +1,7 @@
 {
   "name": "soyo-live2d",
   "version": "1.0.0",
-  "description": "长崎素世 Live2D 透明窗口",
+  "description": "Live2D 透明窗口桌面立绘",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

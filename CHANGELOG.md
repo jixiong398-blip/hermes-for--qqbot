@@ -1,5 +1,43 @@
 ﻿# bot-template 更新日志
 
+## v0.12.4 (2026-07-31)
+
+### 同步服务器修复 — Bug：Bot 不回复
+- **P0 retrieval.py**：`MemoryRetriever.__init__` 增加 `epi=None` 参数 + `DEFAULT_SOURCE_WEIGHTS` 加 `"episode": 0.9` + `recall()` 加 episode 检索分支。修复 gateway.py 传 `epi=self._epi` 导致 `TypeError` → memory gateway 崩溃 → bot 不回复
+- **P2 trigger_coordinator.py**：@mention 时增加 episode phase 复位（`exiting`/`winding_down`/空 → `starting`），修复对话收束后 @mention 被静默丢弃
+- **P3 corpus_history.py**（新增）：FTS5 群聊全文搜索模块，解决 `chat_history_search_tool.py` import 找不到模块
+- **UPGRADE.md** 重写到 v0.12.4，增加完整文件安装位置对照表
+- 隐私清洗：gateway.py 默认路径、episodic_index.py docstring、semantic_judge.py prompt、onboarding.html、live2d settings.html、package.json
+
+## v0.12.3 (2026-07-31)
+
+### EPI 跨群记忆归档修复
+- **episodic_index.py:L295**：补 `dropped = max(0, len(chunk) - len(lines))`，修复 `NameError: name 'dropped' is not defined` 导致 episode 归档定时任务崩溃
+
+## v0.12.0 ~ v0.12.2 (2026-07-29)
+
+### Episode State 系统
+- 16 字段 episode state 注入 judge / executor
+- `max_tokens` 全局统一 65536
+- `chat_history_search_tool.py` 截断修复
+- Stop-All.bat / start.bat 进程冲突检测
+
+## v0.11.0 ~ v0.11.1 (2026-07-28)
+
+### EpisodeIndex 记忆层（EPI）
+- 跨会话联想记忆层：STM → EPI → LTM
+- upgrade.py UPGRADE_MAP 补全（7 → 47 文件）
+
+## v0.10.6 (2026-07-16)
+
+### 消息处理架构重构 — 三阶段流水线
+- **Phase 1**：buffer/persist/图片/judge 并发（semaphore 20）
+- **Phase 2**：trigger_coordinator 决策层（1s timer + judge）
+- **Phase 3**：group_executor 串行执行（群锁 + agent + 摘要 + 连续对话）
+- 新增 `media_pipeline.py` / `trigger_coordinator.py` / `group_executor.py`
+- 重写 `adapter.py`（774 → ~100 行）/ `group_state.py`（seq 体系）/ `semantic_judge.py`（fail-closed）
+- 跨平台 SOCKS 代理修复 + `--replace` CLI 参数
+
 
 
 

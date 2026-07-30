@@ -1257,7 +1257,17 @@ class OneBotAdapter(BasePlatformAdapter):
                     reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
                     desc = reasoning[:40].strip()
         except Exception as e:
-            logger.warning("[OneBot] Image description failed for %s: %s", image_path, e)
+            logger.warning(
+                "[OneBot] Image description failed for %s: %s (type=%s)",
+                image_path, e, type(e).__name__,
+            )
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    _body = e.response.text[:500] if hasattr(e.response, 'text') else ''
+                    logger.warning("[OneBot] Image desc HTTP response: status=%s body=%s",
+                                   getattr(e.response, 'status_code', '?'), _body)
+                except Exception:
+                    pass
             desc = "图片"
 
         if len(self._image_descriptions) > 500:
@@ -2742,4 +2752,7 @@ def register(ctx):
         install_hint="pip install websockets httpx",
         env_enablement_fn=_env_enablement,
         allowed_users_env="ONEBOT_ALLOWED_USERS",
-       
+        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
+        emoji="🐧",
+        pii_safe=False,
+    )

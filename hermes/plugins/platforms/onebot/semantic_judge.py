@@ -225,7 +225,7 @@ Soyo 默认保持沉默。只有在被明确叫到、或对话直接涉及 Soyo 
 
 ### speaker_role - 当前消息说话人的角色
 
-- owner: 本群主人/管理者/开发者（清尘璃落、蚝爹油等）
+- owner: 本群主人/管理者/开发者（群主、管理员等）
 - member: 普通群友
 - bot: 另一个 bot
 - unknown: 无法确定
@@ -929,7 +929,7 @@ async def post_reply_recorder(
     soyo_reply: str = "",
     prior_episode_state: Optional[Dict[str, Any]] = None,
     speaker_role: str = "unknown",
-    timeout: float = 20.0,
+    timeout: float = 60.0,
 ) -> Dict[str, Any]:
     """回复后记录器 —— 消费本轮对话+SoYo回复，输出更新后的 episode_state。"""
 

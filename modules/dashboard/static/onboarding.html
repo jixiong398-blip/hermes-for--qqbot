@@ -177,7 +177,7 @@ body::after{content:'';position:fixed;bottom:0;right:20%;width:600px;height:500p
   };
 
   var PRESETS = {
-    'soyo': { label: '长崎素世', desc: 'BanG Dream! 长崎素世 — 温柔腹黑贝斯手' },
+    'soyo': { label: '{{SOUL_NAME}}', desc: 'BanG Dream! 默认角色 — 自定义请在下一步编辑' },
     'assistant': { label: '智能助手', desc: '通用AI助手，专业而友好' },
     'custom': { label: '自定义', desc: '在下一步手动编辑角色设定' }
   };
@@ -377,7 +377,7 @@ body::after{content:'';position:fixed;bottom:0;right:20%;width:600px;height:500p
 
     h += '<div class="form-group">';
     h += '<label>频道名称（可选）</label>';
-    h += '<input type="text" id="fChannelName" placeholder="如：清尘璃落" value="' + esc(formData.channel_name) + '">';
+    h += '<input type="text" id="fChannelName" placeholder="如：我的群" value="' + esc(formData.channel_name) + '">';
     h += '</div>';
 
     h += '<div class="feedback" id="feedback"></div>';
