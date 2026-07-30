@@ -292,6 +292,8 @@ class EpisodeIndex:
         if len(tokens) < 4:
             return False
 
+        dropped = max(0, len(chunk) - len(lines))
+
         ts_list = [float(getattr(e, "created_at", 0) or 0) for e in chunk]
         ts_list = [t for t in ts_list if t > 0]
         turn_idx = [int(getattr(e, "turn_index", 0) or 0) for e in chunk]
