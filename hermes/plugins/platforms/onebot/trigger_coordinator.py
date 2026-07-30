@@ -297,6 +297,14 @@ class TriggerCoordinator:
 
             self._adapter._group_states.get(batch.group_id).enter_attentive()
 
+            gs = self._adapter._group_states.get(batch.group_id)
+            old_phase = gs.episode_state.episode_phase or "empty"
+            if old_phase in ("exiting", "winding_down", ""):
+                gs.episode_state.episode_phase = "starting"
+                gs.episode_state.updated_at = time.time()
+                logger.info("[TriggerCoordinator] Reset episode %s→starting for %s",
+                            old_phase, batch.group_id)
+
             self._submit_request(TriggerRequest(
                 group_id=batch.group_id,
                 origin_seq=seqs[-1] if seqs else 0,

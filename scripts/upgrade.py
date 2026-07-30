@@ -43,6 +43,7 @@ UPGRADE_MAP = [
     ("hermes/agent/memory/obsidian.py", "hermes/agent/memory/obsidian.py"),
     ("hermes/tools/memory_gateway_tool.py", "hermes/tools/memory_gateway_tool.py"),
     ("hermes/tools/chat_history_search_tool.py", "hermes/tools/chat_history_search_tool.py"),
+    ("hermes/corpus_history.py", "hermes/corpus_history.py"),
     ("hermes/tools/browser_tool.py", "hermes/tools/browser_tool.py"),
     ("hermes/tools/vision_tools.py", "hermes/tools/vision_tools.py"),
     ("hermes/tools/web_tools.py", "hermes/tools/web_tools.py"),

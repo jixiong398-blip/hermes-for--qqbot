@@ -20,7 +20,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from .store import MemoryStore
-from .short_term import ShortTermMemory, ShortTermEntry
+from .short_term import ShortTermMemory, ShortTermEntry, tokenize_for_match
 from .long_term import LongTermMemory, LongTermEntry
 from .workflow import WorkflowMemory, WorkflowEntry
 from .wiki import WikiKnowledgeBase, WikiEntry
@@ -28,15 +28,22 @@ from .wiki import WikiKnowledgeBase, WikiEntry
 logger = logging.getLogger(__name__)
 
 
-# Source weights for retrieval scoring
 DEFAULT_SOURCE_WEIGHTS = {
     "short_term": 1.0,
+    "episode": 0.9,
     "long_term": 0.8,
     "workflow": 0.6,
     "wiki": 0.4,
 }
 
-# Maximum context budget per retrieval (in characters)
+SECTION_LABELS = {
+    "short_term": "### Recent Context",
+    "episode": "### 别处的印象 (其他会话, 非本群)",
+    "long_term": "### Relevant Knowledge",
+    "workflow": "### Available Workflows",
+    "wiki": "### Wiki Reference",
+}
+
 DEFAULT_CONTEXT_BUDGET = 4000
 
 
@@ -62,6 +69,7 @@ class MemoryRetriever:
                  ltm: LongTermMemory,
                  wfm: WorkflowMemory,
                  wiki: WikiKnowledgeBase,
+                 epi=None,
                  source_weights: Optional[Dict[str, float]] = None,
                  context_budget: int = DEFAULT_CONTEXT_BUDGET):
         self._store = store
@@ -69,6 +77,7 @@ class MemoryRetriever:
         self.ltm = ltm
         self.wfm = wfm
         self.wiki = wiki
+        self.epi = epi
         self.source_weights = source_weights or DEFAULT_SOURCE_WEIGHTS.copy()
         self.context_budget = context_budget
 
@@ -93,6 +102,9 @@ class MemoryRetriever:
             stm_results = self._retrieve_stm(query, session_id, limit_per_source)
             all_results.extend(stm_results)
 
+        if "episode" in sources and self.epi is not None:
+            all_results.extend(self._retrieve_episodes(query, session_id))
+
         if "long_term" in sources:
             ltm_results = self._retrieve_ltm(query, limit_per_source)
             all_results.extend(ltm_results)
@@ -114,12 +126,12 @@ class MemoryRetriever:
         entries = self.stm.get_recent(session_id, n=limit * 2)
         results = []
 
-        query_lower = query.lower()
-        query_words = set(re.split(r'\W+', query_lower))
+        query_words = set(tokenize_for_match(query))
+        if not query_words:
+            return []
 
         for entry in entries:
-            content_lower = entry.content.lower()
-            content_words = set(re.split(r'\W+', content_lower))
+            content_words = set(tokenize_for_match(entry.content))
 
             # Relevance: word overlap + topic match
             word_overlap = len(query_words & content_words) / max(len(query_words), 1)
@@ -143,6 +155,36 @@ class MemoryRetriever:
 
         results.sort(key=lambda r: -r.relevance)
         return results[:limit]
+
+    def _retrieve_episodes(self, query: str,
+                           session_id: Optional[str]) -> List[RetrievalResult]:
+        try:
+            frags = self.epi.search(query, exclude_session=session_id)
+        except Exception:
+            logger.debug("episode search failed", exc_info=True)
+            return []
+
+        import time as _time
+        now = _time.time()
+        results = []
+        for f in frags:
+            rendered = f.render(now)
+            if not rendered:
+                continue
+            results.append(RetrievalResult(
+                source="episode",
+                relevance=f.score,
+                content=rendered,
+                metadata={
+                    "id": f.id,
+                    "scope": f.scope,
+                    "share_level": f.share_level,
+                    "age_days": round(f.age_days(now), 1),
+                    "topics": f.topics,
+                    "cross_session": True,
+                },
+            ))
+        return results
 
     def _retrieve_ltm(self, query: str, limit: int) -> List[RetrievalResult]:
         """Retrieve from long-term memory."""
@@ -227,6 +269,7 @@ class MemoryRetriever:
 
         sections: Dict[str, List[str]] = {
             "short_term": [],
+            "episode": [],
             "long_term": [],
             "workflow": [],
             "wiki": [],
@@ -234,6 +277,7 @@ class MemoryRetriever:
 
         section_labels = {
             "short_term": "### Recent Context",
+            "episode": "### 别处的印象 (其他会话, 非本群)",
             "long_term": "### Relevant Knowledge",
             "workflow": "### Available Workflows",
             "wiki": "### Wiki Reference",
@@ -241,7 +285,7 @@ class MemoryRetriever:
 
         total_chars = 0
         for r in results:
-            source_section = sections[r.source]
+            source_section = sections.setdefault(r.source, [])
             label = section_labels.get(r.source, f"### {r.source}")
 
             if not source_section:
@@ -271,12 +315,14 @@ class MemoryRetriever:
 
         sections: Dict[str, List[str]] = {
             "short_term": [],
+            "episode": [],
             "long_term": [],
             "workflow": [],
             "wiki": [],
         }
         section_labels = {
             "short_term": "### Recent Context",
+            "episode": "### 别处的印象 (其他会话, 非本群)",
             "long_term": "### Relevant Knowledge",
             "workflow": "### Available Workflows",
             "wiki": "### Wiki Reference",
