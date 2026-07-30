@@ -1,5 +1,15 @@
 ﻿# bot-template 更新日志
 
+## v0.12.5 (2026-07-31)
+
+### adapter.py 同步 + 隐私清洗 + 数据流验证
+
+- **adapter.py 同步**：从服务器同步 1470 行重大更新，覆盖 Phase 1 摄入/Phase 2 触发/Phase 3 执行全链路
+- **post_reply_recorder 超时**：20s → 60s，修复回复后 episode state 更新因超时丢失
+- **隐私全仓清洗**（佛像保留）：gateway.py 硬编码路径 → 环境变量 fallback、episodic_index.py docstring 匿名化、semantic_judge.py prompt 示例脱敏、onboarding.html / settings.html / package.json 占位符化
+- **browser_tool.py / vision_tools.py**：修复尾行缺失闭合括号
+- **全仓隐私扫描**：佛像之外零泄露（E:/ai、/home/ji/、QQ号、API Key、Token 全部通过）
+
 ## v0.12.4 (2026-07-31)
 
 ### 同步服务器修复 — Bug：Bot 不回复
