@@ -104,6 +104,7 @@ platforms:
   onebot:
     enabled: true
     extra:
+      bot_name: '{{BOT_NAME}}'
       access_token: ''  # 从 NapCat WebUI → OneBot11 设置中获取，登录后回填
       http_url: http://127.0.0.1:3000
       require_mention: false

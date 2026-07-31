@@ -12,7 +12,7 @@ SOUL.md
 gateway.lock
 gateway.pid
 *.zip
-AGENTS.md
+MAINTENANCE.md
 _*.py
 _*.bat
 _*.json

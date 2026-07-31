@@ -208,7 +208,7 @@ class GroupExecutor:
                 parts.append(f"氛围: {es.conversation_mode}")
             if es.current_thread:
                 parts.append(f"当前话题: {es.current_thread}")
-            if es.progression_guidance:
+            if es.progression_guidance and request.mode != "mention":
                 parts.append(f"指导: {es.progression_guidance}")
             if es.overused_moves:
                 parts.append(f"避免: {', '.join(es.overused_moves)}")
@@ -303,7 +303,8 @@ class GroupExecutor:
 
             new_state = await post_reply_recorder(
                 recent_messages=recent_dicts,
-                soyo_reply=outcome.reply_text,
+                bot_reply=outcome.reply_text,
+                bot_name="",
                 prior_episode_state=gs.episode_state.to_dict(),
                 speaker_role=speaker_role,
             )

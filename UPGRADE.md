@@ -83,6 +83,20 @@ git pull origin main
 
 ## 版本历史
 
+### v0.12.5
+- **角色名参数化**：ONEBOT_BOT_NAME 环境变量（env > config.yaml > 默认 Soyo）
+- **Bug 修复**：
+  - mention 复位时清空 progression_guidance（防 LLM 读到旧"不要插嘴"指令）
+  - should_exit 分支 @ 消息不 go_quiet（防 mention 被压掉）
+  - mention 模式跳过指导注入
+  - 图片/语音识别加 max_tokens 65536 + 超时 60s（thinking 吃满 token 导致识别失败）
+  - `_bg_review_send` 加 SUPPORTS_SYSTEM_MESSAGES 检查（防 "💾 Memory updated" 发到 QQ）
+- **安装/更新流程**：
+  - install.py 生成完整 .env（含 ONEBOT_BOT_NAME）
+  - 一键替换灵魂核心.bat 同步角色名到 .env
+  - upgrade.py 目标路径修复（真正更新 ~/.hermes/）
+  - update.bat 自动调用 upgrade.py
+
 ### v0.12.4
 - **P0 修复**：MemoryRetriever 增加 `epi=None` 参数，修复 memory gateway 初始化崩溃导致 bot 不回复
 - **P2 修复**：trigger_coordinator @mention 增加 episode phase 复位（exiting/winding_down → starting）

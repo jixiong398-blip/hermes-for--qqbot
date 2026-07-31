@@ -68,7 +68,7 @@ echo   Python 3.12 installed -- OK
 
 :: Live2D Models are now bundled in models/ directory (Cubism 4/5), no extraction needed.
 echo.
-echo   [2/5] Live2D Models — download via Dashboard
+echo   [2/6] Live2D Models — download via Dashboard
 echo.
 echo   Live2D models are included in modules\live2d\assets\models\
 echo   No extraction needed.
@@ -77,7 +77,7 @@ echo.
 
 :: ===== Step 3: Node.js =====
 echo.
-echo   [3/5] Node.js...
+echo   [3/6] Node.js...
 echo.
 if exist "node\node.exe" (
     echo   Already set up -- skipped
@@ -103,7 +103,7 @@ if exist "node\node.exe" (echo   Node.js extracted -- OK) else if exist "node\np
 
 :: ===== Step 4: Live2D Electron =====
 echo.
-echo   [4/5] Live2D Engine (Electron)...
+echo   [4/6] Live2D Engine (Electron)...
 echo.
 if exist "modules\live2d\node_modules\electron\" (
     echo   Already installed -- skipped
@@ -154,7 +154,7 @@ if exist "modules\live2d\node_modules\electron\" (echo   Live2D engine installed
 
 :: ===== Step 5: Hermes Engine (modified) =====
 echo.
-echo   [5/5] Hermes Engine (our modified version)...
+echo   [5/6] Hermes Engine (our modified version)...
 echo.
 if exist ".venv\Scripts\python.exe" (
     echo   Already installed -- skipped
@@ -207,7 +207,7 @@ if exist "modules\live2d\node_modules\electron\" (echo     [OK] Live2D Engine) e
 echo.
 echo   Next Steps:
 echo     1. Start NapCat:   napcat\napcat.bat ^(scan QR to login^)
-echo     2. Fix ports:      FixNapCat.bat ^(after login^)
+echo     2. Open dashboard: start.bat ^(configure WS:3001/HTTP:3000 ports per guide^)
 echo     3. Set API keys:   "PeiZhiAPI.bat"
 echo     4. Create SOUL:    Edit templates\SOUL.md ^> run soul replacer
 echo     5. Start bot:      start.bat

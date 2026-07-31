@@ -114,6 +114,15 @@ if exist ".venv\Scripts\pip.exe" (
     echo   [SKIP] venv not found - run install.bat for fresh install
 )
 
+:: ===== Step 5: Run upgrade.py (sync to ~/.hermes) =====
+echo.
+echo   [5/5] Applying upgrade to HERMES_HOME...
+if exist ".venv\Scripts\python.exe" (
+    .venv\Scripts\python "%SRC_DIR%\scripts\upgrade.py" "%SRC_DIR%" 2>&1
+) else (
+    echo   [SKIP] venv not found - run install.bat first
+)
+
 :: ===== Cleanup =====
 rmdir /s /q "%TEMP_DIR%" >nul
 

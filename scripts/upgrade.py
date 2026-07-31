@@ -108,24 +108,47 @@ def upgrade(source_root: str = None):
     skipped = []
     for src_rel, dst_rel in UPGRADE_MAP:
         src_path = src / src_rel
-        dst_path = BOT_DIR / dst_rel
         if not src_path.exists():
             skipped.append(f"(missing) {src_rel}")
             continue
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
-        if src_path.is_dir():
-            if dst_path.exists():
-                shutil.rmtree(dst_path)
-            shutil.copytree(src_path, dst_path)
-        else:
-            shutil.copy2(src_path, dst_path)
-        updated.append(src_rel)
+
+        # 目标1: HERMES_HOME（实际运行目录）— strip 'hermes/' 前缀
+        home_rel = dst_rel
+        for prefix in ("hermes/",):
+            if home_rel.startswith(prefix):
+                home_rel = home_rel[len(prefix):]
+        if home_rel.startswith("modules/"):
+            home_rel = home_rel  # modules 目标在 BOT_DIR，见下
+        dst_home = HERMES_HOME / home_rel
+        try:
+            dst_home.parent.mkdir(parents=True, exist_ok=True)
+            if src_path.is_dir():
+                if dst_home.exists():
+                    shutil.rmtree(dst_home)
+                shutil.copytree(src_path, dst_home)
+            else:
+                shutil.copy2(src_path, dst_home)
+            updated.append(f"{dst_rel} -> ~/.hermes/{home_rel}")
+        except Exception as e:
+            skipped.append(f"(error) {dst_rel}: {e}")
+
+        # 目标2: BOT_DIR（模板目录保留，供下次 upgrade 用）
+        dst_tpl = BOT_DIR / dst_rel
+        try:
+            dst_tpl.parent.mkdir(parents=True, exist_ok=True)
+            if src_path.is_dir():
+                if dst_tpl.exists():
+                    shutil.rmtree(dst_tpl)
+                shutil.copytree(src_path, dst_tpl)
+            else:
+                shutil.copy2(src_path, dst_tpl)
+        except Exception:
+            pass
 
     print(f"Upgrade complete: {len(updated)} files updated, {len(skipped)} skipped")
     print()
     print("Preserved user configs:")
     for p in PRESERVE:
-        cfg = BOT_DIR / p
         home_cfg = HERMES_HOME / p
         if home_cfg.exists():
             print(f"  {home_cfg} (untouched)")

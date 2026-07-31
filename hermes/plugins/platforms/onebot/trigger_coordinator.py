@@ -115,6 +115,7 @@ class TriggerCoordinator:
         self._judge_tasks[group_id] = jt
 
     async def _judge_worker(self, jt: _JudgeTask, msg: dict):
+        from .group_state import EpisodeState
         task = asyncio.current_task()
         try:
             await asyncio.sleep(JUDGE_DEBOUNCE_SECONDS)
@@ -147,15 +148,19 @@ class TriggerCoordinator:
                 self._adapter._write_episodic_segment(jt.group_id)
                 self._adapter._generate_group_topic_summary(jt.group_id)
                 logger.info("[TriggerCoordinator] Judge ended episode for %s", jt.group_id)
-            elif result.get("soyo_should_exit"):
-                from .group_state import EpisodeState
-                old_turn = gs.episode_state.turn_count
-                gs.episode_state = EpisodeState.from_dict(result)
-                gs.episode_state.turn_count = old_turn
-                gs.episode_state.updated_at = time.time()
-                gs.go_quiet()
-                logger.info("[TriggerCoordinator] Soyo exiting for %s: %s",
-                            jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
+            elif result.get("should_exit"):
+                _msg_is_mention = bool(msg.get("_is_mentioned", False))
+                if not _msg_is_mention:
+                    old_turn = gs.episode_state.turn_count
+                    gs.episode_state = EpisodeState.from_dict(result)
+                    gs.episode_state.turn_count = old_turn
+                    gs.episode_state.updated_at = time.time()
+                    gs.go_quiet()
+                    logger.info("[TriggerCoordinator] Bot exiting for %s: %s",
+                                jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
+                else:
+                    logger.info("[TriggerCoordinator] Judge exit but msg is mention, keep active for %s",
+                                jt.group_id)
             elif result.get("should_reply"):
                 old_turn = gs.episode_state.turn_count
                 gs.episode_state = EpisodeState.from_dict(result)
@@ -199,10 +204,12 @@ class TriggerCoordinator:
         is_mention = msg.get("_is_mentioned", False)
         raw_text = self._adapter._cq_to_readable(self._adapter._get_raw_text(msg) or "")
 
+        from .semantic_judge import _get_bot_name as _get_bn
         _self_id_str = str(self._adapter._self_id) if self._adapter._self_id else ""
+        _bot_name = _get_bn()
         if _self_id_str and raw_text:
             import re
-            raw_text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', '@Soyo', raw_text)
+            raw_text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', f'@{_bot_name}', raw_text)
             raw_text = re.sub(r'@QQ\d+(?!\d)', '@群友', raw_text)
 
         msg_type_str = "text"
@@ -234,6 +241,7 @@ class TriggerCoordinator:
                 reply_to_name=reply_to_name,
                 reply_to_uid=reply_to_uid,
                 bot_self_id=_self_id_str,
+                bot_name=_bot_name,
             )
         except Exception as e:
             logger.warning("[TriggerCoordinator] Judge invoke failed: %s", e)
@@ -301,6 +309,9 @@ class TriggerCoordinator:
             old_phase = gs.episode_state.episode_phase or "empty"
             if old_phase in ("exiting", "winding_down", ""):
                 gs.episode_state.episode_phase = "starting"
+                gs.episode_state.progression_guidance = ""
+                gs.episode_state.episode_label = ""
+                gs.episode_state.conversation_mode = ""
                 gs.episode_state.updated_at = time.time()
                 logger.info("[TriggerCoordinator] Reset episode %s→starting for %s",
                             old_phase, batch.group_id)

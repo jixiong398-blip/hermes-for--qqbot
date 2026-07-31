@@ -64,8 +64,8 @@ class EpisodeState:
     # ── 说话人角色 ──
     last_speaker_role: str = ""      # owner | member | bot | unknown
 
-    # ── Soyo 行为追踪 ──
-    soyo_moves: List[str] = field(default_factory=list)
+    # ── Bot 行为追踪 ──
+    bot_moves: List[str] = field(default_factory=list)
     overused_moves: List[str] = field(default_factory=list)
     open_loops: List[str] = field(default_factory=list)
     resolved_threads: List[str] = field(default_factory=list)
@@ -88,7 +88,7 @@ class EpisodeState:
             "conversation_mode": self.conversation_mode,
             "episode_phase": self.episode_phase,
             "last_speaker_role": self.last_speaker_role,
-            "soyo_moves": list(self.soyo_moves),
+            "bot_moves": list(self.bot_moves),
             "overused_moves": list(self.overused_moves),
             "open_loops": list(self.open_loops),
             "resolved_threads": list(self.resolved_threads),
@@ -109,7 +109,7 @@ class EpisodeState:
             conversation_mode=str(d.get("conversation_mode", "")),
             episode_phase=str(d.get("episode_phase", "")),
             last_speaker_role=str(d.get("last_speaker_role", d.get("speaker_role", ""))),
-            soyo_moves=list(d.get("soyo_moves", [])),
+            bot_moves=list(d.get("bot_moves", d.get("soyo_moves", []))),
             overused_moves=list(d.get("overused_moves", [])),
             open_loops=list(d.get("open_loops", [])),
             resolved_threads=list(d.get("resolved_threads", [])),
@@ -265,7 +265,7 @@ class GroupState:
                 self.attentive.deactivate()
 
     def go_quiet(self):
-        """Soyo被赶/主动离开：退出对话态，但保留 episode_state。
+        """Bot被赶/主动离开：退出对话态，但保留 episode_state。
         
         与 end_episode 的区别：不清空 episode_state，下次被 @ 回来时可继续。
         """

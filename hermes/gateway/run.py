@@ -9283,6 +9283,8 @@ class GatewayRunner:
             def _bg_review_send(message: str) -> None:
                 if not _status_adapter:
                     return
+                if not getattr(_status_adapter, "SUPPORTS_SYSTEM_MESSAGES", True):
+                    return
                 if not _bg_review_release.is_set():
                     with _bg_review_pending_lock:
                         if not _bg_review_release.is_set():

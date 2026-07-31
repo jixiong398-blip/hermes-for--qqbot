@@ -1,5 +1,33 @@
 ﻿# bot-template 更新日志
 
+## v0.12.6 (2026-07-31)
+
+### 转发处理完整修复 + 角色名参数化 + 系统消息屏蔽
+
+- **转发消息处理**（adapter.py）：
+  - 转发文字进 session（不再 msg=''）
+  - 嵌套转发递归展开（套娃 ≤5 层，防死循环）
+  - 图片/语音/视频原位标注（不提到开头）
+  - 转发阈值 500k（1M 上下文不轻易截断）
+  - 超长 LLM 分段压缩（30k chunk）
+  - 群聊 buffer 用完整 detail
+  - 补 `_has_video_message`
+- **角色名参数化**：`ONEBOT_BOT_NAME`（env > config.yaml > 默认 Soyo），judge/recorder/trigger 全模板化 `$bot_name`
+- **Bug 修复**：
+  - `_bg_review_send` 加 SUPPORTS_SYSTEM_MESSAGES 检查（💾 系统消息不弹 QQ）
+  - mention 复位时清空 progression_guidance
+  - should_exit 分支 @ 消息不 go_quiet
+  - mention 模式跳过指导注入
+  - 图片/语音识别 max_tokens 65536 + 超时 60s
+- **字段改名**：`soyo_should_exit → should_exit`、`soyo_moves → bot_moves`（兼容旧键）、`soyo_reply → bot_reply`
+- **安装/更新流程**：
+  - install.py 完整重写（从 SOUL.md 提取角色名 + 容错编码）
+  - upgrade.py 目标路径修复（双写 ~/.hermes/ + BOT_DIR）
+  - 一键替换灵魂核心.bat 同步角色名到 .env
+  - update.bat 自动调用 upgrade.py
+  - FixNapCat.bat 引导改为 Dashboard（NapCat 配置文件唯一）
+- **文档**：新增开源 AGENTS.md（面向下载用户 agent 的操作指南），本地维护文档改名 MAINTENANCE.md（gitignore）
+
 ## v0.12.5 (2026-07-31)
 
 ### adapter.py 同步 + 隐私清洗 + 数据流验证

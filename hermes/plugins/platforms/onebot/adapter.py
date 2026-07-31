@@ -141,6 +141,12 @@ _STICKER_COLLECTION_INDEX = Path(os.getenv(
                  "soyo_sticker_collection.json"),
 ))
 
+# ── Forward-transcript budget ────────────────────────────────────────────────
+# Forwarded chat transcripts may contain text/images/videos/links stacked
+# together. The main model has a 1M-token context, so we keep a generous
+# budget and LLM-compress instead of hard-truncating when exceeded.
+_MAX_FORWARD_DETAIL_CHARS = 500000
+
 
 def _lookup_collected_sticker(emotion: str) -> str:
     """Return path to most recently collected sticker tagged `emotion`, or "".
@@ -199,6 +205,7 @@ class OneBotAdapter(BasePlatformAdapter):
         self._echo_counter = 0
         self._pending_echo: Dict[str, asyncio.Future] = {}
         self._self_id: Optional[int] = None
+        self._bot_name: str = os.getenv("ONEBOT_BOT_NAME", "").strip() or "Soyo"
         self._ws_url: str = ""
         self._http_url: str = ""
         self._access_token: str = ""
@@ -1166,6 +1173,12 @@ class OneBotAdapter(BasePlatformAdapter):
             return False
         return any(seg.get("type") == "mface" for seg in segments)
 
+    def _has_video_message(self, msg: dict) -> bool:
+        segments = msg.get("message", [])
+        if not isinstance(segments, list):
+            return False
+        return any(seg.get("type") == "video" for seg in segments)
+
     @staticmethod
     def _get_seg_data(seg: dict, key: str, default=""):
         """Safely get segment data field, handling JSON null."""
@@ -1232,7 +1245,7 @@ class OneBotAdapter(BasePlatformAdapter):
             )
             max_desc_len = 12
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
                 resp = await client.post(
                     f"{api_base}/chat/completions",
                     headers={
@@ -1248,6 +1261,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                             ],
                         }],
+                        "max_tokens": 65536,
                     },
                 )
                 resp.raise_for_status()
@@ -1357,7 +1371,7 @@ class OneBotAdapter(BasePlatformAdapter):
             audio_mimes = {".ogg": "audio/ogg", ".opus": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".amr": "audio/amr", ".silk": "audio/silk"}
             mime = audio_mimes.get(ext, "audio/ogg")
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
                 resp = await client.post(
                     f"{api_base}/chat/completions",
                     headers={
@@ -1377,6 +1391,7 @@ class OneBotAdapter(BasePlatformAdapter):
                                 {"type": "audio_url", "audio_url": {"url": f"data:{mime};base64,{b64}"}},
                             ],
                         }],
+                        "max_tokens": 65536,
                     },
                 )
                 resp.raise_for_status()
@@ -1658,11 +1673,12 @@ class OneBotAdapter(BasePlatformAdapter):
         if not _recent:
             return
         _self_id_str = str(self._self_id) if self._self_id else ""
+        _bot_name = self._bot_name
 
         def _annotate_at(text: str) -> str:
             if not _self_id_str or not text:
                 return text
-            text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', '@Soyo', text)
+            text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', f'@{_bot_name}', text)
             text = re.sub(r'@QQ\d+(?!\d)', '@群友', text)
             return text
 
@@ -2006,34 +2022,183 @@ class OneBotAdapter(BasePlatformAdapter):
         summary_parts = []
         detail_parts = []
         for fm in fwd_msgs:
-            name = fm.get("sender", {}).get("nickname", "?")
-            fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
-            if self._has_image_message(fm):
-                try:
-                    _fwd_imgs = await self._get_image_files(fm)
-                    if _fwd_imgs:
-                        forward_image_paths.extend(_fwd_imgs)
-                        fwd_text = (fwd_text or "") + f" [附带 {len(_fwd_imgs)} 张图片]"
-                except Exception:
-                    pass
-            fwd_text = self._cq_to_readable(fwd_text or "")
-            if not fwd_text:
-                continue
-            _uid = fm.get("user_id") or fm.get("sender", {}).get("user_id", "")
-            _prefix = f"{name}(QQ{_uid})" if _uid else name
-            summary_parts.append(f"{_prefix}: {fwd_text[:80]}")
-            detail_parts.append(f"{name}: {fwd_text}")
+            await self._expand_forward_message(fm, summary_parts, detail_parts,
+                                               forward_image_paths, depth=0)
 
         if not summary_parts:
             return "", "", []
 
         forward_summary = "[转发: " + " | ".join(summary_parts) + "]"
+        if len(forward_summary) > 4000:
+            forward_summary = forward_summary[:4000] + "…[已截断]"
         forward_detail = "[转发消息内容]\n" + "\n".join(detail_parts)
-        if len(forward_detail) > 2000:
-            forward_detail = forward_detail[:2000] + "\n...[已截断]"
+        if len(forward_detail) > _MAX_FORWARD_DETAIL_CHARS:
+            forward_detail = await self._compress_forward_detail(forward_detail)
 
         logger.info("[OneBot] Extracted forward: %d msgs, %d images", len(summary_parts), len(forward_image_paths))
         return forward_summary, forward_detail, forward_image_paths
+
+    async def _expand_forward_message(self, fm: dict, summary_parts: list, detail_parts: list,
+                                      forward_image_paths: list, depth: int = 0) -> None:
+        """Recursively expand one forwarded message, descending into nested forwards.
+
+        A forwarded transcript may itself contain forward segments (套娃).
+        Each level is read fully; content accumulates into summary/detail parts
+        with a depth marker so the LLM sees the nesting structure.
+        """
+        if depth > 5:
+            summary_parts.append("[嵌套转发: 层数过深已跳过]")
+            return
+
+        name = fm.get("sender", {}).get("nickname", "?")
+        _uid = fm.get("user_id") or fm.get("sender", {}).get("user_id", "")
+        _prefix = f"{name}(QQ{_uid})" if _uid else name
+
+        # Detect nested forward inside this message (segments or CQ code)
+        nested_fwd = None
+        segs = fm.get("message", [])
+        if isinstance(segs, list):
+            for seg in segs:
+                if not isinstance(seg, dict):
+                    continue
+                st = seg.get("type", "")
+                sid = self._get_seg_data(seg, "id", "")
+                if sid and (st in ("forward", "node") or "content" in seg.get("data", {})):
+                    nested_fwd = seg
+                    break
+        if nested_fwd is None:
+            _raw = fm.get("raw_message") or ""
+            m = re.search(r'\[CQ:forward,id=(\d+)', str(_raw))
+            if m:
+                nested_fwd = {"type": "forward", "data": {"id": m.group(1)}}
+
+        if nested_fwd is not None:
+            # Nested forward: recurse into its content
+            _nested_id = self._get_seg_data(nested_fwd, "id", "") or ""
+            if _nested_id and self._seen_forward_ids.get(_nested_id, 0) > time.time() - 5:
+                summary_parts.append(f"{_prefix}: [嵌套转发(重复,已跳过)]")
+                return
+            if _nested_id:
+                self._seen_forward_ids[_nested_id] = time.time()
+
+            nested_msgs = None
+            raw_content = nested_fwd.get("data", {}).get("content")
+            if isinstance(raw_content, list):
+                nested_msgs = raw_content
+            elif isinstance(raw_content, str):
+                import json as _json
+                try:
+                    nested_msgs = _json.loads(raw_content)
+                except Exception:
+                    pass
+            if not nested_msgs:
+                for param_key in ("message_id", "id"):
+                    try:
+                        fwd_data = await self._send_action("get_forward_msg", {param_key: _nested_id})
+                        nested_msgs = fwd_data.get("data", {}).get("messages", [])
+                        if nested_msgs:
+                            break
+                    except Exception:
+                        continue
+
+            if nested_msgs:
+                inner_summary: list = []
+                inner_detail: list = []
+                for inner in nested_msgs:
+                    await self._expand_forward_message(inner, inner_summary, inner_detail,
+                                                       forward_image_paths, depth + 1)
+                if inner_summary:
+                    summary_parts.append(f"{_prefix}: [嵌套转发: {' | '.join(inner_summary)}]")
+                if inner_detail:
+                    detail_parts.append(f"┌─ {_prefix} 的嵌套转发:")
+                    for line in inner_detail:
+                        detail_parts.append(f"│  {line}")
+                    detail_parts.append("└─ 嵌套转发结束")
+                return
+
+        fwd_text = fm.get("raw_message") or OneBotAdapter._get_text_from_segments(fm)
+
+        # Media stays in its original position: download inline and annotate
+        # at this message's location, never hoisted to the top.
+        if self._has_image_message(fm):
+            try:
+                _fwd_imgs = await self._get_image_files(fm)
+                if _fwd_imgs:
+                    forward_image_paths.extend(_fwd_imgs)
+                    _media_note = " [图片:" + ",".join(_fwd_imgs) + "]"
+                    fwd_text = (fwd_text or "") + _media_note
+                else:
+                    fwd_text = (fwd_text or "") + " [图片:下载失败]"
+            except Exception:
+                fwd_text = (fwd_text or "") + " [图片:下载失败]"
+        elif self._has_voice_message(fm):
+            fwd_text = (fwd_text or "") + " [语音]"
+        elif self._has_video_message(fm):
+            fwd_text = (fwd_text or "") + " [视频]"
+
+        fwd_text = self._cq_to_readable(fwd_text or "")
+        if not fwd_text:
+            return
+        summary_parts.append(f"{_prefix}: {fwd_text[:80]}")
+        detail_parts.append(f"{name}: {fwd_text}")
+
+    async def _compress_forward_detail(self, detail: str) -> str:
+        """Compress an oversized forward transcript via chunked LLM summarisation.
+
+        Splits the transcript into ~30000-char chunks, summarises each with the
+        main LLM, and concatenates the summaries — never hard-truncates.
+        """
+        try:
+            import httpx
+            api_key = os.getenv("DEEPSEEK_API_KEY", "")
+            api_base = os.getenv("DEEPSEEK_BASE_URL", "")
+            api_model = os.getenv("DEEPSEEK_MODEL", "")
+            if not api_key or not api_base or not api_model:
+                return detail[:_MAX_FORWARD_DETAIL_CHARS]
+
+            chunk_size = 30000
+            chunks = [detail[i:i + chunk_size] for i in range(0, len(detail), chunk_size)]
+            summaries = []
+            sys_prompt = (
+                "你是群聊合并转发内容的压缩器。把给定的转发片段压缩成保留关键信息的摘要："
+                "保留说话人、核心内容、有趣的梗和转折，去掉语气词和重复。"
+                "直接输出压缩后的中文文本，不要解释。"
+            )
+            for chunk in chunks:
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+                        resp = await client.post(
+                            f"{api_base}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "model": api_model,
+                                "messages": [
+                                    {"role": "system", "content": sys_prompt},
+                                    {"role": "user", "content": chunk},
+                                ],
+                                "temperature": 0.2,
+                                "max_tokens": 65536,
+                            },
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        text = (data["choices"][0]["message"].get("content") or "").strip()
+                        if text:
+                            summaries.append(text)
+                except Exception:
+                    summaries.append(chunk[:8000])
+            if summaries:
+                compressed = "[转发消息内容(已压缩)]\n" + "\n\n".join(summaries)
+                logger.info("[OneBot] Forward detail compressed: %d→%d chars",
+                            len(detail), len(compressed))
+                return compressed
+            return detail[:_MAX_FORWARD_DETAIL_CHARS]
+        except Exception as e:
+            logger.warning("[OneBot] Forward compression failed: %s", e)
+            return detail[:_MAX_FORWARD_DETAIL_CHARS]
 
     async def _process_message_impl(self, msg: dict) -> None:
         """Inner message processing — called under group lock for group messages."""
@@ -2100,16 +2265,29 @@ class OneBotAdapter(BasePlatformAdapter):
                 f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
                 f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
             )
+            if _fwd_detail:
+                _dm_prompt += f"\n\n{_fwd_detail}"
+            elif _fwd_summary:
+                _dm_prompt += f"\n\n{_fwd_summary}"
             _dm_recall = self._recall_context(raw_text, user_id_str, sender_name,
                                                session_id=f"onebot:dm:{user_id_str}")
             if _dm_recall:
                 _dm_prompt += f"\n{_dm_recall}"
+            _dm_text = ""
+            if _fwd_detail:
+                _dm_text = _fwd_detail
+            elif _fwd_summary:
+                _dm_text = _fwd_summary
+            else:
+                _dm_text = self._cq_to_readable(raw_text)
             _dm_event = MessageEvent(
-                text=self._cq_to_readable(raw_text),
+                text=_dm_text,
                 message_type=MessageType.TEXT,
                 source=_dm_source,
                 raw_message=msg,
                 message_id=str(msg.get("message_id", "")),
+                media_urls=None,
+                media_types=None,
                 channel_prompt=_dm_prompt,
             )
             await self._dispatch_to_agent(_dm_event)
@@ -2157,9 +2335,7 @@ class OneBotAdapter(BasePlatformAdapter):
             raw_text = re.sub(r'^\[Re[^\]]*\]\s*', '', raw_text)
             raw_text = raw_text.strip()
 
-            _clean_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
-            if _fwd_images:
-                _clean_text += " [image:" + ",".join(_fwd_images) + "]"
+            _clean_text = _fwd_detail if _fwd_detail else (_fwd_summary if _fwd_summary else self._cq_to_readable(raw_text))
 
             has_image = self._has_image_message(msg)
             if has_image:
