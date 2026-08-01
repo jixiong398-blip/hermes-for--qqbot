@@ -1,5 +1,20 @@
 ﻿# bot-template 更新日志
 
+## v0.13.0 (2026-08-01)
+
+### 串线修复 + 慢响应修复 + 诊断插桩
+
+- **串线修复**（adapter.py）：
+  - 私聊 MessageEvent 从 image/mface/face 段提取 URL 填入 media_urls/media_types（原来硬编码 None）— 修复私聊图片被误当群聊图
+  - `_get_image_files` face 段带 url/file 时不再跳过（动画表情丢失 → [图片] 占位）
+- **慢响应修复**（memory_maintenance.py）：
+  - 每小时蒸馏 + session 结束 consolidate 包 `asyncio.to_thread` — 修复同步 requests 阻塞事件循环导致收尾黑洞（16-43s）
+- **诊断增强**：
+  - vision_tools.py 报错明确化（"Local image path does not exist" 替代笼统 "Invalid image source"）
+  - media_pipeline.py 失败诊断日志（显示段类型）
+  - gateway/run.py + run_agent.py 增加 `[PERF]` 段级耗时插桩
+- **隐私清洗**：semantic_judge.py owner 描述通用化（服务器端已同步）
+
 ## v0.12.6 (2026-07-31)
 
 ### 转发处理完整修复 + 角色名参数化 + 系统消息屏蔽

@@ -1420,8 +1420,14 @@ class OneBotAdapter(BasePlatformAdapter):
             # Skipping it here means no pseudo-path/no vision API call;
             # `_cq_to_readable` already turned [CQ:face,id=N] into [喷血] etc.
             # in the text the AI actually sees.
+            # Animated emoji (动画表情, emoji-recv) arrive as face segments
+            # WITH url/file (sub_type=1) — download them, not skip.
             if _seg_type == "face":
-                continue
+                _face_url = self._get_seg_data(seg, "url", "")
+                _face_file = self._get_seg_data(seg, "file", "")
+                if not _face_url and not _face_file:
+                    continue
+                _seg_type = "image"
             if _seg_type not in ("image", "mface"):
                 continue
 
@@ -2277,17 +2283,31 @@ class OneBotAdapter(BasePlatformAdapter):
             if _fwd_detail:
                 _dm_text = _fwd_detail
             elif _fwd_summary:
-                _dm_text = _fwd_summary
+                 _dm_text = _fwd_summary
             else:
                 _dm_text = self._cq_to_readable(raw_text)
+            _dm_media_urls: list = []
+            _dm_media_types: list = []
+            for _seg in (msg.get("message", []) if isinstance(msg.get("message"), list) else []):
+                if _seg.get("type") not in ("image", "mface", "face"):
+                    continue
+                _seg_url = self._get_seg_data(_seg, "url", "")
+                if not _seg_url:
+                    continue
+                _dm_media_urls.append(_seg_url)
+                _seg_summary = self._get_seg_data(_seg, "summary", "").lower()
+                if "gif" in _seg_summary:
+                    _dm_media_types.append("image/gif")
+                else:
+                    _dm_media_types.append("image/jpeg")
             _dm_event = MessageEvent(
                 text=_dm_text,
                 message_type=MessageType.TEXT,
                 source=_dm_source,
                 raw_message=msg,
                 message_id=str(msg.get("message_id", "")),
-                media_urls=None,
-                media_types=None,
+                media_urls=_dm_media_urls or None,
+                media_types=_dm_media_types or None,
                 channel_prompt=_dm_prompt,
             )
             await self._dispatch_to_agent(_dm_event)

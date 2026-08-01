@@ -9039,6 +9039,8 @@ class GatewayRunner:
             # triggering an UnboundLocalError on the earlier read at
             # `_resolve_turn_agent_config(message, …)`.
             nonlocal message
+            import time as _rs_time
+            _rs_t0 = _rs_time.perf_counter()
 
             # session_key is now set via contextvars in _set_session_env()
             # (concurrency-safe). Keep os.environ as fallback for CLI/cron.
@@ -9175,6 +9177,8 @@ class GatewayRunner:
                     logger.debug("interim_assistant_callback error: %s", _e)
 
             turn_route = self._resolve_turn_agent_config(message, model, runtime_kwargs)
+            logger.info("[PERF] run_sync: resolve_turn_agent_config %.3fs (total so far %.3fs)",
+                        _rs_time.perf_counter() - _rs_t0, _rs_time.perf_counter() - _rs_t0)
 
             # Check agent cache — reuse the AIAgent from the previous message
             # in this session to preserve the frozen system prompt and tool
@@ -9185,6 +9189,8 @@ class GatewayRunner:
                 enabled_toolsets,
                 combined_ephemeral,
             )
+            logger.info("[PERF] run_sync: signature+cache-lookup-start %.3fs",
+                        _rs_time.perf_counter() - _rs_t0)
             agent = None
             _cache_lock = getattr(self, "_agent_cache_lock", None)
             _cache = getattr(self, "_agent_cache", None)
@@ -9240,6 +9246,9 @@ class GatewayRunner:
                         _cache[session_key] = (agent, _sig)
                         self._enforce_agent_cache_cap()
                 logger.debug("Created new agent for session %s (sig=%s)", session_key, _sig)
+            logger.info("[PERF] run_sync: agent-ready (cache hit=%s) %.3fs",
+                        agent is not None and True or False,
+                        _rs_time.perf_counter() - _rs_t0)
 
             # Per-message state — callbacks and reasoning config change every
             # turn and must not be baked into the cached agent constructor.
@@ -9474,10 +9483,15 @@ class GatewayRunner:
             _approval_session_token = set_current_session_key(_approval_session_key)
             register_gateway_notify(_approval_session_key, _approval_notify_sync)
             try:
+                logger.info("[PERF] run_sync: calling run_conversation %.3fs",
+                            _rs_time.perf_counter() - _rs_t0)
                 result = agent.run_conversation(message, conversation_history=agent_history, task_id=session_id)
             finally:
                 unregister_gateway_notify(_approval_session_key)
                 reset_current_session_key(_approval_session_token)
+            logger.info("[PERF] run_sync: run_conversation done %.3fs (turn took %.3fs)",
+                        _rs_time.perf_counter() - _rs_t0,
+                        _rs_time.perf_counter() - _rs_t0)
             result_holder[0] = result
 
             # Signal the stream consumer that the agent is done

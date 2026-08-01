@@ -164,7 +164,7 @@ async def _on_session_end(context: dict) -> None:
         return
 
     try:
-        stats = gw.consolidate_if_needed(target)
+        stats = await asyncio.to_thread(gw.consolidate_if_needed, target)
         if stats and stats.get("status") != "skipped":
             logger.info(
                 "Consolidation: promoted=%d reinforced=%d wf=%d",
@@ -219,7 +219,11 @@ async def _on_gateway_startup(context: dict) -> None:
                         for (sid,) in rows:
                             if not sid:
                                 continue
-                            cstats = gw.consolidate_if_needed(sid)
+                            # Blocking HTTP (requests.post ≤30s) — off the
+                            # event loop so messages keep flowing.
+                            cstats = await asyncio.to_thread(
+                                gw.consolidate_if_needed, sid
+                            )
                             if cstats and cstats.get("status") != "skipped":
                                 logger.info(
                                     "Periodic distill [%s]: promoted=%d reinforced=%d wf=%d",

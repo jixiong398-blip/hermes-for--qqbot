@@ -718,7 +718,8 @@ async def vision_analyze_tool(
             should_cleanup = True
         else:
             raise ValueError(
-                "Invalid image source. Provide an HTTP/HTTPS URL or a valid local file path."
+                f"Local image path does not exist: {resolved_url[:120]!r}. "
+                "Provide an HTTP/HTTPS URL or an existing local file path."
             )
         
         # Get image file size for logging
@@ -1417,3 +1418,4 @@ registry.register(
     check_fn=check_vision_requirements,
     is_async=True,
     emoji="🎬",
+)
