@@ -29,7 +29,20 @@ def _get_summary_semaphore() -> asyncio.Semaphore:
     return _summary_semaphore
 
 
+
+def _judge_thinking_param() -> dict:
+    """Thinking mode for judge LLM calls. Env JUDGE_THINKING:
+    disabled (default, fast) | low (light reasoning) | default (full)."""
+    mode = os.getenv("JUDGE_THINKING", "low").strip().lower()
+    if mode == "low":
+        return {"reasoning_effort": "low"}
+    if mode == "default":
+        return {}
+    return {"thinking": {"type": "disabled"}}
+
+
 def _get_api_key() -> str:
+
     return os.getenv("DEEPSEEK_API_KEY", "")
 
 
@@ -485,6 +498,8 @@ async def pre_reply_judge(
 
         try:
             import requests as _r
+            import time as _j_time
+            _j_t0 = _j_time.perf_counter()
             resp = await asyncio.to_thread(
                 _r.post,
                 f"{api_base}/chat/completions",
@@ -496,10 +511,13 @@ async def pre_reply_judge(
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
+                    **_judge_thinking_param(),
                     "response_format": {"type": "json_object"},
                 },
                 timeout=timeout,
             )
+            logger.info("[PreReplyJudge] LLM call %.2fs (input ~%d chars)",
+                        _j_time.perf_counter() - _j_t0, len(prompt))
             resp.raise_for_status()
             data = resp.json()
             msg_content = (data["choices"][0]["message"].get("content") or "").strip()
@@ -750,6 +768,7 @@ async def semantic_judge(
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
+                    **_judge_thinking_param(),
                     "response_format": {"type": "json_object"},
                 },
                 timeout=timeout,
@@ -839,6 +858,7 @@ async def generate_rolling_summary(
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.3,
+                    **_judge_thinking_param(),
                     "max_tokens": 65536,
                 },
                 timeout=timeout,
@@ -896,6 +916,7 @@ def judge_episode_privacy_sync(text: str, timeout: float = 10.0) -> dict:
                     {"role": "user", "content": f"片段内容：\n{text[:800]}"},
                 ],
                     "temperature": 0.1,
+                    **_judge_thinking_param(),
                     "max_tokens": 65536,
                     "response_format": {"type": "json_object"},
             },
@@ -1044,6 +1065,7 @@ async def post_reply_recorder(
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.2,
+                    **_judge_thinking_param(),
                     "max_tokens": 65536,
                 },
                 timeout=timeout,

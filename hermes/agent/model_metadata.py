@@ -594,6 +594,34 @@ def fetch_endpoint_model_metadata(
     This is used for explicit custom endpoints where hardcoded global model-name
     defaults are unreliable. Results are cached in memory per base URL.
     """
+    import time as _fet_time
+    _fet_t0 = _fet_time.perf_counter()
+    try:
+        if not force_refresh:
+            cached = _load_endpoint_metadata_disk(base_url)
+            if cached is not None:
+                return cached
+        result = _fetch_endpoint_model_metadata_impl(
+            base_url, api_key=api_key, force_refresh=force_refresh,
+        )
+        if result:
+            _save_endpoint_metadata_disk(base_url, result)
+        return result
+    finally:
+        _el = _fet_time.perf_counter() - _fet_t0
+        if _el > 0.5:
+            import traceback as _fet_tb
+            _fet_frames = _fet_tb.extract_stack()[-4:-1]
+            _fet_calls = " <- ".join(f"{f.name}" for f in _fet_frames)
+            logger.info("[PERF] fetch_endpoint_model_metadata(%s) %.3fs via %s",
+                        _normalize_base_url(base_url), _el, _fet_calls)
+
+
+def _fetch_endpoint_model_metadata_impl(
+    base_url: str,
+    api_key: str = "",
+    force_refresh: bool = False,
+) -> Dict[str, Dict[str, Any]]:
     normalized = _normalize_base_url(base_url)
     if not normalized or _is_openrouter_base_url(normalized):
         return {}
@@ -755,6 +783,49 @@ def _get_context_cache_path() -> Path:
     """Return path to the persistent context length cache file."""
     from hermes_constants import get_hermes_home
     return get_hermes_home() / "context_length_cache.yaml"
+
+
+def _endpoint_metadata_disk_path() -> Path:
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "cache" / "endpoint_model_metadata.json"
+
+
+def _load_endpoint_metadata_disk(base_url: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Load cached /models metadata for a base URL (24h TTL)."""
+    try:
+        path = _endpoint_metadata_disk_path()
+        if not path.exists():
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        entry = data.get(_normalize_base_url(base_url))
+        if not entry or not isinstance(entry, dict):
+            return None
+        if time.time() - entry.get("ts", 0) > 86400:
+            return None
+        return entry.get("models", {})
+    except Exception:
+        return None
+
+
+def _save_endpoint_metadata_disk(base_url: str, models: Dict[str, Dict[str, Any]]) -> None:
+    try:
+        path = _endpoint_metadata_disk_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        data[_normalize_base_url(base_url)] = {"ts": time.time(), "models": models}
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        tmp.replace(path)
+    except Exception:
+        pass
 
 
 def _load_context_cache() -> Dict[str, int]:

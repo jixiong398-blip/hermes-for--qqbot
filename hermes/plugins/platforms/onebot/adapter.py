@@ -2936,4 +2936,48 @@ class OneBotAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None, **kwargs,
     ) -> SendResult:
         """OneBot does not support generic document send. Silently drop."""
- 
+        logger.debug("[OneBot] send_document not supported, skipping: %s", file_path)
+        return SendResult(success=True, message_id=None)
+
+# ── Plugin Registration ──
+
+def _check_requirements():
+    try:
+        import websockets, httpx
+        return True
+    except ImportError:
+        return False
+
+def _validate_config(cfg):
+    extra = getattr(cfg, "extra", {}) or {}
+    return bool(extra.get("ws_url") or os.getenv("ONEBOT_WS_URL"))
+
+def _is_connected(cfg):
+    return _validate_config(cfg)
+
+def _env_enablement():
+    ws = os.getenv("ONEBOT_WS_URL", "")
+    token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
+    if not ws:
+        return None
+    extra = {"ws_url": ws}
+    if token:
+        extra["access_token"] = token
+    return {"extra": extra}
+
+def register(ctx):
+    ctx.register_platform(
+        name="onebot",
+        label="OneBot (QQ)",
+        adapter_factory=lambda cfg: OneBotAdapter(cfg),
+        check_fn=_check_requirements,
+        validate_config=_validate_config,
+        is_connected=_is_connected,
+        required_env=["ONEBOT_WS_URL"],
+        install_hint="pip install websockets httpx",
+        env_enablement_fn=_env_enablement,
+        allowed_users_env="ONEBOT_ALLOWED_USERS",
+        allow_all_env="ONEBOT_ALLOW_ALL_USERS",
+        emoji="🐧",
+        pii_safe=False,
+    )

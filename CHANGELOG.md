@@ -1,5 +1,16 @@
 ﻿# bot-template 更新日志
 
+## v0.13.2 (2026-08-01)
+
+### 判定提速 + SQLite 锁修复 + 成本估算缓存
+
+- **judge 提速**（semantic_judge.py）：`_judge_thinking_param()` thinking 默认 low（env JUDGE_THINKING 可切 disabled/low/default），5 处 LLM 调用加 thinking 参数 — judge 判定 11s → 3-6s
+- **退出软处理**（trigger_coordinator.py + group_executor.py）：should_exit 分支 `exit_farewell=true` 才走 mode="exit"（回复后退出），否则静默 go_quiet
+- **SQLite 锁修复**（agent/memory/store.py）：`sqlite3.connect(..., timeout=30)` + `PRAGMA busy_timeout=30000` — 修 database is locked
+- **成本估算缓存**（agent/model_metadata.py）：`fetch_endpoint_model_metadata` 加内存缓存 — 修收尾 2s 延迟
+- **judge LLM 计时插桩** + at_targets 指向规则完整化
+- **L268 隐私清洗**：owner 描述通用化
+
 ## v0.13.1 (2026-08-01)
 
 ### 判定系统软改造 — @是强信号不是硬锁 + 驱赶软处理
