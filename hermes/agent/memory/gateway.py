@@ -628,7 +628,7 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", str(Path.home() / ".hermes" / "knowledge")))
+            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
             if not vault_path.exists():
                 vault_path = Path.home() / "Documents" / "Obsidian"
 
@@ -762,4 +762,73 @@ class UnifiedMemoryGateway:
 
     def search_workflows(self, query: str) -> List[Dict]:
         """Search workflows."""
-        wfs = self._wf
+        wfs = self._wfm.get_relevant_workflows(query)
+        return [
+            {"name": w.name, "description": w.description,
+             "weight": w.current_weight, "usage": w.usage_count,
+             "success": w.success_count}
+            for w in wfs
+        ]
+
+    def record_workflow_use(self, name: str, success: bool = True):
+        """Record a workflow being used (manual trigger)."""
+        self._wfm.record_usage(name, success)
+
+    # ── Stats & Diagnostics ───────────────────────────────────
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get comprehensive memory system statistics."""
+        return {
+            "store": self._store.get_store_stats(),
+            "wiki": self._wiki.get_stats(),
+            "episodes": self._epi.stats() if self._epi else {"enabled": False},
+            "active_sessions": len(self._turn_counters),
+            "last_maintenance": self._last_maintenance,
+            "workflow_decay_enabled": self._enable_workflow_decay,
+            "wiki_enabled": self._enable_wiki,
+        }
+
+    def get_workflow_decay_report(self) -> List[Dict]:
+        """Get a report of workflow weights for monitoring."""
+        wfs = self._wfm._store.get_all_workflows()
+        return [
+            {
+                "name": w.name,
+                "current_weight": w.current_weight,
+                "usage_count": w.usage_count,
+                "success_rate": w.success_count / max(1, w.usage_count),
+                "last_used_days_ago": (
+                    (datetime.now(timezone.utc).timestamp() - w.last_used) / 86400.0
+                    if w.last_used > 0 else float("inf")
+                ),
+                "status": (
+                    "forgotten" if w.current_weight <= DECAY_MIN_WEIGHT
+                    else "decaying" if w.current_weight < 0.3
+                    else "active"
+                ),
+            }
+            for w in wfs
+        ]
+
+    # ── Lifecycle ─────────────────────────────────────────────
+
+    def on_session_start(self, session_id: str):
+        """Called when a new session starts."""
+        self._turn_counters[session_id] = 0
+        self.ensure_wiki_synced()
+
+    def on_session_end(self, session_id: str):
+        """Called when a session ends. Triggers consolidation."""
+        self.consolidate_if_needed(session_id)
+        if session_id in self._turn_counters:
+            del self._turn_counters[session_id]
+
+    def shutdown(self):
+        """Clean shutdown."""
+        self._store.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.shutdown()

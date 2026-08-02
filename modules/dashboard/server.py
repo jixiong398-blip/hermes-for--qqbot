@@ -247,12 +247,25 @@ def _check_gateway_process():
     if proc and proc.poll() is None:
         return True
 
-    # Fallback: scan Python command lines
+    # Fast port check first (18789) — avoids the slow WMI scan in the
+    # common case where the gateway is simply not running.
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        if sock.connect_ex(("127.0.0.1", 18789)) == 0:
+            sock.close()
+            return True
+        sock.close()
+    except Exception:
+        pass
+
+    # Fallback: scan Python command lines (only reached when gateway truly
+    # down or port check failed — keep timeout short so status stays fast)
     try:
         result = subprocess.run(
             ['powershell', '-NoProfile', '-Command',
              "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Select-Object -ExpandProperty CommandLine"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=3,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
         )
         for line in result.stdout.splitlines():
@@ -1177,7 +1190,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _check_port(cls, port: int) -> bool:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
+            sock.settimeout(0.5)
             result = sock.connect_ex(("127.0.0.1", port)) == 0
             sock.close()
             return result
@@ -1190,10 +1203,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._send_json({"error": "service required"}, 400)
         if service == "all":
             results = []
-            # Kill any existing instances first to avoid duplicates
-            for key in SERVICES:
-                self._force_kill_service(key)
-            time.sleep(2)
+            # Each _start_one_service self-checks for existing instance — no
+            # need to pre-kill everything (that was the slow path).
             results.append(self._start_one_service("tts_adapter"))
             results.append(self._start_one_service("napcat"))
             results.append(self._start_one_service("hermes_gateway"))
@@ -1203,8 +1214,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._send_json({"success": True, "results": results})
         if service not in SERVICES:
             return self._send_json({"error": f"Unknown service: {service}"}, 400)
-        result = self._start_one_service(service)
-        return self._send_json(result)
+        # Async start: return immediately, let the background thread do the
+        # (potentially slow) kill + Popen so the UI gets a sub-second response.
+        def _bg_start():
+            try:
+                self._start_one_service(service)
+            except Exception:
+                pass
+        t = threading.Thread(target=_bg_start, daemon=True)
+        t.start()
+        return self._send_json({"service": service, "status": "starting", "async": True})
 
     def _handle_services_stop(self, body: Dict):
         service = body.get("service", "")
@@ -1217,8 +1236,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._send_json({"success": True, "results": results})
         if service not in SERVICES:
             return self._send_json({"error": f"Unknown service: {service}"}, 400)
-        result = self._stop_one_service(service)
-        return self._send_json(result)
+        # Async stop: return immediately, background thread does the kill.
+        def _bg_stop():
+            try:
+                self._stop_one_service(service)
+            except Exception:
+                pass
+        t = threading.Thread(target=_bg_stop, daemon=True)
+        t.start()
+        return self._send_json({"service": service, "status": "stopping", "async": True})
 
     def _handle_services_restart(self, body: Dict):
         service = body.get("service", "")
@@ -1227,7 +1253,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if service not in SERVICES:
             return self._send_json({"error": f"Unknown service: {service}"}, 400)
         self._stop_one_service(service)
-        time.sleep(2)
+        time.sleep(0.3)
         result = self._start_one_service(service)
         return self._send_json(result)
 
@@ -1354,9 +1380,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _start_one_service(self, key: str) -> Dict:
         svc = SERVICES[key]
         try:
-            # Kill any existing instance first
-            self._force_kill_service(key)
-            time.sleep(1)
+            # ── Hermes gateway prerequisite: NapCat must be up ──
+            # Before starting Hermes, verify NapCat is reachable (process or
+            # WS/HTTP ports 3000/3001). Log the check result; if NapCat is
+            # down, return a special marker so the UI can prompt the user.
+            if key == "hermes_gateway":
+                napcat_up = False
+                # 1) NapCat process check
+                napcat_proc = _running_processes.get("napcat")
+                napcat_proc_alive = napcat_proc is not None and napcat_proc.poll() is None
+                # 2) Port check: 3000 (HTTP) and 3001 (WS)
+                napcat_http = self._check_port(3000)
+                napcat_ws = self._check_port(3001)
+                napcat_up = napcat_proc_alive or napcat_http or napcat_ws
+                logger.info(
+                    "[Dashboard] Hermes start pre-check: napcat_proc=%s http3000=%s ws3001=%s -> %s",
+                    napcat_proc_alive, napcat_http, napcat_ws,
+                    "READY" if napcat_up else "NAPCAT_NOT_RUNNING",
+                )
+                if not napcat_up:
+                    return {
+                        "service": key,
+                        "name": svc["name"],
+                        "status": "error",
+                        "need_napcat": True,
+                        "error": "NapCat is not running. Please start NapCat (QQ) first, then start Hermes.",
+                    }
+
+            # Kill existing instance ONLY if we have one tracked or port is busy.
+            # Quick port check avoids the expensive PowerShell kill path when
+            # nothing is actually running (the common case -> fast start).
+            port_busy = self._check_port(svc["port"])
+            if key == "napcat" and not port_busy:
+                port_busy = self._check_port(3001)
+            existing = _running_processes.get(key)
+            if (existing is not None and existing.poll() is None) or port_busy:
+                self._force_kill_service(key)
+                time.sleep(0.2)
 
             kwargs: Dict[str, Any] = {
                 "cwd": svc["cwd"],
@@ -1407,14 +1467,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pats = patterns.get(key, [])
         for pat in pats:
             try:
-                subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     f"Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-                     f"Where-Object {{ $_.CommandLine -like '*{pat}*' }} | "
-                     f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
-                    capture_output=True, timeout=15,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
+                # Fast kill: taskkill by image name (works for .exe) or
+                # targeted WMI for python scripts (filtered, faster)
+                if pat.endswith(".exe"):
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/IM", pat],
+                        capture_output=True, timeout=5,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         f"Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                         f"Where-Object {{ $_.CommandLine -like '*{pat}*' }} | "
+                         f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                        capture_output=True, timeout=8,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
             except Exception:
                 pass
         # Also kill by port
@@ -1429,7 +1498,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                              "Get-CimInstance Win32_Process | "
                              f"Where-Object {{ $_.CommandLine -like '{pattern}' }} | "
                              "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
-                            capture_output=True, timeout=15,
+                            capture_output=True, timeout=8,
                             creationflags=subprocess.CREATE_NO_WINDOW,
                         )
                     except Exception:
