@@ -1,5 +1,17 @@
 ﻿# bot-template 更新日志
 
+## v0.14.1 (2026-08-03)
+
+### Dashboard 视觉重构 + 性能优化 + NapCat 前置检查
+
+- **前端视觉重构**（index.html）：更简洁现代的布局，服务状态卡片突出（状态圆点绿=运行/灰=停止），响应式
+- **修复 5 个缺失 JS 函数**：loadWorkflows / runMaintenance / setVoiceMode / startNapcat / stopNapcat（原重构遗漏导致按钮失效）
+- **日志区优化**：行间距收紧（line-height 1.25）、去掉 word-break:break-all（NapCat 二维码不再被拆行）、字号 13px
+- **知识库标签**：长标签列表自动换行（word-break:break-word），不再溢出卡片
+- **服务启动/停止秒响应**（server.py）：启动/停止改异步线程执行（原 2-4s → <0.1s）；`_check_port` 超时 2s → 0.5s；`_check_gateway_process` 先查端口再 WMI 扫描；仅在进程实际在跑时才强制 kill
+- **Hermes 启动前置检查**（server.py + index.html）：启动 Hermes 网关前先检查 NapCat（进程 + 3000/3001 端口），未运行则弹 toast 提示"请先启动 NapCat"；日志输出 `NAPCAT_NOT_RUNNING` / `READY`
+- **gateway.py 完整性修复**：从服务器拉取完整版（834 行，原截断版 804 行），补齐 `get_stats` / `get_workflow_decay_report` / `on_session_end` / `search_workflows` 完整实现
+
 ## v0.14.0 (2026-08-02)
 
 ### context 探测链关闭 + 磁盘缓存修复

@@ -349,8 +349,9 @@ body{
 /* === STAT ROW === */
 .stat-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;line-height:1.4}
 .stat-row+.stat-row{border-top:1px solid var(--border-light)}
-.stat-row .key{color:var(--text2);font-size:13px;font-weight:500}
-.stat-row .val{font-weight:600;font-size:14px;text-align:right;color:var(--text)}
+.stat-row .key{color:var(--text2);font-size:13px;font-weight:500;flex-shrink:0}
+.stat-row .val{font-weight:600;font-size:14px;text-align:right;color:var(--text);min-width:0;word-break:break-word;overflow-wrap:anywhere}
+#obsTags{font-size:12px;font-weight:500;color:var(--text2);line-height:1.35}
 
 /* === VOICE MODE === */
 .voice-toggle-row{display:flex;gap:10px;margin-bottom:14px}

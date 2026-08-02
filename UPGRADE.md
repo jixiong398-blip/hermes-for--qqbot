@@ -1,6 +1,6 @@
 ﻿# 升级指南
 
-> v0.14.0
+> v0.14.1
 
 ## 如何升级
 
@@ -82,6 +82,13 @@ git pull origin main
 ---
 
 ## 版本历史
+
+### v0.14.1
+- **Dashboard 视觉重构**：更简洁现代，服务状态卡片（状态圆点）、响应式
+- **服务启停秒响应**：异步线程执行（原 2-4s → <0.1s）
+- **Hermes 启动前置检查**：先检查 NapCat（进程 + 3000/3001 端口），未运行弹 toast 提示
+- **日志区优化**：行间距收紧，NapCat 二维码不再被拆行
+- **gateway.py 完整性修复**：补齐 get_stats / get_workflow_decay_report / on_session_end
 
 ### v0.14.0
 - **context 探测链关闭**：`_ENABLE_CONTEXT_PROBE` 默认 False（`HERMES_CONTEXT_PROBE=1` 才开）——init 不再 30s×2 探测黑洞
