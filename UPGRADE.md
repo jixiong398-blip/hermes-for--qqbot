@@ -1,6 +1,6 @@
 ﻿# 升级指南
 
-> v0.13.2
+> v0.14.0
 
 ## 如何升级
 
@@ -82,6 +82,12 @@ git pull origin main
 ---
 
 ## 版本历史
+
+### v0.14.0
+- **context 探测链关闭**：`_ENABLE_CONTEXT_PROBE` 默认 False（`HERMES_CONTEXT_PROBE=1` 才开）——init 不再 30s×2 探测黑洞
+- **`import json` 修复**：磁盘缓存保存不再静默失败（收尾 2s 延迟消除）
+- **⚠️ 必须配**：`config.yaml model.context_length: 1000000`（探测已关，不配走兜底值）
+- **episodic_index.py / context_compressor.py** 同步（dropped 修复 + 计时插桩）
 
 ### v0.13.2
 - **judge 提速**：thinking 默认 low（env JUDGE_THINKING 可切 disabled/low/default），judge 判定 11s → 3-6s

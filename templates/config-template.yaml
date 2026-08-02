@@ -95,6 +95,7 @@ model:
   provider: custom
   api_key: {{DEEPSEEK_API_KEY}}
   base_url: {{LLM_BASE_URL}}
+  context_length: 1000000        # 必须配！context 探测已关闭，不配走兜底值
 platform_toolsets:
   onebot:
   - hermes-onebot
@@ -137,7 +138,7 @@ tts:
     model: qwen3-tts
     voice: soyo
 terminal:
-  cwd: /home/{{USERNAME}}/ai/ai
+  cwd: ~
 auxiliary:
   vision:
     provider: custom

@@ -1,5 +1,16 @@
 ﻿# bot-template 更新日志
 
+## v0.14.0 (2026-08-02)
+
+### context 探测链关闭 + 磁盘缓存修复
+
+- **探测链关闭**（model_metadata.py）：`_ENABLE_CONTEXT_PROBE` 默认 False（env `HERMES_CONTEXT_PROBE=1` 才开）——init 不再 30s×2 网络探测黑洞，配置即事实
+- **`import json` 修复**（model_metadata.py）：磁盘缓存保存曾因 NameError 静默失败 → 收尾 2s 延迟消除
+- **配置要求**：`config.yaml model.context_length: 1000000` 必须配（探测已关，不配走兜底）
+- **episodic_index.py 同步**：dropped 修复 + 隐私清洗（MyGO 示例匿名化）
+- **context_compressor.py 同步**：get_model_context_length 计时插桩
+- **配置模板**：.env.template 加 XIAOMI 视觉变量、config-template.yaml 加 context_length、terminal.cwd 隐私中性化
+
 ## v0.13.2 (2026-08-01)
 
 ### 判定提速 + SQLite 锁修复 + 成本估算缓存

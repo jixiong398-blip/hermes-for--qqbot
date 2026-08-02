@@ -427,11 +427,15 @@ class ContextCompressor(ContextEngine):
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
         self.quiet_mode = quiet_mode
 
+        import time as _cc_time
+        _cc_t0 = _cc_time.perf_counter()
         self.context_length = get_model_context_length(
             model, base_url=base_url, api_key=api_key,
             config_context_length=config_context_length,
             provider=provider,
         )
+        logger.info("[PERF] ContextCompressor: get_model_context_length %.3fs (ctx=%s)",
+                    _cc_time.perf_counter() - _cc_t0, self.context_length)
         # Floor: never compress below MINIMUM_CONTEXT_LENGTH tokens even if
         # the percentage would suggest a lower value.  This prevents premature
         # compression on large-context models at 50% while keeping the % sane

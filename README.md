@@ -1,6 +1,6 @@
 ﻿# QQBot — 通用 QQ 群 AI 机器人模板
 
-> **v0.10.0** — Cubism 5 Live2D (12 角色) · 语义判断 v2 · 13 家 LLM · 零硬编码隐私
+> **v0.14.0** — judge 提速（3-6s）· SQLite 锁修复 · 探测链关闭 · 角色名参数化
 
 解压即用。Python 3.12、Node.js、Live2D Electron 已内置离线包。
 
@@ -10,7 +10,7 @@
 ① 双击 install.bat        → 离线安装 Python + Node.js + Live2D + Hermes
 ② 启动 NapCat 扫码登录     → napcat.bat → 扫码登录 → WebUI 开启 WS/HTTP 端口
 ③ 双击 配置API.bat          → 选供应商 + 填 API Key + 管理员 QQ（自动读 NapCat token）
-④ 准备角色灵魂              → 编辑 SOUL.md → 一键替换灵魂核心.bat
+④ 准备角色灵魂              → 编辑 SOUL.md → 一键替换灵魂核心.bat（自动同步角色名到 .env）
 ⑤ 双击 start.bat           → Dashboard 启动，一键开 Bot
 ```
 

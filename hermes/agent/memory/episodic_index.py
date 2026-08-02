@@ -9,7 +9,7 @@ Episode Index (EPI) - 跨会话联想记忆层
 
   STM   存原始对话, 但被 session_id 锁死在本群, 而且 prune_short_term(1.0)
         决定了它只活 24 小时 -- 它是"工作记忆", 不是"往事"。
-  LTM   跨群, 但存的是提炼后的事实("某用户喜欢某部动漫"),
+  LTM   跨群, 但存的是提炼后的事实("某用户喜欢MyGO"),
         丢掉了"某人在某个场合说过某句话"的质感。
   Buffer / RollingSummary  纯 per-group, 内存态。
 

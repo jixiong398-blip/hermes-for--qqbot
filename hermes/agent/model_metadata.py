@@ -4,6 +4,7 @@ Pure utility functions with no AIAgent dependency. Used by ContextCompressor
 and run_agent.py for pre-flight context checks.
 """
 
+import json
 import ipaddress
 import logging
 import os
@@ -1323,6 +1324,13 @@ def _resolve_nous_context_length(model: str) -> Optional[int]:
     return None
 
 
+# Network context-length probing (live /models, OpenRouter, models.dev) is
+# DISABLED by default — when the user configures model.context_length (or a
+# persistent cache entry exists), probing is pure redundant latency. Enable
+# with env HERMES_CONTEXT_PROBE=1 for unknown-provider auto-detection.
+_ENABLE_CONTEXT_PROBE = os.getenv("HERMES_CONTEXT_PROBE", "") == "1"
+
+
 def get_model_context_length(
     model: str,
     base_url: str = "",
@@ -1415,95 +1423,96 @@ def get_model_context_length(
         except ImportError:
             pass  # boto3 not installed — fall through to generic resolution
 
-    # 2. Active endpoint metadata for truly custom/unknown endpoints.
-    # Known providers (Copilot, OpenAI, Anthropic, etc.) skip this — their
-    # /models endpoint may report a provider-imposed limit (e.g. Copilot
-    # returns 128k) instead of the model's full context (400k).  models.dev
-    # has the correct per-provider values and is checked at step 5+.
-    if _is_custom_endpoint(base_url) and not _is_known_provider_base_url(base_url):
-        context_length = _resolve_endpoint_context_length(model, base_url, api_key=api_key)
-        if context_length is not None:
-            return context_length
-        if not _is_known_provider_base_url(base_url):
-            # 3. Try querying local server directly
-            if is_local_endpoint(base_url):
-                local_ctx = _query_local_context_length(model, base_url, api_key=api_key)
-                if local_ctx and local_ctx > 0:
-                    if provider != "lmstudio":
-                        save_context_length(model, base_url, local_ctx)
-                    return local_ctx
-            logger.info(
-                "Could not detect context length for model %r at %s — "
-                "defaulting to %s tokens (probe-down). Set model.context_length "
-                "in config.yaml to override.",
-                model, base_url, f"{DEFAULT_FALLBACK_CONTEXT:,}",
-            )
-            return DEFAULT_FALLBACK_CONTEXT
+    if _ENABLE_CONTEXT_PROBE:
+        # 2. Active endpoint metadata for truly custom/unknown endpoints.
+        # Known providers (Copilot, OpenAI, Anthropic, etc.) skip this — their
+        # /models endpoint may report a provider-imposed limit (e.g. Copilot
+        # returns 128k) instead of the model's full context (400k).  models.dev
+        # has the correct per-provider values and is checked at step 5+.
+        if _is_custom_endpoint(base_url) and not _is_known_provider_base_url(base_url):
+            context_length = _resolve_endpoint_context_length(model, base_url, api_key=api_key)
+            if context_length is not None:
+                return context_length
+            if not _is_known_provider_base_url(base_url):
+                # 3. Try querying local server directly
+                if is_local_endpoint(base_url):
+                    local_ctx = _query_local_context_length(model, base_url, api_key=api_key)
+                    if local_ctx and local_ctx > 0:
+                        if provider != "lmstudio":
+                            save_context_length(model, base_url, local_ctx)
+                        return local_ctx
+                logger.info(
+                    "Could not detect context length for model %r at %s — "
+                    "defaulting to %s tokens (probe-down). Set model.context_length "
+                    "in config.yaml to override.",
+                    model, base_url, f"{DEFAULT_FALLBACK_CONTEXT:,}",
+                )
+                return DEFAULT_FALLBACK_CONTEXT
 
-    # 4. Anthropic /v1/models API (only for regular API keys, not OAuth)
-    if provider == "anthropic" or (
-        base_url and base_url_hostname(base_url) == "api.anthropic.com"
-    ):
-        ctx = _query_anthropic_context_length(model, base_url or "https://api.anthropic.com", api_key)
-        if ctx:
-            return ctx
-
-    # 4b. (Bedrock handled earlier at step 1b — before custom-endpoint probe.)
-
-    # 5. Provider-aware lookups (before generic OpenRouter cache)
-    # These are provider-specific and take priority over the generic OR cache,
-    # since the same model can have different context limits per provider
-    # (e.g. claude-opus-4.6 is 1M on Anthropic but 128K on GitHub Copilot).
-    # If provider is generic (openrouter/custom/empty), try to infer from URL.
-    effective_provider = provider
-    if not effective_provider or effective_provider in ("openrouter", "custom"):
-        if base_url:
-            inferred = _infer_provider_from_url(base_url)
-            if inferred:
-                effective_provider = inferred
-
-    # 5a. Copilot live /models API — max_prompt_tokens from the user's account.
-    # This catches account-specific models (e.g. claude-opus-4.6-1m) that
-    # don't exist in models.dev. For models that ARE in models.dev, this
-    # returns the provider-enforced limit which is what users can actually use.
-    if effective_provider in ("copilot", "copilot-acp", "github-copilot"):
-        try:
-            from hermes_cli.models import get_copilot_model_context
-            ctx = get_copilot_model_context(model, api_key=api_key)
+        # 4. Anthropic /v1/models API (only for regular API keys, not OAuth)
+        if provider == "anthropic" or (
+            base_url and base_url_hostname(base_url) == "api.anthropic.com"
+        ):
+            ctx = _query_anthropic_context_length(model, base_url or "https://api.anthropic.com", api_key)
             if ctx:
                 return ctx
-        except Exception:
-            pass  # Fall through to models.dev
 
-    if effective_provider == "nous":
-        ctx = _resolve_nous_context_length(model)
-        if ctx:
-            return ctx
-    if effective_provider == "openai-codex":
-        # Codex OAuth enforces lower context limits than the direct OpenAI
-        # API for the same slug (e.g. gpt-5.5 is 1.05M on the API but 272K
-        # on Codex). Authoritative source is Codex's own /models endpoint.
-        codex_ctx = _resolve_codex_oauth_context_length(model, access_token=api_key or "")
-        if codex_ctx:
+        # 4b. (Bedrock handled earlier at step 1b — before custom-endpoint probe.)
+
+        # 5. Provider-aware lookups (before generic OpenRouter cache)
+        # These are provider-specific and take priority over the generic OR cache,
+        # since the same model can have different context limits per provider
+        # (e.g. claude-opus-4.6 is 1M on Anthropic but 128K on GitHub Copilot).
+        # If provider is generic (openrouter/custom/empty), try to infer from URL.
+        effective_provider = provider
+        if not effective_provider or effective_provider in ("openrouter", "custom"):
             if base_url:
-                save_context_length(model, base_url, codex_ctx)
-            return codex_ctx
-    if effective_provider == "gmi" and base_url:
-        # GMI exposes authoritative context_length via /models, but it is not
-        # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
-        ctx = _resolve_endpoint_context_length(model, base_url, api_key=api_key)
-        if ctx is not None:
-            return ctx
-    if effective_provider:
-        from agent.models_dev import lookup_models_dev_context
-        ctx = lookup_models_dev_context(effective_provider, model)
-        if ctx:
-            return ctx
+                inferred = _infer_provider_from_url(base_url)
+                if inferred:
+                    effective_provider = inferred
 
-    # 6. OpenRouter live API metadata (provider-unaware fallback)
-    metadata = fetch_model_metadata()
-    if model in metadata:
-        return metadata[model].get("context_length", DEFAULT_FALLBACK_CONTEXT)
+        # 5a. Copilot live /models API — max_prompt_tokens from the user's account.
+        # This catches account-specific models (e.g. claude-opus-4.6-1m) that
+        # don't exist in models.dev. For models that ARE in models.dev, this
+        # returns the provider-enforced limit which is what users can actually use.
+        if effective_provider in ("copilot", "copilot-acp", "github-copilot"):
+            try:
+                from hermes_cli.models import get_copilot_model_context
+                ctx = get_copilot_model_context(model, api_key=api_key)
+                if ctx:
+                    return ctx
+            except Exception:
+                pass  # Fall through to models.dev
+
+        if effective_provider == "nous":
+            ctx = _resolve_nous_context_length(model)
+            if ctx:
+                return ctx
+        if effective_provider == "openai-codex":
+            # Codex OAuth enforces lower context limits than the direct OpenAI
+            # API for the same slug (e.g. gpt-5.5 is 1.05M on the API but 272K
+            # on Codex). Authoritative source is Codex's own /models endpoint.
+            codex_ctx = _resolve_codex_oauth_context_length(model, access_token=api_key or "")
+            if codex_ctx:
+                if base_url:
+                    save_context_length(model, base_url, codex_ctx)
+                return codex_ctx
+        if effective_provider == "gmi" and base_url:
+            # GMI exposes authoritative context_length via /models, but it is not
+            # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
+            ctx = _resolve_endpoint_context_length(model, base_url, api_key=api_key)
+            if ctx is not None:
+                return ctx
+        if effective_provider:
+            from agent.models_dev import lookup_models_dev_context
+            ctx = lookup_models_dev_context(effective_provider, model)
+            if ctx:
+                return ctx
+
+        # 6. OpenRouter live API metadata (provider-unaware fallback)
+        metadata = fetch_model_metadata()
+        if model in metadata:
+            return metadata[model].get("context_length", DEFAULT_FALLBACK_CONTEXT)
 
     # 8. Hardcoded defaults (fuzzy match — longest key first for specificity)
     # Only check `default_model in model` (is the key a substring of the input).
@@ -1614,8 +1623,6 @@ def _estimate_message_chars(msg: Dict[str, Any]) -> int:
         else:
             shadow[k] = v
     return len(str(shadow))
-
-
 def estimate_request_tokens_rough(
     messages: List[Dict[str, Any]],
     *,
