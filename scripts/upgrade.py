@@ -41,6 +41,8 @@ UPGRADE_MAP = [
     ("hermes/agent/memory/short_term.py", "hermes/agent/memory/short_term.py"),
     ("hermes/agent/memory/retrieval.py", "hermes/agent/memory/retrieval.py"),
     ("hermes/agent/memory/obsidian.py", "hermes/agent/memory/obsidian.py"),
+    ("hermes/agent/memory/store.py", "hermes/agent/memory/store.py"),
+    ("hermes/agent/model_metadata.py", "hermes/agent/model_metadata.py"),
     ("hermes/tools/memory_gateway_tool.py", "hermes/tools/memory_gateway_tool.py"),
     ("hermes/tools/chat_history_search_tool.py", "hermes/tools/chat_history_search_tool.py"),
     ("hermes/corpus_history.py", "hermes/corpus_history.py"),

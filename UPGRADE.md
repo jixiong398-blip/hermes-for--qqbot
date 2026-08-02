@@ -1,6 +1,6 @@
 ﻿# 升级指南
 
-> v0.12.4
+> v0.13.2
 
 ## 如何升级
 
@@ -82,6 +82,31 @@ git pull origin main
 ---
 
 ## 版本历史
+
+### v0.13.2
+- **judge 提速**：thinking 默认 low（env JUDGE_THINKING 可切 disabled/low/default），judge 判定 11s → 3-6s
+- **SQLite 锁修复**：store.py `sqlite3.connect(timeout=30)` + `PRAGMA busy_timeout=30000`
+- **成本估算缓存**：model_metadata.py endpoint 元数据内存缓存（收尾 2s 延迟）
+- **退出软处理**：`exit_farewell=true` 才走 mode="exit"（回复最后一句后退出），否则静默 go_quiet
+
+### v0.13.1
+- **judge 队列**：judge in-flight 时新消息入队（不丢消息），结束后补轮
+- **@ 软信号**：@mention 带 `_is_mentioned=True` 进完整 judge 流程（不强锁必回）
+- **at_targets 指向规则**：@自己=强正向，@别人=强反证（"玩去吧"等词是对别人说的）
+- **运行时 @ 解析**：`_group_uid_name_map` 动态学名字，零硬编码
+- **删除** `_batch_has_dismissal`（硬驱赶词拦截死代码）
+
+### v0.13.0
+- **串线修复**：私聊图片 URL 直进 vision 工具（media_urls/media_types）
+- **慢响应修复**：memory consolidation 包 `asyncio.to_thread`（收尾黑洞 16-43s 消除）
+- **诊断增强**：vision 报错明确化 + PERF 段级耗时插桩
+
+### v0.12.6
+- **转发消息处理**：嵌套递归展开（≤5 层防死循环）+ 500k 阈值 + 30k 分块压缩 + 原位标注
+- **角色名参数化**：ONEBOT_BOT_NAME（env > config.yaml > 默认 Soyo）
+- **系统消息屏蔽**：`_bg_review_send` 加 SUPPORTS_SYSTEM_MESSAGES 检查
+- **安装/更新流程**：install.py 重写（SOUL.md 提取角色名）、upgrade.py 双写目标、update.bat 自动调 upgrade.py
+- **文档**：新增开源 AGENTS.md（agent 操作指南）
 
 ### v0.12.5
 - **角色名参数化**：ONEBOT_BOT_NAME 环境变量（env > config.yaml > 默认 Soyo）
