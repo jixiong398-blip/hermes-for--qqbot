@@ -31,6 +31,8 @@ class _JudgeTask:
         self.epoch = epoch
         self.initial_seq = initial_seq
         self.task: Optional[asyncio.Task] = None
+        self.pending_seq: Optional[int] = None
+        self.pending_msg: Optional[dict] = None
 
 
 class _MentionBatch:
@@ -88,14 +90,16 @@ class TriggerCoordinator:
     ):
         gs = self._adapter._group_states.get(group_id)
 
-        if gs.is_attentive():
-            self._schedule_judge(group_id, seq, msg)
-            return
-
+        # @Soyo always wins — mention BEFORE attentive, else @messages
+        # during episodes get judged as noise and silently dropped.
         is_mentioned = msg.get("_is_mentioned", False)
 
         if is_mentioned:
             self._enqueue_mention(group_id, seq, msg, sender_name, raw_text)
+            return
+
+        if gs.is_attentive():
+            self._schedule_judge(group_id, seq, msg)
             return
 
         self._schedule_judge(group_id, seq, msg)
@@ -105,7 +109,11 @@ class TriggerCoordinator:
     def _schedule_judge(self, group_id: str, seq: int, msg: dict):
         existing = self._judge_tasks.get(group_id)
         if existing is not None and existing.task is not None and not existing.task.done():
-            logger.debug("[TriggerCoordinator] Judge already in-flight for %s, seq=%d waits", group_id, seq)
+            # Judge in-flight: queue the newest message so it gets its own
+            # judge round after the current one finishes (never silently drop).
+            existing.pending_seq = seq
+            existing.pending_msg = msg
+            logger.debug("[TriggerCoordinator] Judge in-flight for %s, queued seq=%d", group_id, seq)
             return
 
         gs = self._adapter._group_states.get(group_id)
@@ -149,18 +157,27 @@ class TriggerCoordinator:
                 self._adapter._generate_group_topic_summary(jt.group_id)
                 logger.info("[TriggerCoordinator] Judge ended episode for %s", jt.group_id)
             elif result.get("should_exit"):
-                _msg_is_mention = bool(msg.get("_is_mentioned", False))
-                if not _msg_is_mention:
-                    old_turn = gs.episode_state.turn_count
-                    gs.episode_state = EpisodeState.from_dict(result)
-                    gs.episode_state.turn_count = old_turn
-                    gs.episode_state.updated_at = time.time()
-                    gs.go_quiet()
-                    logger.info("[TriggerCoordinator] Bot exiting for %s: %s",
+                old_turn = gs.episode_state.turn_count
+                gs.episode_state = EpisodeState.from_dict(result)
+                gs.episode_state.turn_count = old_turn
+                gs.episode_state.updated_at = time.time()
+                if result.get("exit_farewell"):
+                    # Judge explicitly wants a last word (sass/farewell) —
+                    # reply once, then go quiet. Default is silent exit.
+                    self._submit_request(TriggerRequest(
+                        group_id=jt.group_id,
+                        origin_seq=current_seq,
+                        mode="exit",
+                        decision_reason=result.get("exit_reason", result.get("reason", ""))[:30],
+                        raw_msg=msg,
+                        is_mention=bool(msg.get("_is_mentioned", False)),
+                    ))
+                    logger.info("[TriggerCoordinator] Soft exit (farewell) for %s: %s",
                                 jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
                 else:
-                    logger.info("[TriggerCoordinator] Judge exit but msg is mention, keep active for %s",
-                                jt.group_id)
+                    gs.go_quiet()
+                    logger.info("[TriggerCoordinator] Bot exited for %s: %s",
+                                jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
             elif result.get("should_reply"):
                 old_turn = gs.episode_state.turn_count
                 gs.episode_state = EpisodeState.from_dict(result)
@@ -183,6 +200,9 @@ class TriggerCoordinator:
             cur = self._judge_tasks.get(jt.group_id)
             if cur is jt:
                 self._judge_tasks.pop(jt.group_id, None)
+                if jt.pending_seq is not None:
+                    # Messages arrived while judging — run their own round.
+                    self._schedule_judge(jt.group_id, jt.pending_seq, jt.pending_msg)
 
     async def _invoke_judge(self, group_id: str, latest_user, msg: dict) -> Optional[Dict[str, Any]]:
         try:
@@ -197,7 +217,7 @@ class TriggerCoordinator:
         recent_dicts = [
             {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
              "name": m.name, "text": m.text[:200], "is_bot": m.is_bot,
-             "is_at": False}
+             "is_at": m.at_self, "at_targets": list(getattr(m, "at_targets", []) or [])}
             for m in recent_no_current[-10:]
         ]
 
@@ -210,7 +230,13 @@ class TriggerCoordinator:
         if _self_id_str and raw_text:
             import re
             raw_text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', f'@{_bot_name}', raw_text)
-            raw_text = re.sub(r'@QQ\d+(?!\d)', '@群友', raw_text)
+
+        # Runtime @-targets (names from adapter, never hardcoded) — keep
+        # verbatim, else "@某人 玩去吧" reads as addressed to us.
+        _at_targets = list(getattr(latest_user, "at_targets", []) or [])
+        if _at_targets and not is_mention:
+            _target_label = "、".join(_at_targets)
+            raw_text = raw_text + f" [@:{_target_label}]"
 
         msg_type_str = "text"
         if self._adapter._has_image_message(msg):
@@ -222,6 +248,7 @@ class TriggerCoordinator:
             "ts_str": time.strftime('%m-%d %H:%M', time.localtime(msg.get("time", 0) or time.time())),
             "name": latest_user.name, "text": raw_text[:300],
             "msg_type": msg_type_str, "is_at": is_mention,
+            "at_targets": _at_targets,
         }
 
         reply_to_name, reply_to_uid = self._resolve_reply(msg)
@@ -298,51 +325,27 @@ class TriggerCoordinator:
                 return
 
             gs = self._adapter._group_states.get(batch.group_id)
-            if gs is not None and self._batch_has_dismissal(entries):
-                last_msg = msgs[-1] if msgs else {}
-                self._schedule_judge(batch.group_id, seqs[-1], last_msg)
-                return
+            last_msg = msgs[-1] if msgs else {}
 
-            self._adapter._group_states.get(batch.group_id).enter_attentive()
+            if gs is not None:
+                old_phase = gs.episode_state.episode_phase or "empty"
+                if old_phase in ("exiting", "winding_down", ""):
+                    gs.episode_state.episode_phase = "starting"
+                    gs.episode_state.progression_guidance = ""
+                    gs.episode_state.episode_label = ""
+                    gs.episode_state.conversation_mode = ""
+                    gs.episode_state.updated_at = time.time()
+                    logger.info("[TriggerCoordinator] Reset episode %s→starting for %s",
+                                old_phase, batch.group_id)
 
-            gs = self._adapter._group_states.get(batch.group_id)
-            old_phase = gs.episode_state.episode_phase or "empty"
-            if old_phase in ("exiting", "winding_down", ""):
-                gs.episode_state.episode_phase = "starting"
-                gs.episode_state.progression_guidance = ""
-                gs.episode_state.episode_label = ""
-                gs.episode_state.conversation_mode = ""
-                gs.episode_state.updated_at = time.time()
-                logger.info("[TriggerCoordinator] Reset episode %s→starting for %s",
-                            old_phase, batch.group_id)
-
-            self._submit_request(TriggerRequest(
-                group_id=batch.group_id,
-                origin_seq=seqs[-1] if seqs else 0,
-                mode="mention",
-                decision_reason="该用户@了你",
-                raw_msg=msgs[-1] if msgs else {},
-                is_mention=True,
-                bundled_mentions=entries,
-                bundled_seqs=seqs,
-            ))
+            # @ is a strong signal, not a hard lock: full judge pipeline
+            # (context/media preserved) with mention flag as strong addressing.
+            last_msg["_is_mentioned"] = True
+            self._schedule_judge(batch.group_id, seqs[-1], last_msg)
         finally:
             self._mention_batches.pop(batch.group_id, None)
 
     # ── submit to executor ──────────────────────────────────
-
-    def _batch_has_dismissal(self, entries: list) -> bool:
-        _DISMISSAL_PATTERNS = [
-            "去玩吧", "一边去", "别说了", "闭嘴", "够了",
-            "退下", "安静点", "stop", "行了别",
-            "滚", "走开", "别吵", "消停",
-        ]
-        for entry in entries:
-            text = entry.get("text", "")
-            for pat in _DISMISSAL_PATTERNS:
-                if pat in text:
-                    return True
-        return False
 
     def _submit_request(self, request: TriggerRequest):
         self._pending_requests[request.group_id] = request

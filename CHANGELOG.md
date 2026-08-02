@@ -1,5 +1,17 @@
 ﻿# bot-template 更新日志
 
+## v0.13.1 (2026-08-01)
+
+### 判定系统软改造 — @是强信号不是硬锁 + 驱赶软处理
+
+- **judge 队列**（trigger_coordinator.py）：judge in-flight 时新消息入队（不再静默丢弃），当前轮结束后自动补一轮
+- **软退出**（trigger_coordinator.py + group_executor.py）：should_exit 不再静默 go_quiet，改为回复最后一句（嘴硬/告别）后再安静，新增 mode="exit"
+- **@ 软信号**：@mention 不再直发 agent，带 `_is_mentioned=True` 进完整 judge 流程（保留上下文/媒体），judge 可判不回（如 @ 骂人）
+- **at_targets 指向规则**（semantic_judge.py）：at_targets 含自己 → 强正向；含其他人名 → 强反证（"玩去吧"等词是对别人说的）；recent 消息的 is_at/at_targets 同样有效
+- **驱赶判定收紧**：should_exit 必须直接指向 $bot_name，对别人说的驱赶词不算
+- **at_targets 运行时动态解析**（adapter.py + group_state.py）：`_group_uid_name_map` 从 buffer 动态学名字，零硬编码；BufferedMessage 新增 at_targets/at_self 字段
+- **删除**：`_batch_has_dismissal` 硬驱赶词拦截（死代码）
+
 ## v0.13.0 (2026-08-01)
 
 ### 串线修复 + 慢响应修复 + 诊断插桩

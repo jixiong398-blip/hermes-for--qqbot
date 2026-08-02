@@ -104,6 +104,10 @@ class GroupExecutor:
             gs.mark_consumed(snapshot_seq)
             self._apply_outcome(gid, event, outcome, gs)
 
+            if request.mode == "exit":
+                # Last word delivered (or attempted) — leave the conversation.
+                gs.go_quiet()
+
             if outcome.kind == "sent" and outcome.reply_text:
                 await self._record_episode_state(request, gs, outcome)
 
@@ -165,6 +169,10 @@ class GroupExecutor:
         elif request.mode == "continuation":
             mode = "[对话模式]"
             trigger_reason = "群里有新消息"
+        elif request.mode == "exit":
+            # Last word before leaving: reply (sass/farewell), then go quiet.
+            mode = "[退出模式]"
+            trigger_reason = "你被赶了，说最后一句（可以嘴硬/告别），说完就安静"
         else:
             mode = "[旁观模式]"
 

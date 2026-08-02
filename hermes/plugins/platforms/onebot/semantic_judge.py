@@ -195,6 +195,11 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 - 有人直接 @$bot_name：强正向指向
 - 有人用 QQ 回复功能回复了 $bot_name 的消息（reply_to_name=$bot_name）：强正向指向
 - 有人用 QQ 回复功能回复了**别人**的消息（reply_to_name 不是 $bot_name）：强反证——即使正文提到 $bot_name 的名字，也大概率是在跟别人聊 $bot_name，不是对 $bot_name 说话
+- **current_msg.at_targets 列出本条消息 @ 了谁**（运行时解析的真实指向）：
+  - at_targets 包含"自己"（或 is_at=true）：消息明确 @ 了 $bot_name → 强正向
+  - at_targets 是其他人名：消息明确 @ 了别人 → **强反证**——即使正文出现"玩去吧""去玩吧"等词，也是对那个人说的，不是驱赶 $bot_name
+  - at_targets 为空：消息没有 @ 任何人 → 按正文和回复判断
+- **recent_messages 中每条消息的 is_at / at_targets 同样有效**：历史消息 @ 了谁就按谁处理，不要把"别人 @ 别人的消息"误读为与 $bot_name 相关
 
 ### 2. 群聊噪音等级（参考信息，不是硬性过滤）
 - low_noise：群聊干净，门槛较低
@@ -245,15 +250,23 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 这些情况只需要 should_reply=false（不回复）即可，$bot_name 保持旁观态，随时可以再被叫回来。
 
 判 true 的情况（必须满足至少一条）：
-- 对方明确驱赶（"去玩吧""一边去""别说了""闭嘴""退下""stop"）
+- 对方明确驱赶，且驱赶**直接指向 $bot_name**（@$bot_name、QQ 回复 $bot_name 的消息、或语境明确在对 $bot_name 说话）——"去玩吧""一边去""别说了""闭嘴""退下""stop"
 - $bot_name 上一轮表达了离开意图，对方回应了确认（"嗯""好""去吧""拜拜"）
 - 对话在跟另一个 bot 进行，且形成了 bot 之间的循环，$bot_name 插在中间不合适
 - 上一轮 episode_phase 已经是 "exiting"，且仍然没有新的指向 $bot_name 的消息
+
+**重要边界：对别人说的驱赶词不算。** 例如某群友对第三人说"玩去吧""去玩吧"（哪怕 $bot_name 在旁边），这不是驱赶 $bot_name——只判 should_reply=false，不判 should_exit。
 
 判 false 的情况（即使 should_reply=false 也不判 exit）：
 - 群友之间正常聊天，只是没对 $bot_name 说话
 - 话题暂时转移到别处，但 $bot_name 随时可能被叫回
 - 对话冷场、无人说话（保持旁观即可，不需要显式退出）
+
+### exit_farewell - 退出时要不要说最后一句话（默认 false！）
+
+should_exit=true 时配套判断。**默认 false：安静退出，不发任何消息。**
+只有真正值得回一句时才 true——比如被当面嘲讽/冤枉需要回嘴、或者关系好的群友送别时值得道别。
+普通情况（话题冷掉、插不上嘴、被无关地赶走）一律 false，安静退出即可。
 
 ### conversation_mode - 交互模式
 
@@ -301,7 +314,7 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 ## 输出格式
 
 只输出 JSON，不要多余文字：
-{"should_reply": true/false, "should_end": true/false, "should_exit": true/false, "continuity": "...", "conversation_mode": "...", "episode_phase": "...", "speaker_role": "...", "current_thread": "...", "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "progression_guidance": "...", "reason": "一句话说明"}"""
+{"should_reply": true/false, "should_end": true/false, "should_exit": true/false, "exit_farewell": true/false, "continuity": "...", "conversation_mode": "...", "episode_phase": "...", "speaker_role": "...", "current_thread": "...", "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "progression_guidance": "...", "reason": "一句话说明"}"""
 
 
 def _build_pre_reply_judge_prompt(
@@ -381,7 +394,7 @@ def _build_pre_reply_judge_prompt(
 # ── enhanced pre-reply judge ─────────────────────────────────
 
 _JUDGE_V2_KEYS = {
-    "should_reply", "should_end", "should_exit",
+    "should_reply", "should_end", "should_exit", "exit_farewell",
     "continuity", "conversation_mode", "episode_phase",
     "speaker_role", "current_thread",
     "topic_active", "is_loop", "use_reply_feature",
@@ -395,12 +408,13 @@ _JUDGE_V2_STR_KEYS = {
 }
 
 _JUDGE_V2_BOOL_KEYS = {
-    "should_reply", "should_end", "should_exit",
+    "should_reply", "should_end", "should_exit", "exit_farewell",
     "topic_active", "is_loop", "use_reply_feature",
 }
 
 _JUDGE_V2_FALLBACK: Dict[str, Any] = {
     "should_reply": False, "should_end": False, "should_exit": False,
+    "exit_farewell": False,
     "continuity": "same_episode", "conversation_mode": "group_ambient",
     "episode_phase": "mid", "speaker_role": "unknown", "current_thread": "",
     "topic_active": True, "is_loop": False, "use_reply_feature": False,
@@ -537,6 +551,11 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 - 有人直接 @$bot_name：强正向指向
 - 有人用 QQ 回复功能回复了 $bot_name 的消息（reply_to_name=$bot_name）：强正向指向
 - 有人用 QQ 回复功能回复了**别人**的消息（reply_to_name 不是 $bot_name）：强反证——即使正文提到 $bot_name 的名字，也大概率是在跟别人聊 $bot_name，不是对 $bot_name 说话
+- **current_msg.at_targets 列出本条消息 @ 了谁**（运行时解析的真实指向）：
+  - at_targets 包含"自己"（或 is_at=true）：消息明确 @ 了 $bot_name → 强正向
+  - at_targets 是其他人名：消息明确 @ 了别人 → **强反证**——即使正文出现"玩去吧""去玩吧"等词，也是对那个人说的，不是驱赶 $bot_name
+  - at_targets 为空：消息没有 @ 任何人 → 按正文和回复判断
+- **recent_messages 中每条消息的 is_at / at_targets 同样有效**：历史消息 @ 了谁就按谁处理，不要把"别人 @ 别人的消息"误读为与 $bot_name 相关
 
 ### 2. 群聊噪音等级（参考信息，不是硬性过滤）
 - low_noise：群聊干净，门槛较低

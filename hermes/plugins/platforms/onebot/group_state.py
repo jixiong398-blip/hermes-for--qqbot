@@ -21,6 +21,8 @@ class BufferedMessage:
     msg_type: str = "text"
     media_paths: List[str] = field(default_factory=list)
     descriptions: List[str] = field(default_factory=list)
+    at_targets: List[str] = field(default_factory=list)
+    at_self: bool = False
 
 
 @dataclass
