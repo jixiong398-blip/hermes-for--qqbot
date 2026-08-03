@@ -1,0 +1,35 @@
+# Hermes QQ Bot — minimal requirements
+# Install: pip install -r requirements.txt
+
+# ── Core (from pyproject.toml) ──
+openai>=2.21.0,<3
+anthropic>=0.39.0,<1
+python-dotenv>=1.2.1,<2
+fire>=0.7.1,<1
+httpx[socks]>=0.28.1,<1
+rich>=14.3.3,<15
+tenacity>=9.1.4,<10
+pyyaml>=6.0.2,<7
+requests>=2.33.0,<3
+jinja2>=3.1.5,<4
+pydantic>=2.12.5,<3
+prompt_toolkit>=3.0.52,<4
+PyJWT[crypto]>=2.12.0,<3
+
+# ── Tools ──
+firecrawl-py>=4.16.0,<5
+parallel-web>=0.4.2,<1
+edge-tts>=7.2.7,<8
+
+# ── Messaging platforms ──
+aiohttp>=3.13.3,<4
+
+# ── QQ Bot (OneBot) ──
+websockets>=14.0,<15
+
+# ── Image processing ──
+Pillow>=11.0,<12
+
+# ── Optional but recommended ──
+croniter>=6.0.0,<7
+debugpy>=1.8.0,<2

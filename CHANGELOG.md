@@ -1,5 +1,16 @@
 ﻿# bot-template 更新日志
 
+## v0.14.3 (2026-08-04)
+
+### 仓库结构重构 — core/ 分层 + 局域网 git 同步
+
+- **引擎分层**：hermes/ 改为 `hermes/core/`（引擎权威，含 OneBot 插件），通过局域网 git（hermes-core.git）与服务器同步
+- **根目录精简**：modules/（napcat/live2d/dashboard/knowledge）+ extras/（node/scripts/安装包/构建脚本）+ templates/ 独立于 hermes/，根目录只留安装脚本和文档
+- **同步机制**：服务器权威 → `git fetch && git checkout origin/main -- core/` 增量同步；modules/extras 由 Win 本地维护
+- **脚本路径更新**：install.bat/update.bat/upgrade.py/setup_config.py/qzone-post.py 指向新结构（extras\node、modules\napcat、hermes\core）
+- **SSH 通道**：Win 端 SSH key 免密连接服务器（192.168.2.16），替代不可靠的 Y 盘 SFTP
+- **git 追踪精简**：hermes/ 只追踪 core/ + .gitignore（局域网同步范围）
+
 ## v0.14.1 (2026-08-03)
 
 ### Dashboard 视觉重构 + 性能优化 + NapCat 前置检查

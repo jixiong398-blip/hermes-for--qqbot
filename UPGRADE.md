@@ -1,6 +1,19 @@
 ﻿# 升级指南
 
-> v0.14.1
+> v0.14.3
+
+## 目录结构（v0.14.3+）
+
+```
+bot-template 根
+├─ install.bat / start.bat / Stop-All.bat / update.bat / 配置API.bat
+├─ README.md / LICENSE / VERSION / CHANGELOG.md / UPGRADE.md / AGENTS.md
+├─ hermes/          ← 引擎（局域网 git 工作区）
+│   └─ core/        ← 引擎权威（含 OneBot 插件）
+├─ templates/       ← 配置模板（根级）
+├─ modules/         ← 功能模块：napcat/ live2d/ dashboard/ knowledge/
+└─ extras/          ← 安装包/构建/运行时：node/ scripts/ 安装包 构建脚本
+```
 
 ## 如何升级
 
@@ -10,7 +23,7 @@
 1. 下载最新 bot-template.zip，解压到临时目录
 2. 运行临时目录中的升级脚本：
    cd 临时目录
-   .venv\Scripts\python scripts\upgrade.py
+   .venv\Scripts\python extras\scripts\upgrade.py
 3. 重启 Gateway
 ```
 
@@ -159,6 +172,46 @@ git pull origin main
 ### v0.10.6
 - 消息处理架构重构（三阶段流水线）
 - 新增 media_pipeline / trigger_coordinator / group_executor
+
+---
+
+## 两端（服务器 ↔ Win）同步流程
+
+### 同步边界
+
+| 目录 | 归属 | 同步方式 |
+|---|---|---|
+| `hermes/core/` | 引擎权威 | **局域网 git**（服务器权威，Win 拉取） |
+| `templates/` | 配置模板 | 局域网 git（服务器权威） |
+| `modules/` | 功能模块（napcat/live2d/dashboard） | **Win 本地维护**（可回传） |
+| `extras/` | 安装包/构建/node/scripts | **Win 本地维护** |
+
+### 服务器 → Win（拉取引擎更新）
+
+```bash
+cd hermes
+git fetch origin
+git checkout origin/main -- core/ templates/ .gitignore
+```
+
+### Win → 服务器（回传 Win 独有开发）
+
+```bash
+cd hermes
+git add core/ modules/ extras/ templates/
+git commit -m "Win update"
+git push origin main
+```
+
+### 局域网仓库
+
+- 服务器：`~/hermes-core.git`（bare repo）
+- Win remote：`ssh://ji@192.168.2.16/home/ji/hermes-core.git`
+- 首次接入：`git clone ssh://ji@192.168.2.16/home/ji/hermes-core.git`
+
+### 隐私红线
+
+`.env / config.yaml / SOUL.md / sessions/ / logs/ / *.db` 永不进 git（.gitignore 已排除）
 
 ---
 

@@ -52,12 +52,12 @@ if %PY_OK% equ 1 (
     goto :step2
 )
 
-if not exist "python-installer.exe" (
+if not exist "extras\python-installer.exe" (
     echo   [ERROR] python-installer.exe missing
     pause & exit /b 1
 )
 echo   Installing Python 3.12 (offline)...
-python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
+extras\python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
 if %errorlevel% neq 0 (
     echo   [ERROR] Installation failed - try running as Admin
     pause & exit /b 1
@@ -79,26 +79,26 @@ echo.
 echo.
 echo   [3/6] Node.js...
 echo.
-if exist "node\node.exe" (
+if exist "extras\node\node.exe" (
     echo   Already set up -- skipped
     goto :step4
 )
-if not exist "nodejs.zip" (
+if not exist "extras\nodejs.zip" (
     echo   [SKIP] nodejs.zip not found
     goto :step4
 )
 echo   Extracting Node.js (offline)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'nodejs.zip' -DestinationPath 'node' -Force" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'extras\nodejs.zip' -DestinationPath 'extras\node' -Force" 2>nul
 if %errorlevel% neq 0 (
-    tar -xf "nodejs.zip" -C "node" 2>nul
+    tar -xf "extras\nodejs.zip" -C "extras\node" 2>nul
 )
-for /d %%d in (node\node-*) do (
+for /d %%d in (extras\node\node-*) do (
     if exist "%%d\node.exe" (
-        xcopy "%%d\*" "node\" /E /Y /Q >nul
+        xcopy "%%d\*" "extras\node\" /E /Y /Q >nul
         rmdir /s /q "%%d" 2>nul
     )
 )
-if exist "node\node.exe" (echo   Node.js extracted -- OK) else if exist "node\npm.cmd" (echo   Node.js extracted -- OK) else (echo   [WARNING] Extraction may have failed)
+if exist "extras\node\node.exe" (echo   Node.js extracted -- OK) else if exist "extras\node\npm.cmd" (echo   Node.js extracted -- OK) else (echo   [WARNING] Extraction may have failed)
 :step4
 
 :: ===== Step 4: Live2D Electron =====
@@ -109,47 +109,47 @@ if exist "modules\live2d\node_modules\electron\" (
     echo   Already installed -- skipped
     goto :step5
 )
-if exist "electron-offline.zip.001" (
+if exist "extras\electron-offline.zip.001" (
     echo   Combining split archive (offline)...
-    copy /b "electron-offline.zip.001"+"electron-offline.zip.002" "electron-offline.zip" >nul
-    if exist "electron-offline.zip" (
+    copy /b "extras\electron-offline.zip.001"+"extras\electron-offline.zip.002" "extras\electron-offline.zip" >nul
+    if exist "extras\electron-offline.zip" (
         echo   Extracting Live2D engine (offline)...
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'electron-offline.zip' -DestinationPath 'modules\live2d' -Force" 2>nul
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'extras\electron-offline.zip' -DestinationPath 'modules\live2d' -Force" 2>nul
         if %errorlevel% neq 0 (
-            tar -xf "electron-offline.zip" -C "modules\live2d" 2>nul
+            tar -xf "extras\electron-offline.zip" -C "modules\live2d" 2>nul
         )
         if exist "modules\live2d\node_modules\electron\" (
             echo   Live2D engine extracted -- OK
             echo   Installing JS dependencies...
             cd modules\live2d
-            call ..\..\node\npm.cmd install --registry=https://registry.npmmirror.com 2>&1
+            call ..\..\extras\node\npm.cmd install --registry=https://registry.npmmirror.com 2>&1
             cd ..\..
-            del "electron-offline.zip" 2>nul
+            del "extras\electron-offline.zip" 2>nul
             goto :step5
         )
     )
 )
-if exist "electron-offline.zip" (
+if exist "extras\electron-offline.zip" (
     echo   Extracting Live2D engine (offline)...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'electron-offline.zip' -DestinationPath 'modules\live2d' -Force" 2>nul
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path 'extras\electron-offline.zip' -DestinationPath 'modules\live2d' -Force" 2>nul
     if %errorlevel% neq 0 (
-        tar -xf "electron-offline.zip" -C "modules\live2d" 2>nul
+        tar -xf "extras\electron-offline.zip" -C "modules\live2d" 2>nul
     )
     if exist "modules\live2d\node_modules\electron\" (
         echo   Live2D engine extracted -- OK
         goto :step5
     )
 )
-if not exist "node\npm.cmd" (
+if not exist "extras\node\npm.cmd" (
     echo   [SKIP] Node.js missing - cannot install Live2D engine
     goto :step5
 )
 echo   Downloading Electron via npm (~150MB, internet required)...
 cd modules\live2d
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-call ..\..\node\npm.cmd install --registry=https://registry.npmmirror.com
+call ..\..\extras\node\npm.cmd install --registry=https://registry.npmmirror.com
 cd ..\..
-if exist "modules\live2d\node_modules\electron\" (echo   Live2D engine installed -- OK) else (echo   [SKIP] Install failed - retry with internet: cd modules\live2d ^&^& ..\..\node\npm.cmd install)
+if exist "modules\live2d\node_modules\electron\" (echo   Live2D engine installed -- OK) else (echo   [SKIP] Install failed - retry with internet: cd modules\live2d ^&^& ..\..\extras\node\npm.cmd install)
 :step5
 
 :: ===== Step 5: Hermes Engine (modified) =====
@@ -190,7 +190,7 @@ if not exist ".venv\Scripts\python.exe" (
     echo   [ERROR] Hermes not installed
     pause & exit /b 1
 )
-.venv\Scripts\python "%SCRIPT_DIR%scripts\install.py" 2>&1
+.venv\Scripts\python "%SCRIPT_DIR%extras\scripts\install.py" 2>&1
 echo   Base config created -- OK
 
 :: ===== Final =====
@@ -201,12 +201,12 @@ echo   ================================================
 echo.
 echo   Environment status:
 if exist ".venv\Scripts\python.exe" (echo     [OK] Hermes Engine) else (echo     [!!] Hermes Engine MISSING)
-if exist "node\node.exe" (echo     [OK] Node.js) else (echo     [--] Node.js (optional))
+if exist "extras\node\node.exe" (echo     [OK] Node.js) else (echo     [--] Node.js (optional))
 if exist "modules\live2d\assets\models\" (echo     [OK] Live2D Models) else (echo     [--] Live2D Models)
 if exist "modules\live2d\node_modules\electron\" (echo     [OK] Live2D Engine) else (echo     [--] Live2D Engine)
 echo.
 echo   Next Steps:
-echo     1. Start NapCat:   napcat\napcat.bat ^(scan QR to login^)
+echo     1. Start NapCat:   modules\napcat\napcat.bat ^(scan QR to login^)
 echo     2. Open dashboard: start.bat ^(configure WS:3001/HTTP:3000 ports per guide^)
 echo     3. Set API keys:   "PeiZhiAPI.bat"
 echo     4. Create SOUL:    Edit templates\SOUL.md ^> run soul replacer
