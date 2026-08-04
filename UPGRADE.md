@@ -211,8 +211,8 @@ git push origin main
 ### 局域网仓库
 
 - 服务器：`~/hermes-core.git`（bare repo）
-- Win remote：`ssh://ji@192.168.2.16/home/ji/hermes-core.git`
-- 首次接入：`git clone ssh://ji@192.168.2.16/home/ji/hermes-core.git`
+- Win remote：`ssh://<server-user>@<server-ip>/<hermes-core-path>.git`
+- 首次接入：`git clone ssh://<server-user>@<server-ip>/<hermes-core-path>.git`
 
 ### 隐私红线
 
@@ -243,5 +243,6 @@ A: `electron-offline.zip` 未包含时需联网安装，运行 `cd modules\live2
 **Q: 想保留旧版配置？**
 
 A: 方法二创建新目录，只把旧版的 config.yaml / SOUL.md / .env 复制过去即可。
+
 
 
