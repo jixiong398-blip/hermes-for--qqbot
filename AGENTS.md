@@ -18,6 +18,22 @@
 
 角色默认是《BanG Dream!》相关设定（SOUL.md），用户可完全自定义。
 
+### 目录结构（v0.14.3+）
+
+```
+bot-template/
+├─ install.bat / start.bat / Stop-All.bat / update.bat / 配置API.bat
+├─ README.md / LICENSE / VERSION / CHANGELOG.md / UPGRADE.md
+├─ hermes/          ← 引擎（局域网 git 工作区）
+│   └─ core/        ← 引擎权威（含 OneBot 插件、记忆系统、80+ 工具）
+├─ templates/       ← 配置模板
+├─ modules/         ← 功能模块：napcat/ live2d/ dashboard/ knowledge/
+└─ extras/          ← 安装包/构建/运行时：node/ scripts/ 安装包
+```
+
+> **注意**：引擎代码在 `hermes/core/`，`modules/`（napcat/live2d）与 `hermes/` 平级。脚本路径以本文件为准。
+> **Bug 行为约定**：`hermes/docs/BUGS_v0.14.4.md`（@ 强信号必判必回、窗口照常、后续消息只当背景）——改判定逻辑前先读。
+
 ---
 
 ## 快速开始（给 agent 的安装清单）
@@ -40,7 +56,7 @@
 
 ```powershell
 # 1. 创建运行目录
-python scripts/install.py
+python extras/scripts/install.py
 
 # 2. 检查 .env（~/.hermes/.env）已生成
 #    - ONEBOT_SELF_ID: bot 的 QQ 号（NapCat 登录后回填）
@@ -49,7 +65,7 @@ python scripts/install.py
 #    - ONEBOT_BOT_NAME: 角色名（install.py 已从 SOUL.md 自动提取）
 
 # 3. 配置 LLM（或用 配置API.bat）
-python scripts/setup_config.py
+python extras/scripts/setup_config.py
 ```
 
 ---
@@ -68,7 +84,7 @@ QQ 消息 → NapCat (:3001 WS)
   → Phase 3 执行（group_executor.py）: 群锁串行 + agent 推理 + 回复
 ```
 
-关键文件（`hermes/plugins/platforms/onebot/`）：
+关键文件（`hermes/core/plugins/platforms/onebot/`）：
 
 | 文件 | 职责 |
 |---|---|
@@ -92,7 +108,7 @@ QQ 消息 → NapCat (:3001 WS)
 
 **换角色流程**：编辑 `SOUL.md`（首行 `# SOUL.md — 角色名`）→ 运行 `一键替换灵魂核心.bat`（自动同步角色名到 .env）。
 
-### 记忆系统（`hermes/agent/memory/`）
+### 记忆系统（`hermes/core/agent/memory/`）
 
 | 层 | 作用 | 生命周期 |
 |---|---|---|
@@ -131,18 +147,18 @@ QQ 消息 → NapCat (:3001 WS)
 
 ```powershell
 # 下载新版本到临时目录后
-python <新版本目录>\scripts\upgrade.py <新版本目录>
+python <新版本目录>\extras\scripts\upgrade.py <新版本目录>
 ```
 
 `upgrade.py` 会把 `UPGRADE_MAP` 中列出的文件**双写**：
-1. `~/.hermes/`（实际运行目录，自动去掉 `hermes/` 前缀）
+1. `~/.hermes/`（实际运行目录，自动去掉 `hermes/core/` 前缀）
 2. `BOT_DIR`（模板目录保留）
 
 ### 方式三：git clone 用户
 
 ```powershell
 git pull origin main
-.venv\Scripts\python scripts\upgrade.py
+.venv\Scripts\python extras\scripts\upgrade.py
 ```
 
 ---
