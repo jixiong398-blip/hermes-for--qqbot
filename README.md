@@ -54,7 +54,7 @@ bot-template/
 3. 保存为 `templates\SOUL.md`
 4. 双击 `templates\一键替换灵魂核心.bat` → 写入 `~\.hermes\SOUL.md` 并同步角色名到 .env
 
-> 角色名参数化：`ONEBOT_BOT_NAME` 环境变量（env > config.yaml > 默认 Soyo），judge/recorder 自动跟随。
+> 角色名参数化：`ONEBOT_BOT_NAME` 环境变量（env > config.yaml > 默认值），judge/recorder 自动跟随。
 
 ## 功能
 

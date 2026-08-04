@@ -399,6 +399,25 @@ def _build_pre_reply_judge_prompt(
     parts.append(f"[{ts}] {name}: {text}")
     parts.append(f"消息类型：{msg_type}")
     parts.append(f"是否@{bot_name}：{at_tag}")
+
+    follow_up = current_msg.get("follow_up") or []
+    if follow_up:
+        parts.append("")
+        parts.append(f"## 当前消息之后到达的消息（{bot_name} 被 @ 后窗口内的后续，仅供参考）")
+        for m in follow_up:
+            fts = m.get("ts_str", "")
+            fname = m.get("name", "")
+            ftext = m.get("text", "")[:200]
+            fis_bot = m.get("is_bot", False)
+            fis_at = m.get("is_at", False)
+            ftag = " [bot]" if fis_bot else ""
+            fat_tag = f" @{bot_name}" if fis_at else ""
+            parts.append(f"[{fts}] {fname}{ftag}{fat_tag}: {ftext}")
+        parts.append("")
+        parts.append(f"## 判定规则（@ 强信号）")
+        parts.append(f"当前消息明确 @ 了 {bot_name}：必须回应该消息，should_reply=true。")
+        parts.append(f"上述『后续消息』只作背景：若与 @ 请求相关（追问/补充）可一并回应；若不相关（表情包/他人闲聊）直接忽略——不影响对 @ 消息的回复义务。")
+
     parts.append("")
     parts.append("请判定（包含 episode 新增维度）：")
     return "\n".join(parts)

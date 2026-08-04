@@ -76,6 +76,19 @@ class TriggerCoordinator:
         is_mentioned = msg.get("_is_mentioned", False)
 
         if is_mentioned:
+            logger.info("[TriggerCoordinator] on_ingested MENTION group=%s seq=%s phase=%s",
+                        group_id, seq, gs.episode_state.episode_phase if gs else "no-gs")
+            # Hard signal: never queue behind an in-flight judge and never
+            # get overwritten by a later pending message. Cancel the running
+            # judge (its result would be stale anyway) and judge the mention
+            # right away. The 1s attentive window still applies.
+            existing = self._judge_tasks.get(group_id)
+            if existing is not None and existing.task is not None and not existing.task.done():
+                existing.task.cancel()
+                existing.pending_seq = None
+                existing.pending_msg = None
+                self._judge_tasks.pop(group_id, None)
+            gs = self._adapter._group_states.get(group_id)
             if gs is not None:
                 old_phase = gs.episode_state.episode_phase or "empty"
                 if old_phase in ("exiting", "winding_down", ""):
@@ -147,7 +160,20 @@ class TriggerCoordinator:
             latest_user = gs.latest_user_message()
             if latest_user is None:
                 return
-            current_seq = latest_user.seq
+
+            target_user = latest_user
+            if msg.get("_is_mentioned"):
+                # Judge the mentioned message itself — newer messages that
+                # arrived during the window are background only, they must
+                # not replace the @ request as the judged subject.
+                for m in gs.get_recent():
+                    if m.seq == jt.initial_seq:
+                        target_user = m
+                        break
+                logger.info("[TriggerCoordinator] Mention judge: initial_seq=%s target_seq=%s is_at=%s text=%r",
+                            jt.initial_seq, target_user.seq, target_user.at_self,
+                            getattr(target_user, "text", "")[:40])
+            current_seq = target_user.seq
 
             gs.mark_judged(current_seq)
             gs.increment_decision_epoch()
@@ -200,6 +226,7 @@ class TriggerCoordinator:
                     mode="judge",
                     decision_reason=result.get("reason", "语义判定需要回复")[:30],
                     raw_msg=msg,
+                    is_mention=bool(msg.get("_is_mentioned", False)),
                 ))
             else:
                 # no_reply. Topic shift while attentive starts the exit
@@ -230,6 +257,8 @@ class TriggerCoordinator:
         gs = self._adapter._group_states.get(group_id)
         recent_raw = gs.get_recent()
 
+        is_mention = msg.get("_is_mentioned", False)
+
         recent_no_current = [m for m in recent_raw if m.seq < latest_user.seq]
         recent_dicts = [
             {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
@@ -238,7 +267,15 @@ class TriggerCoordinator:
             for m in recent_no_current[-10:]
         ]
 
-        is_mention = msg.get("_is_mentioned", False)
+        follow_up_dicts = []
+        if is_mention:
+            follow_up_dicts = [
+                {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
+                 "name": m.name, "text": m.text[:200], "is_bot": m.is_bot,
+                 "is_at": m.at_self, "at_targets": list(getattr(m, "at_targets", []) or [])}
+                for m in recent_raw if m.seq > latest_user.seq
+            ][-5:]
+
         raw_text = self._adapter._cq_to_readable(self._adapter._get_raw_text(msg) or "")
 
         from .semantic_judge import _get_bot_name as _get_bn
@@ -267,6 +304,8 @@ class TriggerCoordinator:
             "msg_type": msg_type_str, "is_at": is_mention,
             "at_targets": _at_targets,
         }
+        if follow_up_dicts:
+            current_dict["follow_up"] = follow_up_dicts
 
         reply_to_name, reply_to_uid = self._resolve_reply(msg)
 

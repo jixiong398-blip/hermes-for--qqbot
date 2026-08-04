@@ -1,5 +1,30 @@
 ﻿# bot-template 更新日志
 
+## v0.14.4 (2026-08-04)
+
+### 群内 @机器人 不回复修复（同步自服务器）
+
+**现象**：群里直接 @机器人（"今天天气怎么样"）时，偶尔不回复或延迟 20-40s，多次 @ 只回最后一次。
+
+**三层根因**：
+1. **judge 判定主体漂移**：`_judge_worker` 用 `latest_user`（最新消息）做判定主体，但 @ 消息后若有他人消息，judge 判定的是**别人的消息**而非 @ 消息 → LLM 看到"当前消息是别人的"就把 @ 忽略
+2. **`jt.seq` 属性错误**：`_JudgeTask` 字段为 `initial_seq`，pending @ reschedule 后访问 `jt.seq` → AttributeError → 判定静默失败
+3. **@ 排队 + pending 覆盖**：@ 时 judge in-flight，消息进 `pending_msg` 排队（最长 12s+）；pending 只有一份，多次 @ 时前面的 @ 被覆盖丢失
+
+**修复**：
+- judge 判定 = @ 消息（用 `initial_seq` 定位 buffer，不漂移）
+- @ 后窗口内消息标 `follow_up`，不替换判定主体
+- prompt 强化 @ 强信号规则（对应 @ 消息必须回复，不能回绝）
+- @ 强信号不排队不等待：立即取消 in-flight 普通判定，走自己的 judge（1s 窗口）
+- `should_reply` 结果携带 `is_mention` 给 executor
+
+**行为约定**（防回归）：
+- @ = 强信号，必进 judge；@ 消息自己不排队、不覆盖
+- 窗口照常（attentive 1s / idle 5s / 退出倒计时 15s）
+- 窗口内后续消息只是背景（可回可不回），不影响 @ 回复
+
+**涉及文件**：`hermes/core/plugins/platforms/onebot/trigger_coordinator.py`、`semantic_judge.py`
+
 ## v0.14.3 (2026-08-04)
 
 ### 仓库结构重构 — core/ 分层 + 局域网 git 同步

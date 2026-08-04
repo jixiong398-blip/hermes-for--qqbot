@@ -1,6 +1,6 @@
 ﻿# 升级指南
 
-> v0.14.3
+> v0.14.4
 
 ## 目录结构（v0.14.3+）
 
@@ -95,6 +95,11 @@ git pull origin main
 ---
 
 ## 版本历史
+
+### v0.14.4
+- **@ 强信号修复**：群内 @机器人 不回复/延迟（judge 判定主体漂移 + jt.seq + pending 覆盖三层根因）
+- **行为约定**：@ = 强信号必判必回，窗口内后续消息只当背景
+- 同步 docs/BUGS_v0.14.4.md + docs/UPDATE_LOG.md
 
 ### v0.14.1
 - **Dashboard 视觉重构**：更简洁现代，服务状态卡片（状态圆点）、响应式
@@ -238,3 +243,5 @@ A: `electron-offline.zip` 未包含时需联网安装，运行 `cd modules\live2
 **Q: 想保留旧版配置？**
 
 A: 方法二创建新目录，只把旧版的 config.yaml / SOUL.md / .env 复制过去即可。
+
+
