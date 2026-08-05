@@ -127,7 +127,7 @@ echo   Updating scripts...
 robocopy "%SRC_DIR%\extras\scripts" "extras\scripts" /E /NFL /NDL /NJH /NJS /NC /NS >nul
 
 echo   Updating batch files...
-for %%f in (install.bat start.bat FixNapCat.bat Stop-All.bat "PeiZhiAPI.bat") do (
+for %%f in (install.bat start.bat FixNapCat.bat Stop-All.bat "配置API.bat") do (
     if exist "%SRC_DIR%\%%f" copy /y "%SRC_DIR%\%%f" "%%f" >nul
 )
 

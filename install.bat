@@ -1,7 +1,7 @@
 ﻿@echo off
 chcp 65001 >nul 2>nul
 set PYTHONIOENCODING=utf-8
-title QQBot Installer v0.10.0
+title QQBot Installer v%VER%
 cd /d "%~dp0"
 cls
 
@@ -9,9 +9,13 @@ set "PY=%LocalAppData%\Programs\Python\Python312\python.exe"
 set "PY_ROOT=%LocalAppData%\Programs\Python\Python312"
 set "SCRIPT_DIR=%~dp0"
 
+:: Read version from VERSION file (avoid hardcoded version drift)
+set "VER=0.14.7"
+if exist "VERSION" (for /f "delims=" %%v in (VERSION) do set "VER=%%v")
+
 echo.
 echo   ================================================
-echo         QQBot - Offline-First Installer v0.10.0
+echo         QQBot - Offline-First Installer v%VER%
 echo   ================================================
 echo.
 echo   Built-in offline packages:
@@ -208,7 +212,7 @@ echo.
 echo   Next Steps:
 echo     1. Start NapCat:   modules\napcat\napcat.bat ^(scan QR to login^)
 echo     2. Open dashboard: start.bat ^(configure WS:3001/HTTP:3000 ports per guide^)
-echo     3. Set API keys:   "PeiZhiAPI.bat"
+echo     3. Set API keys:   "配置API.bat"
 echo     4. Create SOUL:    Edit templates\SOUL.md ^> run soul replacer
 echo     5. Start bot:      start.bat
 echo.
