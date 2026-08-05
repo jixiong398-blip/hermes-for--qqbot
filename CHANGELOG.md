@@ -1,5 +1,31 @@
 ﻿# bot-template 更新日志
 
+## v0.14.7 (2026-08-05)
+
+### 官方脚本修复 + 旧版用户一键迁移
+
+**背景**：真实用户反馈从 v0.14.1（平铺结构）升级到 v0.14.6（core 结构）需手动适配 8 步。审查官方脚本后发现多处 bug，本版全部修复并新增一键迁移工具。
+
+**脚本 bug 修复**：
+- `upgrade.py`：**BOT_DIR 计算错误**——脚本从 `scripts/` 移到 `extras/scripts/` 后，`SCRIPT_DIR.parent` 指向 `extras/` 而非模板根目录 → 双写 `~/.hermes` 与 BOT_DIR 时第二个目标写错位置。改为向上查找含 `install.bat` 的目录（兼容新旧位置）
+- `install.bat`：`pip install -e hermes` / `-r hermes\requirements.txt` 指向不存在的路径（pyproject.toml / requirements.txt 实际在 `hermes\core\`）→ 修正为 `hermes\core`
+- `update.bat`：`-r %SRC_DIR%\hermes\requirements.txt` 同样路径错误 + `%SRC_DIR%\scripts\upgrade.py` 路径错误（实际在 `extras\scripts\`）→ 修正
+
+**新增 `extras/scripts/migrate_legacy.py`（旧版一键迁移）**：
+- 检测旧平铺结构（存在 `hermes\gateway\` 且无 `hermes\core\`）
+- **自动备份** `hermes\` → `hermes.bak.<时间戳>`（回滚点，含用户本地修改）
+- **用户手动确认**后才删除旧文件（`y`/`n`，选 `n` 中止且备份保留）
+- 复制新版 `hermes\core` + docs + templates
+- 重建 venv editable 映射 → `hermes\core` + 升级依赖（含 `requests>=2.33.0` CVE 修复）
+- 自动同步 `~/.hermes`（调用修复后的 upgrade.py）
+- 输出**本地修改文件清单**：官方 v0.14.6 已内置 `_parse_judge_json` 容错 / `_is_mentioned` CQ 回退 / `_self_id` 预载 / send_message 诊断日志 → 自动标注"无需移植"
+- 检查 `config.yaml` 是否含 `context_length: 1000000`（缺失给提示）
+- 支持 `--dry-run` 预演模式
+
+**update.bat 自动引导**：检测到旧结构时提示一键迁移（`y`/`n` 选择），迁移后自动跳过重复的复制/装依赖步骤
+
+**重要**：升级只动 `hermes\` 代码目录，`~/.hermes` 数据、`config.yaml` / `SOUL.md` / `.env` 完全不动；备份确认无误后可手动删除 `hermes.bak.*`。
+
 ## v0.14.6 (2026-08-05)
 
 ### memory_store.db 锁问题根治 + @全体信号

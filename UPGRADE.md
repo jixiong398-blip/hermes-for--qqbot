@@ -1,6 +1,6 @@
 ﻿# 升级指南
 
-> v0.14.4
+> v0.14.7
 
 ## 目录结构（v0.14.3+）
 
@@ -44,10 +44,36 @@ bot-template 根
 ```
 cd bot-template
 git pull origin main
-.venv\Scripts\python scripts\upgrade.py
+.venv\Scripts\python extras\scripts\upgrade.py
 ```
 
 ---
+
+## 旧版用户迁移（v0.14.2 及以下 → v0.14.3+ core 结构）
+
+如果你的安装还是**旧版平铺结构**（存在 `hermes\gateway\` 且**没有** `hermes\core\`），
+直接跑 `update.bat` / `upgrade.py` 会新旧文件并存、import 混乱。请先做迁移：
+
+### 方式 A：双击 update.bat（推荐，自动检测）
+
+`update.bat` 会自动检测旧结构并引导迁移：
+
+1. **自动备份** `hermes\` → `hermes.bak.<日期>`（回滚点，含你的本地修改）
+2. **询问确认**：是否删除旧平铺文件（输入 `y` 确认；输入 `n` 则中止，备份保留）
+3. 复制新版 `hermes\core` 结构
+4. 自动重建 Python 环境（editable 映射 → `hermes\core`）+ 同步 `~/.hermes`
+5. 输出**本地修改文件清单**（官方 v0.14.6 已内置的修复会自动标注"无需移植"）
+
+### 方式 B：手动运行迁移脚本
+
+```
+python extras\scripts\migrate_legacy.py          # 正式迁移
+python extras\scripts\migrate_legacy.py --dry-run # 先预演，只看计划不动手
+```
+
+> **迁移只动 `hermes\` 代码目录**，`~/.hermes` 数据、`config.yaml` / `SOUL.md` / `.env` 完全不动。
+> 备份目录确认一切正常后，可手动删除 `hermes.bak.*`。
+> 旧版"@ 绕过 judge"补丁请放弃——官方 v0.14.4 起改为"@ 强信号走 judge"。
 
 ## 文件安装位置
 
@@ -55,26 +81,26 @@ git pull origin main
 
 | 源文件（bot-template 内） | 目标位置（`~/.hermes/`） |
 |---|---|
-| `hermes/agent/memory/retrieval.py` | `agent/memory/retrieval.py` |
-| `hermes/agent/memory/episodic_index.py` | `agent/memory/episodic_index.py` |
-| `hermes/agent/memory/gateway.py` | `agent/memory/gateway.py` |
-| `hermes/agent/memory/short_term.py` | `agent/memory/short_term.py` |
-| `hermes/plugins/platforms/onebot/adapter.py` | `plugins/platforms/onebot/adapter.py` |
-| `hermes/plugins/platforms/onebot/trigger_coordinator.py` | `plugins/platforms/onebot/trigger_coordinator.py` |
-| `hermes/plugins/platforms/onebot/group_executor.py` | `plugins/platforms/onebot/group_executor.py` |
-| `hermes/plugins/platforms/onebot/group_state.py` | `plugins/platforms/onebot/group_state.py` |
-| `hermes/plugins/platforms/onebot/semantic_judge.py` | `plugins/platforms/onebot/semantic_judge.py` |
-| `hermes/plugins/platforms/onebot/media_pipeline.py` | `plugins/platforms/onebot/media_pipeline.py` |
-| `hermes/corpus_history.py` | `corpus_history.py` |
-| `hermes/tools/chat_history_search_tool.py` | `tools/chat_history_search_tool.py` |
-| `hermes/tools/memory_gateway_tool.py` | `tools/memory_gateway_tool.py` |
-| `hermes/tools/browser_tool.py` | `tools/browser_tool.py` |
-| `hermes/tools/vision_tools.py` | `tools/vision_tools.py` |
-| `hermes/tools/web_tools.py` | `tools/web_tools.py` |
-| `hermes/gateway/run.py` | `gateway/run.py` |
-| `hermes/plugins/knowledge-base/__init__.py` | `plugins/knowledge-base/__init__.py` |
-| `hermes/plugins/knowledge-base/knowledge_base_tool.py` | `plugins/knowledge-base/knowledge_base_tool.py` |
-| `hermes/agent/memory/obsidian.py` | `agent/memory/obsidian.py` |
+| `hermes/core/agent/memory/retrieval.py` | `agent/memory/retrieval.py` |
+| `hermes/core/agent/memory/episodic_index.py` | `agent/memory/episodic_index.py` |
+| `hermes/core/agent/memory/gateway.py` | `agent/memory/gateway.py` |
+| `hermes/core/agent/memory/short_term.py` | `agent/memory/short_term.py` |
+| `hermes/core/plugins/platforms/onebot/adapter.py` | `plugins/platforms/onebot/adapter.py` |
+| `hermes/core/plugins/platforms/onebot/trigger_coordinator.py` | `plugins/platforms/onebot/trigger_coordinator.py` |
+| `hermes/core/plugins/platforms/onebot/group_executor.py` | `plugins/platforms/onebot/group_executor.py` |
+| `hermes/core/plugins/platforms/onebot/group_state.py` | `plugins/platforms/onebot/group_state.py` |
+| `hermes/core/plugins/platforms/onebot/semantic_judge.py` | `plugins/platforms/onebot/semantic_judge.py` |
+| `hermes/core/plugins/platforms/onebot/media_pipeline.py` | `plugins/platforms/onebot/media_pipeline.py` |
+| `hermes/core/corpus_history.py` | `corpus_history.py` |
+| `hermes/core/tools/chat_history_search_tool.py` | `tools/chat_history_search_tool.py` |
+| `hermes/core/tools/memory_gateway_tool.py` | `tools/memory_gateway_tool.py` |
+| `hermes/core/tools/browser_tool.py` | `tools/browser_tool.py` |
+| `hermes/core/tools/vision_tools.py` | `tools/vision_tools.py` |
+| `hermes/core/tools/web_tools.py` | `tools/web_tools.py` |
+| `hermes/core/gateway/run.py` | `gateway/run.py` |
+| `hermes/core/plugins/knowledge-base/__init__.py` | `plugins/knowledge-base/__init__.py` |
+| `hermes/core/plugins/knowledge-base/knowledge_base_tool.py` | `plugins/knowledge-base/knowledge_base_tool.py` |
+| `hermes/core/agent/memory/obsidian.py` | `agent/memory/obsidian.py` |
 | `scripts/qzone-post.py` | `scripts/qzone-post.py` |
 | `scripts/decrypt_cvpkg.py` | `scripts/decrypt_cvpkg.py` |
 

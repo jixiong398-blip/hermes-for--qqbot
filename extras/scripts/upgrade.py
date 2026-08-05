@@ -17,7 +17,14 @@ import os, shutil, sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-BOT_DIR = SCRIPT_DIR.parent
+# BOT_DIR = bot-template root: walk up from SCRIPT_DIR until we find a dir
+# containing install.bat. Script moved from scripts/ -> extras/scripts in
+# v0.14.3, so SCRIPT_DIR.parent alone is no longer the root.
+BOT_DIR = SCRIPT_DIR
+for _ in range(4):
+    if (BOT_DIR / "install.bat").exists():
+        break
+    BOT_DIR = BOT_DIR.parent
 HERMES_HOME = Path.home() / ".hermes"
 
 # Files to upgrade (source -> destination relative to BOT_DIR)

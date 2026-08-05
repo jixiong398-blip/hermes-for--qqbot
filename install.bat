@@ -170,13 +170,13 @@ if %errorlevel% neq 0 (
 )
 call .venv\Scripts\activate.bat
 echo   Installing Hermes engine (with memory system, OneBot adapter)...
-pip install -e "%SCRIPT_DIR%hermes" --no-deps 2>&1
-if %errorlevel% neq 0 (pip install -e "%SCRIPT_DIR%hermes" 2>&1)
+pip install -e "%SCRIPT_DIR%hermes\core" --no-deps 2>&1
+if %errorlevel% neq 0 (pip install -e "%SCRIPT_DIR%hermes\core" 2>&1)
 echo   Installing Python dependencies (~100MB, internet required)...
-pip install -r "%SCRIPT_DIR%hermes\requirements.txt" 2>&1
+pip install -r "%SCRIPT_DIR%hermes\core\requirements.txt" 2>&1
 if %errorlevel% neq 0 (
     echo   [ERROR] Dependency install failed - check internet
-    echo   Try mirror: pip install -r hermes\requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    echo   Try mirror: pip install -r hermes\core\requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
     pause & exit /b 1
 )
 echo   Hermes engine installed -- OK
