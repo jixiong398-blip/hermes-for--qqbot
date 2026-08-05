@@ -42,6 +42,7 @@ import json
 import logging
 import math
 import re
+import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -206,6 +207,8 @@ class EpisodeIndex:
         if not entries:
             return 0
         conn = self._conn()
+        if conn.in_transaction:
+            conn.rollback()
         row = conn.execute(
             "SELECT last_turn_index FROM episode_watermark WHERE session_id = ?",
             (session_id,),
@@ -228,6 +231,7 @@ class EpisodeIndex:
                 break
             if self._store_fragment(conn, session_id, chat_type, chunk):
                 created += 1
+                conn.commit()
 
         last_idx = int(getattr(fresh[-1], "turn_index", 0) or 0)
         conn.execute(
@@ -299,23 +303,53 @@ class EpisodeIndex:
         turn_idx = [int(getattr(e, "turn_index", 0) or 0) for e in chunk]
         now = time.time()
 
-        cur = conn.execute(
-            "INSERT INTO episode_fragments "
-            "(session_id, chat_type, scope, share_level, text, speakers, topics,"
-            " turn_start, turn_end, start_ts, end_ts, created_at, token_count,"
-            " dropped_lines) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                session_id, chat_type, scope, share_level, text,
-                json.dumps(speakers, ensure_ascii=False),
-                json.dumps(topics[:20], ensure_ascii=False),
-                min(turn_idx) if turn_idx else 0,
-                max(turn_idx) if turn_idx else 0,
-                min(ts_list) if ts_list else now,
-                max(ts_list) if ts_list else now,
-                now, len(tokens), dropped,
-            ),
-        )
+        for _attempt in range(5):
+            try:
+                cur = conn.execute(
+                    "INSERT INTO episode_fragments "
+                    "(session_id, chat_type, scope, share_level, text, speakers, topics,"
+                    " turn_start, turn_end, start_ts, end_ts, created_at, token_count,"
+                    " dropped_lines) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        session_id, chat_type, scope, share_level, text,
+                        json.dumps(speakers, ensure_ascii=False),
+                        json.dumps(topics[:20], ensure_ascii=False),
+                        min(turn_idx) if turn_idx else 0,
+                        max(turn_idx) if turn_idx else 0,
+                        min(ts_list) if ts_list else now,
+                        max(ts_list) if ts_list else now,
+                        now, len(tokens), dropped,
+                    ),
+                )
+                break
+            except sqlite3.OperationalError as _e:
+                if "locked" not in str(_e).lower() or _attempt == 4:
+                    conn.rollback()
+                    raise
+                import threading as _t
+                import sys as _sys
+                try:
+                    from .store import MemoryStore
+                    _conns_info = MemoryStore._diagnose_conns()
+                except Exception:
+                    _conns_info = "?"
+                logger.warning(
+                    "[EPI] db locked (retry %d/4) in_txn=%s conns=[%s] threads=[%s]",
+                    _attempt + 1, conn.in_transaction, _conns_info,
+                    ", ".join(t.name for t in _t.enumerate()[:24]),
+                )
+                for _tid, _fr in _sys._current_frames().items():
+                    _stack = []
+                    _f = _fr
+                    while _f:
+                        _stack.append(f"{_f.f_code.co_name}@{_f.f_code.co_filename.split('/')[-1]}:{_f.f_lineno}")
+                        _f = _f.f_back
+                    logger.warning("[EPI]   frame tid=%s: %s", _tid, " <- ".join(_stack[-6:]))
+                conn.rollback()
+                time.sleep(1.0)
+        else:
+            cur = None
         ep_id = cur.lastrowid
         conn.executemany(
             "INSERT OR IGNORE INTO episode_tokens (token, episode_id) VALUES (?, ?)",

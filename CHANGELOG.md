@@ -1,5 +1,30 @@
 ﻿# bot-template 更新日志
 
+## v0.14.6 (2026-08-05)
+
+### memory_store.db 锁问题根治 + @全体信号
+
+**数据库锁根治**（`database is locked` 反复出现）：
+- **最终根因**：`_rebuild_fts` 的 FTS5 rebuild 执行后**从未 commit**——事务在事件循环线程连接上永久挂起（线程空闲但锁永久持有）→ 所有其他连接写入永久 BUSY
+- **修复**：`_rebuild_fts` 每条 rebuild 后 commit + 异常 rollback
+- **连带修复**：episodic 归档 fragment 立即 commit + 失败重试(5×) + rollback 防连锁；sleep_loop 每条 commit；吞异常点（create_memory_edge/prune）rollback
+- **验证**：修复后归档/蒸馏全部成功（indexed 3 fragments, distill promoted=8），0 锁警告
+
+**@全体信号**（`[CQ:at,qq=all]`）：
+- 之前：@全体完全无信号（不触发查看）
+- 现在：进入关注态 + 立即 judge（查看非义务），prompt 标注"@全体，应认真查看"
+
+**涉及文件**：`store.py`、`episodic_index.py`、`adapter.py`、`trigger_coordinator.py`、`semantic_judge.py`
+
+## v0.14.5 (2026-08-05)
+
+### episodic 索引写锁修复
+
+- **症状**：episode 归档频繁 `sqlite3.OperationalError: database is locked`
+- **根因**：`episodic_index.index_session` 所有 fragment 共用一个事务，LLM 隐私判定（每 fragment 5-10s）在事务内执行 → 写锁持有 10-60s，其他写入撞锁
+- **修复**：每 fragment 写入后立即 `conn.commit()`，锁窗口缩至毫秒级
+- **涉及**：`episodic_index.py`
+
 ## v0.14.4 (2026-08-04)
 
 ### 群内 @机器人 不回复修复（同步自服务器）

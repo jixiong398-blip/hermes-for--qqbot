@@ -399,6 +399,9 @@ def _build_pre_reply_judge_prompt(
     parts.append(f"[{ts}] {name}: {text}")
     parts.append(f"消息类型：{msg_type}")
     parts.append(f"是否@{bot_name}：{at_tag}")
+    if current_msg.get("at_all"):
+        parts.append(f"是否@全体：是（本条消息 @ 了全体成员，{bot_name} 包含在内）")
+        parts.append(f"- 规则：@全体消息 {bot_name} 应认真查看；与 {bot_name} 相关或需要回应时可回应，非硬性义务。")
 
     follow_up = current_msg.get("follow_up") or []
     if follow_up:

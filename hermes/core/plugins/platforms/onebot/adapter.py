@@ -2403,6 +2403,10 @@ class OneBotAdapter(BasePlatformAdapter):
                 _at_qq = str(_seg.get("data", {}).get("qq", ""))
                 if not _at_qq:
                     continue
+                if _at_qq in ("all", "全体"):
+                    msg["_at_all"] = True
+                    _at_targets.append("全体")
+                    continue
                 if _at_qq == _self_qq:
                     _at_self = True
                     _at_targets.append("自己")

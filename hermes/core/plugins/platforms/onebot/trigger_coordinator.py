@@ -105,6 +105,18 @@ class TriggerCoordinator:
             self._schedule_judge(group_id, seq, msg)
             return
 
+        if msg.get("_at_all"):
+            # @全体: not a personal mention, but includes Soyo — enter
+            # attentive and judge the message itself right away (1s window),
+            # so the bot at least reads @-everyone messages instead of
+            # treating them as ambient noise. Not a hard reply obligation.
+            logger.info("[TriggerCoordinator] on_ingested AT_ALL group=%s seq=%s", group_id, seq)
+            if gs is not None:
+                gs.enter_attentive()
+            self._exit_countdowns.pop(group_id, None)
+            self._schedule_judge(group_id, seq, msg)
+            return
+
         if gs.is_attentive():
             self._schedule_judge(group_id, seq, msg)
             return
@@ -162,7 +174,7 @@ class TriggerCoordinator:
                 return
 
             target_user = latest_user
-            if msg.get("_is_mentioned"):
+            if msg.get("_is_mentioned") or msg.get("_at_all"):
                 # Judge the mentioned message itself — newer messages that
                 # arrived during the window are background only, they must
                 # not replace the @ request as the judged subject.
@@ -258,6 +270,7 @@ class TriggerCoordinator:
         recent_raw = gs.get_recent()
 
         is_mention = msg.get("_is_mentioned", False)
+        at_all = msg.get("_at_all", False)
 
         recent_no_current = [m for m in recent_raw if m.seq < latest_user.seq]
         recent_dicts = [
@@ -268,7 +281,7 @@ class TriggerCoordinator:
         ]
 
         follow_up_dicts = []
-        if is_mention:
+        if is_mention or at_all:
             follow_up_dicts = [
                 {"ts_str": time.strftime('%m-%d %H:%M', time.localtime(m.ts)),
                  "name": m.name, "text": m.text[:200], "is_bot": m.is_bot,
@@ -304,6 +317,8 @@ class TriggerCoordinator:
             "msg_type": msg_type_str, "is_at": is_mention,
             "at_targets": _at_targets,
         }
+        if at_all:
+            current_dict["at_all"] = True
         if follow_up_dicts:
             current_dict["follow_up"] = follow_up_dicts
 

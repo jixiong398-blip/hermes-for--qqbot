@@ -322,12 +322,31 @@ class MemoryStore:
         self._local = threading.local()
         self._init_db()
 
+    _all_conns = set()
+
+    def _register_conn(self, conn) -> None:
+        try:
+            MemoryStore._all_conns.add(conn)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _diagnose_conns() -> str:
+        parts = []
+        for c in list(MemoryStore._all_conns):
+            try:
+                parts.append(f"in_txn={c.in_transaction} total_changes={c.total_changes}")
+            except Exception:
+                parts.append("closed")
+        return "; ".join(parts) if parts else "none"
+
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
             self._local.conn = sqlite3.connect(str(self._db_path), timeout=30)
             self._local.conn.row_factory = sqlite3.Row
             self._local.conn.execute("PRAGMA journal_mode=WAL")
             self._local.conn.execute("PRAGMA busy_timeout=30000")
+            self._register_conn(self._local.conn)
         return self._local.conn
 
     def _init_db(self):
@@ -1075,7 +1094,11 @@ class MemoryStore:
             try:
                 conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
             except sqlite3.OperationalError:
-                pass
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        conn.commit()
 
     def vacuum(self):
         """Full vacuum — only when free pages exceed threshold."""
