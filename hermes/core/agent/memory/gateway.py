@@ -638,7 +638,12 @@ class UnifiedMemoryGateway:
             from agent.memory.obsidian import ObsidianVault
             from pathlib import Path
 
-            vault_path = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "E:/ai/knowledge"))
+            # 优先环境变量 OBSIDIAN_VAULT_PATH；未指定时默认项目内 modules/knowledge
+            # （gateway.py 位于 <root>/hermes/core/agent/memory/，parents[4] = 项目根）
+            vault_path = Path(os.environ.get(
+                "OBSIDIAN_VAULT_PATH",
+                str(Path(__file__).resolve().parents[4] / "modules" / "knowledge"),
+            ))
             if not vault_path.exists():
                 vault_path = Path.home() / "Documents" / "Obsidian"
 
