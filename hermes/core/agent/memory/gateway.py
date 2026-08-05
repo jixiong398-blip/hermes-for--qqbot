@@ -425,6 +425,10 @@ class UnifiedMemoryGateway:
                 stats["episodes_pruned"] = self._epi.prune()
             except Exception:
                 logger.debug("episode prune failed", exc_info=True)
+                try:
+                    self._store._get_conn().rollback()
+                except Exception:
+                    pass
 
         # Lightweight maintenance (FTS5 rebuild, pragma optimize)
         # Full VACUUM with freelist threshold is only run when needed
@@ -500,6 +504,7 @@ class UnifiedMemoryGateway:
                 if target and target[0].id != ep["id"] and target[0].category != "general":
                     self.correct(target[0].id, ep["value"][:500], new_confidence=0.85)
                     stats["corrections_triggered"] += 1
+                conn.commit()
                 continue
 
             ref_ts = ep["created_at"]
@@ -520,8 +525,13 @@ class UnifiedMemoryGateway:
                         try:
                             self._store.create_memory_edge(new_id, ep["id"], "abstracts_from", 0.8)
                         except Exception:
-                            pass
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
                     stats["facts_promoted"] += 1
+
+            conn.commit()
 
         conn.execute(
             "INSERT OR REPLACE INTO _sleep_watermark (key, value) VALUES ('last_sleep_run', ?)",
