@@ -294,7 +294,7 @@ def main():
     print(bold("  [4/4] QQ 配置"))
     owner_qq = ask("管理员 QQ 号（主人，能执行指令）", required=True)
     terminal_cwd = str(BOT_DIR)
-    knowledge_dir = str(HERMES_HOME / "knowledge")
+    knowledge_dir = str(BOT_DIR / "modules" / "knowledge")
     print(f"\n    知识库路径: {knowledge_dir} (自动)")
     print(dim("    QQ 群号 / 群名 -> NapCat 登录后自动获取"))
     print()

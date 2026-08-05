@@ -75,9 +75,10 @@ def setup():
     print()
     print("Done! Base config files created.")
 
-    # Create knowledge directory
-    kb = HERMES_HOME / "knowledge"
-    kb.mkdir(exist_ok=True)
+    # Create knowledge directory (project-local modules/knowledge,
+    # matches gateway.py OBSIDIAN_VAULT_PATH fallback)
+    kb = BOT_DIR / "modules" / "knowledge"
+    kb.mkdir(parents=True, exist_ok=True)
     (kb / ".gitkeep").touch(exist_ok=True)
     print(f"  Knowledge dir: {kb}")
 
