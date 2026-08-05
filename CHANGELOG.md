@@ -5,18 +5,16 @@
 ### 隐私修复 + 知识库路径统一
 
 **隐私修复（重要）**：
-- `templates/.env.template` + `hermes/templates/.env.template`：移除真实飞书凭证（`FEISHU_APP_SECRET` / `FEISHU_APP_ID` / `FEISHU_HOME_CHANNEL`）与服务器路径（`/home/ji/` 贴纸目录）→ 全部占位符化
-- 路径清洗：`E:/ai`、`/home/ji/` 等本地/服务器真实路径从代码与文档中移除
-  （`obsidian.py` docstring、`sticker_curator_tool.py` schema 描述、`smoke_corpus_history.py`、
-  `UPDATE_LOG.md`、`CHANGELOG.md`、`MAINTENANCE.md`）
+- 环境模板移除真实凭证与路径 → 全部占位符化（详细清洗清单见维护文档）
+- 代码与文档中的本地/服务器真实路径移除
 
 **知识库路径统一（`OBSIDIAN_VAULT_PATH`）**：
-- `gateway.py`：默认知识库路径从硬编码 `E:/ai/knowledge` → **环境变量优先，未指定时默认项目内 `modules/knowledge`**
-- `install.py`：首次安装创建 `modules/knowledge`（原为 `~/.hermes/knowledge`），与 gateway fallback 一致
+- `gateway.py`：默认知识库路径 → **环境变量优先，未指定时默认项目内 `modules/knowledge`**
+- `install.py`：首次安装创建 `modules/knowledge`，与 gateway fallback 一致
 - `setup_config.py`：知识库路径显示同步为项目内 `modules/knowledge`
 
 **安装引导修正**：
-- `install.bat`：版本号改为动态读取 `VERSION` 文件（不再硬编码 v0.10.0）
+- `install.bat`：版本号改为动态读取 `VERSION` 文件（不再硬编码）
 - 配置文件名统一为 `配置API.bat`（原 `PeiZhiAPI.bat` 引用错误）
 
 ## v0.14.7 (2026-08-05)
