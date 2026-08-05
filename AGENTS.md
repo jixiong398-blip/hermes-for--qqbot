@@ -185,6 +185,9 @@ git pull origin main
 # 3. 更新 VERSION + CHANGELOG.md + UPGRADE.md
 # 4. 全仓隐私扫描（见 MAINTENANCE.md）
 # 5. commit + tag + push + 创建 GitHub Release
+# 6. 【必须】把本次 Release 发布说明全文 + GitHub Release 链接
+#    发给用户（https://github.com/jixiong398-blip/hermes-for--qqbot/releases/tag/<tag>）
+#    ——每次推送更新后都要做，是正常流程的一部分
 ```
 
 ---
