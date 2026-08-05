@@ -1,7 +1,7 @@
 """Smoke tests for corpus_history.py — standalone, no network/NapCat required.
 
 Usage:
-    python3 /home/ji/.hermes/tests/smoke_corpus_history.py
+    python3 tests/smoke_corpus_history.py
 """
 
 from __future__ import annotations

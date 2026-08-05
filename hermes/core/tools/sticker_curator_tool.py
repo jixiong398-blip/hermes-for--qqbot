@@ -318,7 +318,7 @@ SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "Absolute path to source image for curate (copy warm-path the "
-                    "LLM sees in context like /home/ji/.cache/.../xxx.jpg) or to "
+                    "LLM sees in context like <cache-dir>/.../xxx.jpg) or to "
                     "the collected file to delete for remove."
                 ),
             },

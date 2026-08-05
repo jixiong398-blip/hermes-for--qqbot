@@ -184,7 +184,7 @@
 - **post_reply_recorder 超时**：20s → 60s，修复回复后 episode state 更新因超时丢失
 - **隐私全仓清洗**（佛像保留）：gateway.py 硬编码路径 → 环境变量 fallback、episodic_index.py docstring 匿名化、semantic_judge.py prompt 示例脱敏、onboarding.html / settings.html / package.json 占位符化
 - **browser_tool.py / vision_tools.py**：修复尾行缺失闭合括号
-- **全仓隐私扫描**：佛像之外零泄露（E:/ai、/home/ji/、QQ号、API Key、Token 全部通过）
+- **全仓隐私扫描**：佛像之外零泄露（本地路径、服务器路径、QQ号、API Key、Token 全部通过）
 
 ## v0.12.4 (2026-07-31)
 
