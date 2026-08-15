@@ -228,6 +228,7 @@ class OneBotAdapter(BasePlatformAdapter):
 
         from .group_state import GroupStateRegistry
         self._group_states = GroupStateRegistry()
+        self._group_send_results: Dict[str, "asyncio.Future"] = {}
 
         # Image description cache: avoid re-calling vision API for same image
         self._image_descriptions: Dict[str, str] = {}
@@ -2493,7 +2494,30 @@ class OneBotAdapter(BasePlatformAdapter):
     # Sending messages
     # ------------------------------------------------------------------
 
+    def _resolve_group_send(self, gid: str, text: str) -> None:
+        """Resolve the GroupExecutor's send-result future for a group."""
+        if not gid:
+            return
+        fut = self._group_send_results.get(gid)
+        if fut is not None and not fut.done():
+            fut.set_result(text)
+
     async def send(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        result = await self._send_message_impl(chat_id, content, reply_to, metadata)
+        if chat_id.startswith("group:"):
+            self._resolve_group_send(
+                chat_id.split(":", 1)[1],
+                content if result.success else "",
+            )
+        return result
+
+    async def _send_message_impl(
         self,
         chat_id: str,
         content: str,
@@ -2512,6 +2536,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     self._group_states.get(_gid).go_quiet()
                 except Exception:
                     pass
+            self._resolve_group_send(_gid, "")
             return SendResult(success=True, message_id=None)
         if content and "[SILENT]" in content:
             logger.info("[OneBot] LLM chose [SILENT], suppressing message")
@@ -2521,6 +2546,7 @@ class OneBotAdapter(BasePlatformAdapter):
                     self._group_states.get(_sgid).record_silent()
                 except Exception:
                     pass
+                self._resolve_group_send(_sgid, "")
             return SendResult(success=True, message_id=None)
 
         if content and chat_id.startswith("group:"):

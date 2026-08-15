@@ -85,7 +85,7 @@ class MediaPipeline:
             logger.warning("[MediaPipeline] No image files resolved for seq=%s (types=%s)",
                            getattr(buffered, "seq", "?"),
                            [s.get("type") for s in (raw_msg.get("message") or []) if isinstance(s, dict)])
-            buffered.text = buffered.text.replace(" [image:pending]", "")
+            buffered.text = buffered.text.replace(" [image:pending]", " [图片下载失败]")
             return "", []
 
         image_hint = " [image:" + ",".join(img_paths) + "]"

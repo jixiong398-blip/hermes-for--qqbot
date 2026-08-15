@@ -84,3 +84,4 @@ node_modules/
 modules/live2d/models/
 modules/live2d/*.zip
 modules/live2d/*.json
+/scripts

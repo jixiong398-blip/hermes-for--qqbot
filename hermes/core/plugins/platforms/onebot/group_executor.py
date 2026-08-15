@@ -94,6 +94,17 @@ class GroupExecutor:
 
             snapshot_seq = gs.last_user_seq
             snapshot = gs.snapshot(snapshot_seq)
+
+            if hasattr(self._adapter, '_media_pipeline'):
+                pending = [
+                    m.seq for m in snapshot
+                    if m.seq <= snapshot_seq and "[image:pending]" in (getattr(m, "text", "") or "")
+                ]
+                if pending:
+                    await asyncio.gather(
+                        *(self._adapter._media_pipeline.await_completion(seq) for seq in pending[:5])
+                    )
+
             state_meta = gs.snapshot_meta()
 
             event = await self._build_event(request, snapshot, state_meta)
@@ -169,6 +180,9 @@ class GroupExecutor:
         elif request.mode == "continuation":
             mode = "[对话模式]"
             trigger_reason = "群里有新消息"
+        elif request.mode == "judge":
+            mode = "[对话模式]"
+            trigger_reason = request.decision_reason
         elif request.mode == "exit":
             # Last word before leaving: reply (sass/farewell), then go quiet.
             mode = "[退出模式]"
@@ -274,13 +288,26 @@ class GroupExecutor:
     # ── agent execution ────────────────────────────────────
 
     async def _run_agent_locked(self, event) -> AgentOutcome:
+        group_id = str(event.source.chat_id)
+        fut = asyncio.get_event_loop().create_future()
+        self._adapter._group_send_results[group_id] = fut
         try:
-            response = await self._adapter.handle_message(event)
-            reply_text = response if isinstance(response, str) else str(response)
+            # base.handle_message spawns a background task and returns
+            # immediately (None) — its return value is NOT the reply.
+            # Wait for the adapter's send() to resolve this group's
+            # future with the actual reply text (45s cap).
+            await self._adapter.handle_message(event)
+            try:
+                reply_text = await asyncio.wait_for(fut, timeout=45)
+            except asyncio.TimeoutError:
+                logger.info("[GroupExecutor] send signal timeout for %s (background may still finish)", group_id)
+                reply_text = ""
             return AgentOutcome(kind="sent", reply_text=reply_text)
         except Exception as e:
             logger.warning("[GroupExecutor] Agent failed: %s", e)
             return AgentOutcome(kind="failed", reply_text="")
+        finally:
+            self._adapter._group_send_results.pop(group_id, None)
 
     def _apply_outcome(self, group_id, event, outcome, gs):
         if outcome.kind == "sent":
