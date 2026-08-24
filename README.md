@@ -1,6 +1,6 @@
 ﻿# QQBot — 通用 QQ 群 AI 机器人模板
 
-> **v0.14.3** — core/ 分层引擎 · 局域网 git 同步 · judge 提速 · 角色名参数化
+> **v0.14.13** — core/ 分层引擎 · judge 提速 · 热回复缓存 · 身份装载 · poke 唤醒
 
 解压即用。Python 3.12、Node.js、Live2D Electron 已内置离线包。
 
@@ -10,7 +10,7 @@
 bot-template/
 ├─ install.bat / start.bat / Stop-All.bat / update.bat / 配置API.bat
 ├─ README.md / LICENSE / VERSION / CHANGELOG.md / UPGRADE.md
-├─ hermes/          ← 引擎（局域网 git 工作区）
+├─ hermes/          ← 引擎（核心代码）
 │   └─ core/        ← 引擎权威（含 OneBot 插件、记忆系统、80+ 工具）
 ├─ templates/       ← 配置模板（根级）
 ├─ modules/         ← 功能模块
@@ -55,13 +55,17 @@ bot-template/
 4. 双击 `templates\一键替换灵魂核心.bat` → 写入 `~\.hermes\SOUL.md` 并同步角色名到 .env
 
 > 角色名参数化：`ONEBOT_BOT_NAME` 环境变量（env > config.yaml > 默认值），judge/recorder 自动跟随。
+> **身份装载（v0.14.13）**：SOUL.md 需含 `## 称呼` 节（正式名 + 别名列表），名字直呼（无 @）也能触发回复。
 
 ## 功能
 
 | 功能 | 说明 |
 |------|------|
-| 语义判断 | 两级窗口判定（旁观 5s / 关注 1s），judge 提速 3-6s |
+| 语义判断 | 两级窗口判定（旁观 5s / 关注 1s），judge 提速 |
 | @ 软信号 | @ 进完整判定流程，被 @ 大概率回复但可合理判不回 |
+| 热回复缓存 | 命中时即时返回，显著提速（v0.14.12） |
+| poke 唤醒 | 群内 poke 触发唤醒 + 判定，进入对话态（v0.14.12） |
+| 名字直呼 | SOUL「称呼」节别名，无 @ 也能触发（v0.14.13） |
 | Episode State | 16 字段对话状态机，跨会话联想记忆（EPI） |
 | Live2D 立绘 | 12 位 Cubism 5 角色，右键菜单控制 |
 | 记忆系统 | STM / LTM / EPI / Workflow 多层记忆 |
@@ -90,17 +94,6 @@ bot-template/
 | Ollama / LM Studio | 本地部署 |
 | 自定义 | 任意 OpenAI 兼容端点 |
 
-## 两端同步（开发者）
+## 给 AI agent 的操作指南
 
-服务器（Linux，权威）与 Win 分发版通过局域网 git 同步引擎：
-
-```bash
-# 服务器 → Win（拉引擎更新）
-cd hermes && git fetch origin && git checkout origin/main -- core/ templates/ .gitignore
-
-# Win → 服务器（回传独有开发）
-cd hermes && git add -A && git commit -m "update" && git push origin main
-```
-
-- 同步边界：`hermes/core/` + `templates/`（服务器权威）；`modules/` + `extras/`（Win 本地维护）
-- 隐私红线：`.env / config.yaml / SOUL.md / sessions/ / logs/ / *.db` 永不进 git
+如果你想用 AI agent（如 OpenCode / Cursor / Claude Code）帮你安装、配置、运行这个机器人，请让 agent 阅读 `USER_AGENTS.md`（面向用户版，不含维护者运维信息）。
