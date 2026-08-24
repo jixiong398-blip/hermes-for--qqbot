@@ -53,3 +53,6 @@ modules/live2d/window_state.json
 # installer bundles (in extras/)
 extras/electron-offline.zip.001
 extras/electron-offline.zip.002
+
+# 维护者运维指南（含服务器信息，只留本地）
+AGENTS.md
