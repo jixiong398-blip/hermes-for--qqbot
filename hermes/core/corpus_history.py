@@ -213,7 +213,7 @@ def _fts_search(
     where = " AND ".join(clauses)
     sql = (
         "SELECT c.message_id, c.sender_name, c.created_at, c.group_id, "
-        "c.chat_id, c.chat_type, c.content_readable "
+        "c.chat_id, c.chat_type, c.content_readable, c.recalled "
         "FROM corpus_messages c "
         "JOIN corpus_messages_fts f ON c.id = f.rowid "
         f"WHERE {where} "
@@ -227,6 +227,9 @@ def _fts_search(
         for row in cur:
             mid = str(row[0]) if row[0] else ""
             preview = _truncate_preview(row[6] or "")
+            recalled = bool(row[7])
+            if recalled:
+                preview = f"[已撤回] {preview}"
             rows.append({
                 "message_id": mid,
                 "mid": f"[mid:{mid}]",
@@ -237,6 +240,7 @@ def _fts_search(
                 "chat_id": row[4] or "",
                 "chat_type": row[5] or "",
                 "preview": preview,
+                "recalled": recalled,
             })
     except sqlite3.OperationalError as exc:
         logger.warning("FTS search failed for query %r: %s", query, exc)
@@ -301,7 +305,7 @@ def _like_search(
     where = " AND ".join(clauses)
     sql = (
         "SELECT c.message_id, c.sender_name, c.created_at, c.group_id, "
-        "c.chat_id, c.chat_type, c.content_readable "
+        "c.chat_id, c.chat_type, c.content_readable, c.recalled "
         "FROM corpus_messages c "
         f"WHERE {where} "
         "ORDER BY c.created_at DESC "
@@ -314,6 +318,9 @@ def _like_search(
         for row in cur:
             mid = str(row[0]) if row[0] else ""
             preview = _truncate_preview(row[6] or "")
+            recalled = bool(row[7])
+            if recalled:
+                preview = f"[已撤回] {preview}"
             rows.append({
                 "message_id": mid,
                 "mid": f"[mid:{mid}]",
@@ -324,6 +331,7 @@ def _like_search(
                 "chat_id": row[4] or "",
                 "chat_type": row[5] or "",
                 "preview": preview,
+                "recalled": recalled,
             })
     except sqlite3.OperationalError as exc:
         logger.warning("LIKE search failed for query %r: %s", query, exc)
@@ -339,6 +347,20 @@ def _truncate_preview(text: str, max_chars: int = _MAX_PREVIEW_CHARS) -> str:
 
 
 # ── Public search API ─────────────────────────────────────────────────────
+
+
+def _ensure_recalled_column(db: sqlite3.Connection) -> None:
+    """Idempotently add the ``recalled`` column (added in v0.14.11).
+
+    Search queries reference ``c.recalled``; without this, a search before
+    any group_recall event would fail with ``no such column``.
+    """
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(corpus_messages)")}
+        if "recalled" not in cols:
+            db.execute("ALTER TABLE corpus_messages ADD COLUMN recalled INTEGER DEFAULT 0")
+    except sqlite3.Error:
+        pass
 
 
 def search_corpus(
@@ -391,6 +413,7 @@ def search_corpus(
         path = ""
 
     try:
+        _ensure_recalled_column(db)
         fts_ok = _fts_available_for_cached(db)
 
         cjk_count = _count_cjk(query)

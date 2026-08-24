@@ -9,16 +9,31 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_JUDGE_CONCURRENCY = 16
+_JUDGE_CONCURRENCY = 0
+_GROUP_JUDGE_CONCURRENCY = 5
 _SUMMARY_CONCURRENCY = 8
 _judge_semaphore: Optional[asyncio.Semaphore] = None
+_group_judge_semaphores: Dict[str, asyncio.Semaphore] = {}
 _summary_semaphore: Optional[asyncio.Semaphore] = None
 
 
-def _get_judge_semaphore() -> asyncio.Semaphore:
-    global _judge_semaphore
+def _get_judge_semaphore(group_key: str = "_global") -> asyncio.Semaphore:
+    """Get a concurrency gate scoped to ONE group.
+
+    Per-group semaphore: each group gets its own Semaphore(_GROUP_JUDGE_CONCURRENCY=5)
+    so group A's judge load never blocks group B (分群无上限, 群内 1-5).
+    Falls back to a single global gate when group_key is "_global".
+    """
+    global _group_judge_semaphores, _judge_semaphore
+    if group_key != "_global":
+        sem = _group_judge_semaphores.get(group_key)
+        if sem is None:
+            sem = asyncio.Semaphore(_GROUP_JUDGE_CONCURRENCY)
+            _group_judge_semaphores[group_key] = sem
+        return sem
     if _judge_semaphore is None:
-        _judge_semaphore = asyncio.Semaphore(_JUDGE_CONCURRENCY)
+        _cap = _JUDGE_CONCURRENCY if _JUDGE_CONCURRENCY > 0 else 10_000
+        _judge_semaphore = asyncio.Semaphore(_cap)
     return _judge_semaphore
 
 
@@ -58,7 +73,7 @@ def _get_bot_name() -> str:
     """Resolve the bot character name for prompts and labels.
 
     Priority: ONEBOT_BOT_NAME env > config.yaml platforms.onebot.extra.bot_name
-    > "Soyo" (backward-compatible default).
+    > SOUL.md (你是X / 我叫X) > "Soyo" (backward-compatible default).
     """
     name = os.getenv("ONEBOT_BOT_NAME", "").strip()
     if name:
@@ -77,7 +92,69 @@ def _get_bot_name() -> str:
             return name
     except Exception:
         pass
+    soul = _load_soul_name()
+    if soul:
+        return soul
     return "Soyo"
+
+
+def _load_soul_name() -> str:
+    """Extract bot name from SOUL.md '称呼' section (正式名: X) or '你是X' / '我叫X'."""
+    try:
+        home = os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes"))
+        soul_path = os.path.join(home, "SOUL.md")
+        if not os.path.exists(soul_path):
+            return ""
+        text = open(soul_path, encoding="utf-8").read()
+        m = re.search(r"正式名[:：]\s*([\u4e00-\u9fffA-Za-z0-9]{1,16})", text)
+        if m:
+            return m.group(1).strip()
+        for pat in (r"你是([\u4e00-\u9fffA-Za-z0-9]{1,8})", r"我叫([\u4e00-\u9fffA-Za-z0-9]{1,8})"):
+            m = re.search(pat, text)
+            if m:
+                return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _bot_aliases() -> List[str]:
+    """Bot name variants for fuzzy name-referral detection.
+
+    Sources (no hardcoding): SOUL.md '称呼' section (别名: a, b, c) +
+    config.yaml platforms.onebot.extra.bot_aliases (optional). Callers must
+    never hardcode a bot name.
+    """
+    aliases: List[str] = []
+    try:
+        home = os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes"))
+        soul_path = os.path.join(home, "SOUL.md")
+        if os.path.exists(soul_path):
+            text = open(soul_path, encoding="utf-8").read()
+            m = re.search(r"别名[:：]\s*(.+)", text)
+            if m:
+                aliases = [a.strip() for a in re.split(r"[,，、]", m.group(1)) if a.strip() and len(a.strip()) >= 2]
+    except Exception:
+        pass
+    try:
+        cfg_path = os.path.join(
+            os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes")),
+            "config.yaml",
+        )
+        with open(cfg_path, encoding="utf-8") as f:
+            import yaml
+            cfg = yaml.safe_load(f) or {}
+        extra = (cfg.get("platforms", {}).get("onebot", {}).get("extra") or {})
+        for a in extra.get("bot_aliases", []):
+            a = str(a).strip()
+            if a and a not in aliases:
+                aliases.append(a)
+    except Exception:
+        pass
+    name = _get_bot_name()
+    if name and name not in aliases:
+        aliases.append(name)
+    return aliases
 
 
 def _render_prompt(template: str, bot_name: str) -> str:
@@ -221,6 +298,7 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 - chaotic_noise：群聊混乱，几乎只在被直接 @ 或回复 $bot_name 时才回复
 
 ### 3. 正文语法和历史连续性
+- **硬规则**：$bot_name 刚说完话（bot 连续性=true），对方消息**直接回应 $bot_name 上一句**（话题连续、无第三人插入）→ **必须回复**（这是对话续接的强信号，比"宁可少说"优先级高——对话进行中对方接话，bot 不接 = 对话断裂）
 - $bot_name 刚说完话（bot 连续性=true），对方直接在回应 $bot_name：对话延续，该回复
 - 名字后接第二人称提问/命令（"$bot_name，你在干嘛"）：直接对话
 - 名字作主语/宾语被讨论（"$bot_name会不会觉得好笑"）：第三人称谈论，不该回复
@@ -342,10 +420,13 @@ def _build_pre_reply_judge_prompt(
     reply_to_uid: str = "",
     bot_self_id: str = "",
     bot_name: str = "Soyo",
+    bot_aliases: Optional[List[str]] = None,
 ) -> str:
     parts = []
     parts.append(f"群名：{group_name or '未知'}")
     parts.append(f"{bot_name} 当前状态：{attentive_state}")
+    if bot_aliases:
+        parts.append(f"你的称呼变体（文本中出现任意一个视为指向/bot 的自称）：{'、'.join(bot_aliases)}")
     if group_attention:
         parts.append(f"群聊噪音等级：{group_attention}")
     parts.append(f"{bot_name} 上一条消息后有人接话：{'是' if bot_continuity else '否'}")
@@ -510,32 +591,60 @@ async def pre_reply_judge(
     group_name: str = "",
     attentive_state: str = "潜水",
     episode_state: Optional[Dict[str, Any]] = None,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
     reply_to_name: str = "",
     reply_to_uid: str = "",
     bot_self_id: str = "",
     bot_name: str = "",
+    bot_aliases: Optional[List[str]] = None,
+    group_key: str = "_global",
 ) -> Dict[str, Any]:
     """增强版语义判定 —— 消费 episode_state，输出完整对话状态。
 
     与旧 semantic_judge 的区别：
     - 消费上轮 episode_state 作为上下文
     - 输出新增维度: should_exit / episode_phase / continuity / etc.
-    """
-    is_mentioned = current_msg.get("is_at", False)
 
-    async with _get_judge_semaphore():
+    并发门控：按 group_key 分群（每群 Semaphore(5)，分群无上限），
+    不同群的 judge 互不阻塞。
+    """
+    async with _get_judge_semaphore(group_key):
+        return await _pre_reply_judge_unlocked(
+            recent_messages, current_msg, group_name, attentive_state,
+            episode_state, timeout, reply_to_name, reply_to_uid,
+            bot_self_id, bot_name, bot_aliases, group_key,
+        )
+
+
+async def _pre_reply_judge_unlocked(
+    recent_messages: List[Dict[str, Any]],
+    current_msg: Dict[str, Any],
+    group_name: str,
+    attentive_state: str,
+    episode_state: Optional[Dict[str, Any]],
+    timeout: float,
+    reply_to_name: str,
+    reply_to_uid: str,
+    bot_self_id: str,
+    bot_name: str,
+    bot_aliases: Optional[List[str]] = None,
+    group_key: str = "_global",
+) -> Dict[str, Any]:
+    is_mentioned = current_msg.get("is_at", False)
+    try:
         api_key, api_base, api_model = _get_api_key(), _get_api_base(), _get_api_model()
         if not api_key or not api_base or not api_model:
             logger.warning("[PreReplyJudge] No API config, fail-closed (mentioned=%s)", is_mentioned)
             fb = dict(_JUDGE_V2_FALLBACK)
-            fb["should_reply"] = is_mentioned
+            fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
             return fb
 
         group_attention = _calculate_group_attention(recent_messages, bot_self_id)
         bot_continuity = _has_bot_turn_continuity(recent_messages, bot_self_id)
         if not bot_name:
             bot_name = _get_bot_name()
+        if not bot_aliases:
+            bot_aliases = _bot_aliases()
 
         prompt = _build_pre_reply_judge_prompt(
             group_name, attentive_state, recent_messages, current_msg,
@@ -546,64 +655,91 @@ async def pre_reply_judge(
             reply_to_uid=reply_to_uid,
             bot_self_id=bot_self_id,
             bot_name=bot_name,
+            bot_aliases=bot_aliases,
         )
 
-        try:
-            import requests as _r
-            import time as _j_time
-            _j_t0 = _j_time.perf_counter()
-            resp = await asyncio.to_thread(
-                _r.post,
-                f"{api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": api_model,
-                    "messages": [
-                        {"role": "system", "content": _render_prompt(_PRE_REPLY_JUDGE_PROMPT, bot_name)},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.1,
-                    **_judge_thinking_param(),
-                    "response_format": {"type": "json_object"},
-                },
-                timeout=timeout,
-            )
-            logger.info("[PreReplyJudge] LLM call %.2fs (input ~%d chars)",
-                        _j_time.perf_counter() - _j_t0, len(prompt))
-            resp.raise_for_status()
-            data = resp.json()
-            msg_content = (data["choices"][0]["message"].get("content") or "").strip()
-            if not msg_content:
-                reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
-                match = re.search(r'\{[^{}]*\}', reasoning)
-                if match:
-                    msg_content = match.group()
-            if not msg_content:
-                raise ValueError("Empty content from LLM")
+        import requests as _r
+        import time as _j_time
+        _j_t0 = _j_time.perf_counter()
+        resp = await asyncio.to_thread(
+            _r.post,
+            f"{api_base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": api_model,
+                "messages": [
+                    {"role": "system", "content": _render_prompt(_PRE_REPLY_JUDGE_PROMPT, bot_name)},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.1,
+                **_judge_thinking_param(),
+                "response_format": {"type": "json_object"},
+            },
+            timeout=timeout,
+        )
+        logger.info("[PreReplyJudge] LLM call %.2fs (input ~%d chars) group=%s",
+                    _j_time.perf_counter() - _j_t0, len(prompt), group_key)
+        resp.raise_for_status()
+        data = resp.json()
+        msg_content = (data["choices"][0]["message"].get("content") or "").strip()
+        if not msg_content:
+            reasoning = data["choices"][0]["message"].get("reasoning_content") or ""
+            match = re.search(r'\{[^{}]*\}', reasoning)
+            if match:
+                msg_content = match.group()
+        if not msg_content:
+            raise ValueError("Empty content from LLM")
 
-            raw = _parse_judge_json(msg_content)
-            if raw is None:
-                raise ValueError(f"Bad judge JSON: {msg_content[:80]}")
-            result = _validate_judge_v2(raw, is_mentioned)
-            logger.info(
-                "[PreReplyJudge] reply=%s end=%s exit=%s phase=%s continuity=%s mode=%s reason=%s",
-                result["should_reply"], result["should_end"],
-                result["should_exit"], result.get("episode_phase"),
-                result.get("continuity"), result.get("conversation_mode"),
-                result["reason"][:60],
-            )
-            return result
+        raw = _parse_judge_json(msg_content)
+        if raw is None:
+            raise ValueError(f"Bad judge JSON: {msg_content[:80]}")
+        result = _validate_judge_v2(raw, is_mentioned)
+        logger.info(
+            "[PreReplyJudge] reply=%s end=%s exit=%s phase=%s continuity=%s mode=%s reason=%s (group=%s)",
+            result["should_reply"], result["should_end"],
+            result["should_exit"], result.get("episode_phase"),
+            result.get("continuity"), result.get("conversation_mode"),
+            result["reason"][:60], group_key,
+        )
+        return result
 
-        except asyncio.TimeoutError:
-            logger.warning("[PreReplyJudge] Timeout, fail-closed (mentioned=%s)", is_mentioned)
-            fb = dict(_JUDGE_V2_FALLBACK)
-            fb["should_reply"] = is_mentioned
-            return fb
-        except Exception as e:
-            logger.warning("[PreReplyJudge] Error: %s, fail-closed (mentioned=%s)", e, is_mentioned)
-            fb = dict(_JUDGE_V2_FALLBACK)
-            fb["should_reply"] = is_mentioned
-            return fb
+    except asyncio.TimeoutError:
+        logger.warning("[PreReplyJudge] Timeout, fail-closed (mentioned=%s)", is_mentioned)
+        fb = dict(_JUDGE_V2_FALLBACK)
+        fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
+        return fb
+    except Exception as e:
+        logger.warning("[PreReplyJudge] Error: %s, fail-closed (mentioned=%s)", e, is_mentioned)
+        fb = dict(_JUDGE_V2_FALLBACK)
+        fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
+        return fb
+
+
+def _fail_closed_should_reply(
+    is_mentioned: bool,
+    attentive_state: str,
+    episode_state: Optional[Dict[str, Any]],
+) -> bool:
+    """fail-closed 兜底分层：LLM 不可用时按场景决定该不该回。
+
+    - @ 消息：必回（硬信号，is_mentioned 即 True）
+    - 对话态（attentive_state == 对话态 或 episode 有轮次且话题延续）：
+      宁可接话勿断——返回 True，防止"刚还在聊，端点一波动就断了对话"
+      （续问被吞的主因；注意 episode_state 可能为 None——@ 快速通道后
+      recorder 还未写回 turn_count，此时靠 attentive_state 判断）
+    - 旁观态/潜水：默认沉默（False）
+    """
+    if is_mentioned:
+        return True
+    if attentive_state == "对话态":
+        return True
+    if episode_state:
+        turn_count = int(episode_state.get("turn_count", 0) or 0)
+        continuity = str(episode_state.get("continuity", "") or "")
+        if turn_count > 0:
+            if continuity in ("same_episode", "related_shift", ""):
+                return True
+    return False
 
 JUDGE_SYSTEM_PROMPT = """你是 $bot_name 的对话状态判定器。$bot_name 是一个 QQ 群聊里的 AI 参与者。
 你需要判断 $bot_name 在当前这个时刻该不该回复这条消息，以及话题是否应该结束。
@@ -788,7 +924,7 @@ async def semantic_judge(
     mins_since_reply: float = 0.0,
     episode_duration: float = 0.0,
     reply_count: int = 0,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
     reply_to_name: str = "",
     reply_to_uid: str = "",
     bot_self_id: str = "",

@@ -1,5 +1,29 @@
 ﻿# bot-template 更新日志
 
+## v0.14.13 (2026-08-25)
+
+### NapCat 能力全面接入 + 热回复缓存 + judge 调度重构 + 身份装载层
+
+**NapCat 能力接入**：
+- 邀请审批、转发（A/B 方案）、撤回标记、新增一批 qq_* 工具
+- 群消息重建修复（转发/撤回/会话不中断）
+- 消息安全（免转/敏感词校验）
+
+**热回复缓存 + judge 调度重构**：
+- 热回复缓存（命中时 agent-ready 即时返回，显著提速）
+- judge 调度重构（@快速通道/分群并发/FIFO 队列）
+- 时区/会话异常修复
+
+**poke 唤醒**：
+- 群内 poke 触发唤醒 + judge 判定，进入对话态
+
+**bot 身份装载层**：
+- 名字直呼识别（基于 SOUL "称呼"节：正式名/别名列表）
+- 退出倒计时豁免（靠近退出时正被叫到则续期）
+- 身份装载：`_get_bot_name()` + `_bot_aliases()` 从 SOUL 读取
+
+**涉及文件**：`adapter.py`、`group_executor.py`、`semantic_judge.py`、`trigger_coordinator.py`、`qq_napcat_tools.py`、`run.py`、`corpus_history.py`、`SOUL-template.md`、`CEREBELLUM.md`、`CORTEX.md`
+
 ## v0.14.10 (2026-08-15)
 
 ### 群聊执行契约修复 + 看图时序修复

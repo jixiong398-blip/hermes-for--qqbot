@@ -9194,11 +9194,21 @@ class GatewayRunner:
             # Check agent cache — reuse the AIAgent from the previous message
             # in this session to preserve the frozen system prompt and tool
             # schemas for prompt cache hits.
+            # Signature must NOT include combined_ephemeral:
+            #   - context_prompt contains per-turn user_name (changes per sender)
+            #   - channel_prompt contains per-turn group context (timestamps,
+            #     snapshot, rolling summary) — changes per message by design
+            # Both are re-injected per turn (effective_system = cached +
+            # ephemeral in run_conversation) and are NOT part of the agent
+            # config.  Including them would make the signature change every
+            # message, guaranteeing an agent-cache miss and forcing full
+            # AIAgent rebuild on every turn (the exact anti-pattern this cache
+            # exists to avoid).
             _sig = self._agent_config_signature(
                 turn_route["model"],
                 turn_route["runtime"],
                 enabled_toolsets,
-                combined_ephemeral,
+                self._ephemeral_system_prompt,  # static user config — NOT combined_ephemeral
             )
             logger.info("[PERF] run_sync: signature+cache-lookup-start %.3fs",
                         _rs_time.perf_counter() - _rs_t0)
@@ -9223,6 +9233,12 @@ class GatewayRunner:
                         agent._last_activity_ts = time.time()
                         agent._last_activity_desc = "starting new turn (cached)"
                         agent._api_call_count = 0
+                        # Refresh per-turn ephemeral on the reused agent so
+                        # run_conversation injects THIS round's context/channel
+                        # prompt (effective_system = cached + ephemeral).
+                        # Without this the reused agent would reply with the
+                        # previous message's channel_prompt — stale context.
+                        agent.ephemeral_system_prompt = combined_ephemeral or None
                         logger.debug("Reusing cached agent for session %s", session_key)
 
             if agent is None:

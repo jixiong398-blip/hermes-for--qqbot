@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 JUDGE_DEBOUNCE_SECONDS = 1.0
-JUDGE_TIMEOUT = 30.0
+JUDGE_TIMEOUT = 60.0
 
 # Two-tier judgment windows: idle batches 5s into one judge call; attentive
 # judges at 1s so nothing is missed. Topic shift starts a 15s grace countdown
@@ -39,8 +39,6 @@ class _JudgeTask:
         self.task: Optional[asyncio.Task] = None
         self.pending_seq: Optional[int] = None
         self.pending_msg: Optional[dict] = None
-
-
 class TriggerCoordinator:
     """Phase 2 – trigger decision for group messages.
 
@@ -80,8 +78,11 @@ class TriggerCoordinator:
                         group_id, seq, gs.episode_state.episode_phase if gs else "no-gs")
             # Hard signal: never queue behind an in-flight judge and never
             # get overwritten by a later pending message. Cancel the running
-            # judge (its result would be stale anyway) and judge the mention
-            # right away. The 1s attentive window still applies.
+            # judge (its result would be stale anyway) and serve the mention
+            # IMMEDIATELY — @ is deterministic should_reply=True, so waiting
+            # for a full LLM round is pure waste (previously _schedule_judge
+            # blocked the reply behind window sleep + 6-16s LLM latency; the
+            # "priority" only cancelled the old judge, never bypassed it).
             existing = self._judge_tasks.get(group_id)
             if existing is not None and existing.task is not None and not existing.task.done():
                 existing.task.cancel()
@@ -102,7 +103,19 @@ class TriggerCoordinator:
                 gs.enter_attentive()
             self._exit_countdowns.pop(group_id, None)
             msg["_is_mentioned"] = True
-            self._schedule_judge(group_id, seq, msg)
+            # Fast path: @ must reply NOW — submit agent turn immediately.
+            # Episode-state write-back handled by group_executor's existing
+            # post_reply_recorder (runs for every sent reply), so no extra
+            # background LLM judge here (would duplicate cost + race the
+            # recorder over the same episode_state).
+            self._submit_request(TriggerRequest(
+                group_id=group_id,
+                origin_seq=seq,
+                mode="mention",
+                decision_reason="直接@",
+                raw_msg=msg,
+                is_mention=True,
+            ))
             return
 
         if msg.get("_at_all"):
@@ -117,6 +130,23 @@ class TriggerCoordinator:
             self._schedule_judge(group_id, seq, msg)
             return
 
+        # Name-referral (fuzzy): user called the bot by any alias from
+        # config/SOUL. Treat as weak @ — enter attentive, cancel exit
+        # countdown (conversation is NOT drifting), let judge decide.
+        from .semantic_judge import _bot_aliases as _aliases_of
+        _named_msg = False
+        if not is_mentioned and not msg.get("_at_all") and raw_text:
+            for _al in (_aliases_of() or []):
+                if _al and len(_al) >= 2 and _al.lower() in raw_text.lower():
+                    _named_msg = True
+                    break
+        if _named_msg:
+            logger.info("[TriggerCoordinator] Name-referral group=%s seq=%s", group_id, seq)
+            if gs is not None:
+                gs.enter_attentive()
+            self._exit_countdowns.pop(group_id, None)
+            msg["_name_ref"] = True
+
         if gs.is_attentive():
             self._schedule_judge(group_id, seq, msg)
             return
@@ -126,15 +156,10 @@ class TriggerCoordinator:
     # ── judge timer ─────────────────────────────────────────
 
     def _schedule_judge(self, group_id: str, seq: int, msg: dict):
-        existing = self._judge_tasks.get(group_id)
-        if existing is not None and existing.task is not None and not existing.task.done():
-            # Judge in-flight: queue the newest message so it gets its own
-            # judge round after the current one finishes (never silently drop).
-            existing.pending_seq = seq
-            existing.pending_msg = msg
-            logger.debug("[TriggerCoordinator] Judge in-flight for %s, queued seq=%d", group_id, seq)
-            return
-
+        # Per-group judge concurrency: each message gets its own judge task;
+        # the semaphore inside pre_reply_judge caps same-group concurrency at
+        # _GROUP_JUDGE_CONCURRENCY (5). No single-flight queueing — a slow
+        # judge from an earlier message must not block the current one.
         gs = self._adapter._group_states.get(group_id)
         epoch = gs.decision_epoch
         jt = _JudgeTask(group_id, epoch, seq)
@@ -243,7 +268,11 @@ class TriggerCoordinator:
             else:
                 # no_reply. Topic shift while attentive starts the exit
                 # countdown (grace period — conversation may swing back).
-                if gs.is_attentive() and result.get("continuity") in ("sharp_transition", "related_shift"):
+                # Name-referral exempts: the user called the bot by name, so
+                # the conversation is NOT drifting away — don't start the
+                # exit countdown (it would cut off an ongoing interaction).
+                _named = bool(msg.get("_name_ref", False))
+                if (not _named) and gs.is_attentive() and result.get("continuity") in ("sharp_transition", "related_shift"):
                     self._exit_countdowns[jt.group_id] = time.time() + EXIT_COUNTDOWN_SECONDS
                     logger.info("[TriggerCoordinator] Topic shift for %s — exit countdown %ds",
                                 jt.group_id, EXIT_COUNTDOWN_SECONDS)
@@ -256,9 +285,6 @@ class TriggerCoordinator:
             cur = self._judge_tasks.get(jt.group_id)
             if cur is jt:
                 self._judge_tasks.pop(jt.group_id, None)
-                if jt.pending_seq is not None:
-                    # Messages arrived while judging — run their own round.
-                    self._schedule_judge(jt.group_id, jt.pending_seq, jt.pending_msg)
 
     async def _invoke_judge(self, group_id: str, latest_user, msg: dict) -> Optional[Dict[str, Any]]:
         try:
@@ -292,11 +318,25 @@ class TriggerCoordinator:
         raw_text = self._adapter._cq_to_readable(self._adapter._get_raw_text(msg) or "")
 
         from .semantic_judge import _get_bot_name as _get_bn
+        from .semantic_judge import _bot_aliases as _get_aliases
         _self_id_str = str(self._adapter._self_id) if self._adapter._self_id else ""
         _bot_name = _get_bn()
+        _aliases = _get_aliases()
         if _self_id_str and raw_text:
             import re
             raw_text = re.sub(r'@QQ' + re.escape(_self_id_str) + r'(?!\d)', f'@{_bot_name}', raw_text)
+
+        # Name-referral detection (fuzzy): the text mentions the bot by any
+        # alias (素世/soyo/... sourced from config/SOUL, never hardcoded).
+        # A bare name call is a weak @ — judge should treat it as pointing
+        # at the bot.  Marked so pre_reply_judge + prompt can handle it.
+        _name_ref = False
+        if not is_mention and raw_text:
+            for _al in (_aliases or []):
+                if _al and _al and _al.lower() in raw_text.lower() and len(_al) >= 2:
+                    _name_ref = True
+                    break
+        msg["_name_ref"] = _name_ref
 
         # Runtime @-targets (names from adapter, never hardcoded) — keep
         # verbatim, else "@某人 玩去吧" reads as addressed to us.
@@ -315,7 +355,7 @@ class TriggerCoordinator:
             "ts_str": time.strftime('%m-%d %H:%M', time.localtime(msg.get("time", 0) or time.time())),
             "name": latest_user.name, "text": raw_text[:300],
             "msg_type": msg_type_str, "is_at": is_mention,
-            "at_targets": _at_targets,
+            "at_targets": _at_targets, "name_ref": _name_ref,
         }
         if at_all:
             current_dict["at_all"] = True
@@ -340,6 +380,8 @@ class TriggerCoordinator:
                 reply_to_uid=reply_to_uid,
                 bot_self_id=_self_id_str,
                 bot_name=_bot_name,
+                bot_aliases=_aliases,
+                group_key=group_id,  # per-group semaphore: 每群 5 并发，分群无上限
             )
         except Exception as e:
             logger.warning("[TriggerCoordinator] Judge invoke failed: %s", e)

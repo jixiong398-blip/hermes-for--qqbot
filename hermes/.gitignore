@@ -1,10 +1,10 @@
 # ── 运行时/配置（私有，永不进版本库）──
 .env
 config.yaml
-SOUL.md
-CEREBELLUM.md
-CORTEX.md
-HEARTBEAT.md
+/SOUL.md
+/CEREBELLUM.md
+/CORTEX.md
+/HEARTBEAT.md
 sessions/
 logs/
 cache/

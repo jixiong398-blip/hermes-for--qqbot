@@ -8,7 +8,9 @@ from .trigger_coordinator import TriggerRequest
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 3
+# Runaway flood guard: a single _run_loop processes at most 10 turns before
+# re-arming via schedule(); the FIFO queue itself is unbounded.
+_MAX_LOOP_TURNS = 10
 
 
 @dataclass
@@ -30,18 +32,20 @@ class GroupExecutor:
     def __init__(self, adapter):
         self._adapter = adapter
         self._runners: Dict[str, asyncio.Task] = {}
-        self._pending: Dict[str, Any] = {}  # group_id -> TriggerRequest
+        self._pending: Dict[str, list] = {}  # group_id -> [TriggerRequest] FIFO queue
 
     # ── public ──────────────────────────────────────────────
 
     def schedule(self, request):
         gid = request.group_id
-        self._pending[gid] = request
-
+        lst = self._pending.setdefault(gid, [])
+        # Dedup by (origin_seq, mode) so re-schedules don't duplicate.
+        if not any(getattr(r, "origin_seq", None) == request.origin_seq
+                   and getattr(r, "mode", None) == request.mode for r in lst):
+            lst.append(request)
         existing = self._runners.get(gid)
         if existing is not None and not existing.done():
             return
-
         task = asyncio.create_task(self._run_loop(gid))
         self._runners[gid] = task
 
@@ -49,12 +53,16 @@ class GroupExecutor:
 
     async def _run_loop(self, group_id: str):
         try:
+            # Process the WHOLE queue (FIFO) — a slow previous turn must not
+            # silently drop later requests (single-slot pending used to keep
+            # only the last one, losing intermediate mentions).  Cap at 10
+            # turns per loop as a runaway flood guard.
             rounds = 0
-            while rounds < MAX_ROUNDS:
-                request = self._pending.pop(group_id, None)
-                if request is None:
+            while rounds < _MAX_LOOP_TURNS:
+                lst = self._pending.get(group_id)
+                if not lst:
                     break
-
+                request = lst.pop(0)
                 await self._run_turn(request)
                 rounds += 1
 
@@ -66,20 +74,31 @@ class GroupExecutor:
                     if gs.episode_state.episode_phase == "exiting":
                         gs.go_quiet()
                         break
-                    self._pending[group_id] = TriggerRequest(
-                        group_id=group_id,
-                        origin_seq=gs.last_user_seq,
-                        mode="continuation",
-                        decision_reason="连续对话",
-                    )
+                    # Continuation fan-out: queue the next un-consumed user
+                    # message only if not already queued.
+                    if not any(getattr(r, "origin_seq", None) == gs.last_user_seq
+                               for r in self._pending.get(group_id, [])):
+                        self._pending.setdefault(group_id, []).append(TriggerRequest(
+                            group_id=group_id,
+                            origin_seq=gs.last_user_seq,
+                            mode="continuation",
+                            decision_reason="连续对话",
+                        ))
                 else:
                     break
 
-            if group_id in self._pending:
-                self.schedule(self._pending.pop(group_id))
+            # Re-arm runner if leftover requests remain (e.g. flooded in
+            # while this loop was finishing).  Only re-arm when we are the
+            # registered runner — finally below must not clobber a newer
+            # runner created by a concurrent schedule().
+            if self._pending.get(group_id):
+                if self._runners.get(group_id) is asyncio.current_task():
+                    self._runners.pop(group_id, None)
+                    self.schedule(self._pending[group_id][0])
 
         finally:
-            self._runners.pop(group_id, None)
+            if self._runners.get(group_id) is asyncio.current_task():
+                self._runners.pop(group_id, None)
 
     async def _run_turn(self, request):
         gid = request.group_id
@@ -295,10 +314,14 @@ class GroupExecutor:
             # base.handle_message spawns a background task and returns
             # immediately (None) — its return value is NOT the reply.
             # Wait for the adapter's send() to resolve this group's
-            # future with the actual reply text (45s cap).
+            # future with the actual reply text.  Timeout raised 45s→120s:
+            # a slow LLM turn (30s+) + tool calls can exceed the old cap,
+            # and a timeout here DROPS the reply (future popped unresolved
+            # while the agent is still generating).  With 120s the signal
+            # arrives before the cap in practice.
             await self._adapter.handle_message(event)
             try:
-                reply_text = await asyncio.wait_for(fut, timeout=45)
+                reply_text = await asyncio.wait_for(fut, timeout=120)
             except asyncio.TimeoutError:
                 logger.info("[GroupExecutor] send signal timeout for %s (background may still finish)", group_id)
                 reply_text = ""
@@ -336,10 +359,11 @@ class GroupExecutor:
 
             speaker_role = getattr(request, "speaker_role", "") or "unknown"
 
+            from .semantic_judge import _get_bot_name as _bot_name
             new_state = await post_reply_recorder(
                 recent_messages=recent_dicts,
                 bot_reply=outcome.reply_text,
-                bot_name="",
+                bot_name=_bot_name(),
                 prior_episode_state=gs.episode_state.to_dict(),
                 speaker_role=speaker_role,
             )

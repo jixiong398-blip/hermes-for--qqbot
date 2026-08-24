@@ -43,6 +43,9 @@ modules/napcat/beacon_report.log
 # hermes 内 git 仓库（局域网同步，不入 GitHub 主仓）
 hermes/.git/
 
+# 服务器运维更新日志（含实群/路径数据，只留本地，不进 GitHub）
+hermes/docs/UPDATE_LOG.md
+
 # Live2D runtime files
 modules/live2d/live2d_pref.json
 modules/live2d/window_state.json

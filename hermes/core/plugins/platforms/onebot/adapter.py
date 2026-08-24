@@ -186,6 +186,12 @@ def _lookup_collected_sticker(emotion: str) -> str:
 class OneBotAdapter(BasePlatformAdapter):
     """OneBot v11 adapter for QQ (NapCat/Lagrange/go-cqhttp)."""
 
+    _instance: "OneBotAdapter | None" = None
+
+    @classmethod
+    def get_instance(cls) -> "OneBotAdapter | None":
+        return cls._instance
+
     # QQ does not support message editing, so streaming (which relies on edits)
     # must be disabled. The gateway will fall back to sending the full response
     # as a single message.
@@ -199,6 +205,7 @@ class OneBotAdapter(BasePlatformAdapter):
     def __init__(self, config, **kwargs):
         from gateway.config import Platform as _Platform
         super().__init__(config=config, platform=_Platform("onebot"))
+        OneBotAdapter._instance = self
         self._ws = None
         self._ws_task: Optional[asyncio.Task] = None
         self._http_client = None
@@ -206,7 +213,11 @@ class OneBotAdapter(BasePlatformAdapter):
         self._pending_echo: Dict[str, asyncio.Future] = {}
         _preload_self_id = os.getenv("ONEBOT_SELF_ID", "").strip()
         self._self_id: Optional[int] = int(_preload_self_id) if _preload_self_id.isdigit() else None
-        self._bot_name: str = os.getenv("ONEBOT_BOT_NAME", "").strip() or "Soyo"
+        try:
+            from .semantic_judge import _get_bot_name as _resolve_bot_name
+            self._bot_name: str = _resolve_bot_name()
+        except Exception:
+            self._bot_name: str = os.getenv("ONEBOT_BOT_NAME", "").strip() or ""
         self._ws_url: str = ""
         self._http_url: str = ""
         self._access_token: str = ""
@@ -265,11 +276,13 @@ class OneBotAdapter(BasePlatformAdapter):
         # Reconnect tuning: independent of gateway's global backoff
         self._ws_reconnect_interval: int = int(os.getenv("ONEBOT_RECONNECT_INTERVAL", "10"))
 
-    def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False):
+    def add_bot_reply_to_buffer(self, chat_id: str, text: str, is_voice: bool = False,
+                                message_id: str = "", reply_to_id: str = ""):
         if chat_id.startswith("group:"):
             group_id = chat_id.split(":", 1)[1]
             label = "[语音]" if is_voice else ""
-            self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1)
+            self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1,
+                                       message_id=message_id, reply_to_id=reply_to_id)
             self._last_bot_reply[group_id] = (time.time(), text)
             try:
                 from .group_state import BufferedMessage
@@ -300,14 +313,14 @@ class OneBotAdapter(BasePlatformAdapter):
                                *, content_raw: str = "", sender_card: str = "",
                                group_name: str = "", image_descriptions: list = None,
                                reply_to_id: str = "", reply_to_text: str = "",
-                               at_targets: list = None):
+                               at_targets: list = None, media_urls: list = None):
         try:
             self._persist_queue.put_nowait((group_id, chat_type, user_id, sender_name,
                                             content, message_id, created_at, is_bot,
                                             content_raw, sender_card, group_name,
                                             image_descriptions or [],
                                             reply_to_id, reply_to_text,
-                                            at_targets or []))
+                                            at_targets or [], media_urls or []))
         except asyncio.QueueFull:
             logger.warning("[OneBot] Persist queue full, dropping message from %s", sender_name)
 
@@ -321,7 +334,7 @@ class OneBotAdapter(BasePlatformAdapter):
             try:
                 (group_id, chat_type, user_id, sender_name, content, message_id,
                  created_at, is_bot, content_raw, sender_card, group_name,
-                 image_descs, reply_to_id, reply_to_text, at_targets) = await self._persist_queue.get()
+                 image_descs, reply_to_id, reply_to_text, at_targets, media_urls) = await self._persist_queue.get()
                 cid = str(user_id) if chat_type == "private" else group_id
                 _ts = created_at if created_at is not None else _time.time()
                 for attempt in range(3):
@@ -443,8 +456,8 @@ class OneBotAdapter(BasePlatformAdapter):
                                (message_id, chat_id, chat_type, group_id, user_id,
                                 sender_name, sender_card, content_raw, content_readable,
                                 image_descriptions, at_targets, reply_to_id, reply_to_text,
-                                is_bot, created_at)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                is_bot, created_at, media_paths, media_cached)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (str(message_id), cid, chat_type,
                              group_id if chat_type == "group" else "",
                              user_id, sender_name, sender_card,
@@ -452,7 +465,9 @@ class OneBotAdapter(BasePlatformAdapter):
                              _json.dumps(image_descs, ensure_ascii=False) if image_descs else "[]",
                              _json.dumps(at_targets, ensure_ascii=False) if at_targets else "[]",
                              reply_to_id, reply_to_text,
-                             is_bot, _ts),
+                             is_bot, _ts,
+                             _json.dumps(media_urls, ensure_ascii=False) if media_urls else "[]",
+                             int(bool(media_urls))),
                         )
                         if chat_type == "group" and group_id:
                             db.execute(
@@ -606,6 +621,12 @@ class OneBotAdapter(BasePlatformAdapter):
             extra.get("admin_id", "")
             or os.getenv("ONEBOT_ADMIN_ID", "")
         )
+
+        # ── v0.14.11: invite approval + admin command state ──
+        self._invite_pending: Dict[str, dict] = {}    # flag -> {group_id, inviter, ts}
+        self._invite_notified: Dict[str, float] = {}  # group_id -> last notify ts (5min debounce)
+        self._contact_cards: Dict[str, dict] = {}     # group_id -> {ts, sender, context}
+        self._processed_flags: set = set()            # dedupe for invite flags
 
     # ------------------------------------------------------------------
     # Connection
@@ -778,6 +799,9 @@ class OneBotAdapter(BasePlatformAdapter):
 
                 elif payload.get("post_type") == "notice":
                     await self._process_notice(payload)
+
+                elif payload.get("post_type") == "request":
+                    await self._process_request(payload)
 
         except websockets.exceptions.ConnectionClosed:
             logger.warning("[OneBot] WebSocket connection closed")
@@ -1233,7 +1257,15 @@ class OneBotAdapter(BasePlatformAdapter):
         return "语音"
 
     async def _describe_image(self, image_path: str, is_sticker: bool = False) -> str:
-        """Describe an image via cloud MiMo v2.5. Cached per path, 500 FIFO."""
+        """Describe an image. Provider: VISION_* first (swappable), XIAOMI_* fallback."""
+
+        def _provider() -> tuple[str, str, str]:
+            # 预留切换：VISION_*（如 DeepSeek 官方 vision-exp）优先，否则回退 XIAOMI_*（mimo）
+            key = os.getenv("VISION_API_KEY", "") or os.getenv("XIAOMI_API_KEY", "")
+            base = os.getenv("VISION_BASE_URL", "") or os.getenv("XIAOMI_BASE_URL", "")
+            model = os.getenv("VISION_MODEL", "") or os.getenv("XIAOMI_MODEL", "")
+            return key, base, model
+
         if image_path in self._image_descriptions:
             return self._image_descriptions[image_path]
         if not os.path.exists(image_path):
@@ -1241,9 +1273,7 @@ class OneBotAdapter(BasePlatformAdapter):
             return "图片"
 
         try:
-            api_key = os.getenv("XIAOMI_API_KEY", "")
-            api_base = os.getenv("XIAOMI_BASE_URL", "")
-            api_model = os.getenv("XIAOMI_MODEL", "")
+            api_key, api_base, api_model = _provider()
             if not api_key or not api_base or not api_model:
                 self._image_descriptions[image_path] = "图片"
                 return "图片"
@@ -2268,6 +2298,8 @@ class OneBotAdapter(BasePlatformAdapter):
 
         # Persist private messages + dispatch to agent
         if msg_type == "private":
+            if self._admin_id and user_id_str == self._admin_id:
+                msg["_from_admin"] = True
             _persist_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
             self._persist_chat_message(str(user_id), "private", int(user_id), sender_name,
                                        _persist_text,
@@ -2290,6 +2322,11 @@ class OneBotAdapter(BasePlatformAdapter):
                 f"[私聊模式] QQ号{user_id_str}（{sender_name}）在 {time_str} 发来消息。"
                 f"请用你对这个人的了解来回复。如果这是陌生人，就正常聊天。"
             )
+            if msg.get("_from_admin"):
+                _admin_ctx = self.pending_invites_context()
+                _dm_prompt += f"\n【本条消息来自管理员，她的明确要求请直接执行。】"
+                if _admin_ctx:
+                    _dm_prompt += f"\n{_admin_ctx}"
             if _fwd_detail:
                 _dm_prompt += f"\n\n{_fwd_detail}"
             elif _fwd_summary:
@@ -2365,6 +2402,8 @@ class OneBotAdapter(BasePlatformAdapter):
                     _at_targets.append(str(_qq))
 
         if msg_type == "group" and effective_self_id:
+            if self._admin_id and user_id_str == self._admin_id:
+                msg["_from_admin"] = True
             is_mentioned = self._is_mentioned(msg, effective_self_id)
             msg["_is_mentioned"] = is_mentioned
             msg["_at_targets"] = _at_targets
@@ -2377,6 +2416,14 @@ class OneBotAdapter(BasePlatformAdapter):
             _clean_text = _fwd_detail if _fwd_detail else (_fwd_summary if _fwd_summary else self._cq_to_readable(raw_text))
 
             has_image = self._has_image_message(msg)
+            _media_urls: list = []
+            if has_image:
+                for _seg in (msg.get("message", []) if isinstance(msg.get("message"), list) else []):
+                    if _seg.get("type") not in ("image", "mface"):
+                        continue
+                    _u = self._get_seg_data(_seg, "url", "") or self._get_seg_data(_seg, "file", "")
+                    if _u and _u not in _media_urls:
+                        _media_urls.append(str(_u))
             if has_image:
                 m_text = _clean_text + " [image:pending]"
                 if _early_reply_text:
@@ -2392,6 +2439,13 @@ class OneBotAdapter(BasePlatformAdapter):
 
             _msg_id = str(msg.get("message_id", ""))
             _msg_type = "sticker" if self._has_sticker_message(msg) else ("image" if self._has_image_message(msg) else ("voice" if self._has_voice_message(msg) else "text"))
+
+            for _seg in (msg.get("message", []) if isinstance(msg.get("message"), list) else []):
+                if _seg.get("type") == "contact" and _seg.get("data", {}).get("type") == "group":
+                    self._contact_cards[str(_seg["data"].get("id", ""))] = {
+                        "ts": time.time(), "sender": sender_name, "context": raw_text[:200],
+                    }
+
             # Runtime @-targets: map QQ ids to names from group buffer
             # (never hardcoded) — judge needs recipient, not anonymized text.
             _at_targets = []
@@ -2425,13 +2479,21 @@ class OneBotAdapter(BasePlatformAdapter):
                     self._media_pipeline.start(buffered, msg)
             except Exception:
                 pass
-            self._persist_chat_message(group_id, "group", int(user_id), sender_name, m_text, _msg_id,
+            # Persist clean readable content: do NOT embed the [引用 …] text
+            # prefix here — the quote lives in reply_to_id/reply_to_text so the
+            # forwarded logs can rebuild it as a real reply segment instead of
+            # literal text (v0.14.11).
+            _persist_content = m_text
+            if _early_reply_text and _persist_content.startswith(_early_reply_text + " "):
+                _persist_content = _persist_content[len(_early_reply_text) + 1:]
+            self._persist_chat_message(group_id, "group", int(user_id), sender_name, _persist_content, _msg_id,
                                        content_raw=raw_text,
                                        sender_card=sender.get("card", ""),
                                         image_descriptions=image_descs,
                                        reply_to_id=str(_early_reply_id) if _early_reply_id else "",
                                        reply_to_text=_early_reply_text,
-                                       at_targets=_at_targets)
+                                       at_targets=_at_targets,
+                                       media_urls=_media_urls)
 
             # Spawn background investigation for card/share messages
             if "[分享]" in _clean_text or "[卡片]" in _clean_text:
@@ -2451,6 +2513,92 @@ class OneBotAdapter(BasePlatformAdapter):
                 raw_text=raw_text,
             )
 
+    async def notify_admin(self, text: str) -> None:
+        """Send a notification to the configured admin (private chat)."""
+        if not self._admin_id:
+            return
+        try:
+            await self.send(self._admin_id, text)
+        except Exception as e:
+            logger.error("[OneBot] 通知管理员失败: %s", e)
+
+    async def _process_request(self, msg: dict) -> None:
+        """Handle request events: group invites (and friend requests).
+
+        v0.14.11 policy (plan D):
+        - inviter == admin → auto-approve
+        - others → notify admin with context, wait for approval command
+        """
+        req_type = msg.get("request_type", "")
+        sub_type = msg.get("sub_type", "")
+        flag = str(msg.get("flag", ""))
+        inviter = str(msg.get("user_id", ""))
+        group_id = str(msg.get("group_id", ""))
+        if not flag or flag in self._processed_flags:
+            return
+        self._processed_flags.add(flag)
+        if len(self._processed_flags) > 500:
+            self._processed_flags = set(list(self._processed_flags)[-300:])
+
+        if req_type == "group" and sub_type == "invite":
+            if self._admin_id and inviter == self._admin_id:
+                await self._approve_invite(flag, group_id, inviter)
+            else:
+                await self._notify_invite(flag, group_id, inviter)
+
+    async def _approve_invite(self, flag: str, group_id: str, inviter: str) -> None:
+        try:
+            result = await self._send_action(
+                "set_group_add_request", {"flag": flag, "sub_type": "invite", "approve": True})
+            logger.info("[OneBot] 管理员邀请自动同意 group=%s inviter=%s → %s", group_id, inviter, result)
+        except Exception as e:
+            logger.error("[OneBot] 自动同意邀请失败 group=%s: %s", group_id, e)
+
+    async def _notify_invite(self, flag: str, group_id: str, inviter: str) -> None:
+        now = time.time()
+        last = self._invite_notified.get(group_id, 0)
+        if now - last < 300:
+            return
+        self._invite_notified[group_id] = now
+        self._invite_pending[flag] = {"group_id": group_id, "inviter": inviter, "ts": now}
+
+        nick = inviter
+        try:
+            info = await self._send_action("get_stranger_info", {"user_id": int(inviter)})
+            nick = str(info.get("data", {}).get("nickname") or inviter)
+        except Exception:
+            pass
+
+        ctx_txt = ""
+        card = self._contact_cards.get(group_id)
+        if card and now - card.get("ts", 0) < 3600:
+            ctx_txt = f"\n（上下文：{card.get('sender', '')} 最近在群里发过这个群的名片：{card.get('context', '')}）"
+
+        text = (f"[邀请审批] {nick}（{inviter}）邀请我加入群 {group_id}{ctx_txt}\n"
+                f"回复「同意加入群 {group_id}」或「拒绝 群 {group_id}」处理。")
+        try:
+            await self.send(self._admin_id, text)
+            logger.info("[OneBot] 已通知管理员审批邀请 group=%s inviter=%s", group_id, inviter)
+        except Exception as e:
+            logger.error("[OneBot] 邀请审批通知失败: %s", e)
+
+    def pending_invites_context(self) -> str:
+        """待审批加群邀请的人话上下文（语义审批用）。
+
+        管理员私聊时注入 prompt，让 LLM 得知当前有哪些待审批邀请，
+        以便管理员明确指示「同意/拒绝 群 XXX」时调用 qq_invite_approve 工具。
+        """
+        now = time.time()
+        parts = []
+        for flag, pend in list(self._invite_pending.items()):
+            if now - pend.get("ts", 0) > 3600:
+                self._invite_pending.pop(flag, None)
+                continue
+            parts.append(f"群 {pend.get('group_id')}（邀请者 {pend.get('inviter')}）")
+        if not parts:
+            return ""
+        return "当前有待审批的加群邀请：" + "、".join(parts) + "。管理员明确指示同意/拒绝时调用 qq_invite_approve 工具。"
+
     async def _process_notice(self, msg: dict) -> None:
         """Process notice events (group increase, file upload, etc.)."""
         notice_type = msg.get("notice_type", "")
@@ -2460,6 +2608,97 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.info("[OneBot] User %s joined group %s", user_id, group_id)
         elif notice_type == "group_upload":
             await self._handle_group_upload(msg)
+        elif notice_type == "group_recall":
+            await self._mark_recalled(str(msg.get("group_id", "")), str(msg.get("message_id", "")))
+        elif notice_type == "notify" and msg.get("sub_type") == "poke":
+            await self._handle_poke(msg)
+
+    async def _handle_poke(self, msg: dict) -> None:
+        """Poke/nudge 唤醒：Soyo 被戳 → 进入关注态 + 语义判定 + 倒计时预退出。
+
+        OneBot notify/poke payload:
+          user_id=戳人者, target_id=被戳者, group_id=群
+
+        仅当被戳者是 Soyo 自己时唤醒；被戳的是别人则忽略（群友互戳与本 bot 无关）。
+        唤醒路径与 @ 一致：enter_attentive + 走正常语义判定（judge 判定"该不该回"），
+        判定后自然进入 15s 倒计时预退出（话题转移时）。
+        """
+        target_id = msg.get("target_id")
+        if target_id is None or str(target_id) != str(self._self_id or ""):
+            return
+        group_id = str(msg.get("group_id", ""))
+        if not group_id:
+            return
+        try:
+            gs = self._group_states.get(group_id)
+            if gs is not None:
+                # 同 @ 分支：戳一下 = 重新唤醒对话，重置退出态，
+                # 否则 judge 看到 phase=exiting 会严格执行"不回复"规则
+                old_phase = gs.episode_state.episode_phase or "empty"
+                if old_phase in ("exiting", "winding_down", ""):
+                    gs.episode_state.episode_phase = "starting"
+                    gs.episode_state.progression_guidance = ""
+                    gs.episode_state.updated_at = time.time()
+                gs.enter_attentive()
+                # 注：不直接操作 _exit_countdowns（属 trigger_coordinator 内部，
+                # judge 判定后话题转移会自动进入 15s 倒计时预退出）
+                self._last_poke_ts = getattr(self, "_last_poke_ts", {})
+                self._last_poke_ts[group_id] = time.time()
+            # 构造一个伪消息交给 on_ingested 走正常语义判定（不绕过 judge，
+            # 与 @ 快速通道不同——poke 是"关注一下"，仍需 judge 决定该不该回；
+            # 但文案必须明确"戳我=叫我"的指向，否则 judge 当群友互动跳过）
+            poke_msg = dict(msg)
+            poke_msg["_is_mentioned"] = False
+            poke_msg["_at_all"] = False
+            poke_msg["_poke_wake"] = True
+            poke_msg["raw_message"] = (
+                f"[戳一戳] 有人戳了戳我（这是叫我关注的意思）。"
+                f"戳我的人：QQ{msg.get('user_id', '')}，"
+                f"时间：{time.strftime('%H:%M', time.localtime(time.time()))}。"
+                f"请看一下当前对话，把戳我的人当成直接叫了我的存在。"
+            )
+            poke_msg["message"] = [
+                {"type": "text", "data": {"text": poke_msg["raw_message"]}}
+            ]
+            from .group_state import BufferedMessage
+            buffered = self._group_states.get(group_id).append_message(
+                BufferedMessage(
+                    mid="", ts=time.time(), uid=str(msg.get("user_id", "")),
+                    name=f"[戳戳] {msg.get('user_id', '')}",
+                    text=poke_msg["raw_message"], msg_type="text",
+                )
+            )
+            logger.info("[OneBot] Poke wake: group=%s by=%s (attentive + judge)", 
+                        group_id, msg.get("user_id"))
+            await self._trigger_coordinator.on_ingested(
+                group_id=group_id,
+                seq=self._group_states.get(group_id).next_seq,
+                msg=poke_msg,
+                sender_name=f"[戳戳] {msg.get('user_id', '')}",
+                raw_text=poke_msg["raw_message"],
+            )
+        except Exception as e:
+            logger.warning("[OneBot] Poke wake failed: %s", e)
+
+    async def _mark_recalled(self, group_id: str, message_id: str) -> None:
+        """Mark a message as recalled in corpus (kept for memory, flagged for retrieval)."""
+        if not message_id:
+            return
+        try:
+            from .adapter import get_state_db_path
+            import sqlite3 as _sq
+            _db = _sq.connect(str(get_state_db_path()), timeout=10)
+            cols = {r[1] for r in _db.execute("PRAGMA table_info(corpus_messages)")}
+            if "recalled" not in cols:
+                _db.execute("ALTER TABLE corpus_messages ADD COLUMN recalled INTEGER DEFAULT 0")
+            cur = _db.execute(
+                "UPDATE corpus_messages SET recalled=1 WHERE message_id=? AND chat_id=?",
+                (message_id, group_id))
+            _db.commit()
+            _db.close()
+            logger.info("[OneBot] 标记已撤回 message_id=%s group=%s rows=%d", message_id, group_id, cur.rowcount)
+        except Exception as e:
+            logger.warning("[OneBot] 撤回标记失败: %s", e)
 
     async def _handle_group_upload(self, msg: dict) -> None:
         """Record group file metadata in group buffer. Does NOT auto-download.
@@ -2517,6 +2756,41 @@ class OneBotAdapter(BasePlatformAdapter):
             )
         return result
 
+    @staticmethod
+    def _is_internal_leak(text: str) -> bool:
+        """判断内容是否为 Hermes 内部/系统消息，若是则不应发给 QQ。
+
+        识别：Tool loop 警告、工具 error JSON、系统标记、越权命令注入等。
+        """
+        import re as _re
+        t = (text or "").strip()
+        if not t:
+            return False
+
+        # 工具循环/失败警告（agent 侧注入的 system 消息）
+        if _re.search(r'\[Tool loop (?:warning|limit|complete)[^\]]*\]', t):
+            return True
+        if "Tool execution failed" in t or "Tool qq_" in t and "returned error" in t:
+            return True
+        if _re.search(r'repeated_exact_failure_warning|same_tool_failure_warning', t):
+            return True
+
+        # 工具结果 JSON（原始 error/success 对象，不应原样发出）
+        if _re.match(r'^\s*\{\s*"(success|error)"\s*:', t):
+            return True
+        if '"success": false' in t and '"error"' in t and len(t) < 300:
+            return True
+
+        # 纯系统标记（无用户可读语义）
+        if t in ("[图片下载失败]", "[image:timeout]", "[图片]", "[系统]", "[系统消息]"):
+            return True
+
+        # 越权命令注入（/stop /new 等斜杠系统命令被模型拼进回复）
+        if _re.match(r'^/(?:stop|new|reset|help|status|approve|deny)\b', t):
+            return True
+
+        return False
+
     async def _send_message_impl(
         self,
         chat_id: str,
@@ -2547,6 +2821,15 @@ class OneBotAdapter(BasePlatformAdapter):
                 except Exception:
                     pass
                 self._resolve_group_send(_sgid, "")
+            return SendResult(success=True, message_id=None)
+
+        # ── QQ 最终防线：拦截内部/Hermes 系统消息，防止泄露到群聊 ──
+        # 用户拍板：全部由 Hermes 内部产生的消息（Tool loop 警告、工具 error
+        # JSON、系统标记、越权命令等）绝不发到 QQ；只有素世人设内容才应发出。
+        if content and self._is_internal_leak(content):
+            _gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
+            logger.warning("[OneBot] Blocked internal/system content from reaching QQ (len=%d): %s", len(content), content[:60])
+            self._resolve_group_send(_gid, "")
             return SendResult(success=True, message_id=None)
 
         if content and chat_id.startswith("group:"):
@@ -2665,11 +2948,15 @@ class OneBotAdapter(BasePlatformAdapter):
                         await asyncio.sleep(0.6)
                 result = last_result or SendResult(success=True, message_id=None)
                 if result.success:
-                    self.add_bot_reply_to_buffer(chat_id, content)
+                    self.add_bot_reply_to_buffer(chat_id, content,
+                                                 message_id=str(result.message_id) if result.message_id else "",
+                                                 reply_to_id=reply_to or "")
                 return result
         result = await self._send_text_with_retry(chat_id, content, max_retries=3, reply_to=reply_to)
         if result.success:
-            self.add_bot_reply_to_buffer(chat_id, content)
+            self.add_bot_reply_to_buffer(chat_id, content,
+                                         message_id=str(result.message_id) if result.message_id else "",
+                                         reply_to_id=reply_to or "")
         return result
 
     async def _send_text_with_retry(self, chat_id, content, max_retries=3, reply_to=None, **kwargs):
