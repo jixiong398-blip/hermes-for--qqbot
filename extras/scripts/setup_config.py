@@ -9,7 +9,7 @@ QQBot Quick Setup — 多供应商 API 配置
   配置API.bat
 """
 
-import os, sys, secrets, json as _json
+import os, re, sys, secrets, json as _json
 from pathlib import Path
 
 # BOT_DIR = bot-template root: walk up to find dir containing install.bat
@@ -208,11 +208,24 @@ def auto_read_napcat_token():
 # 配置生成
 # ════════════════════════════════════════════════════════════════
 
+
+def detect_bot_name() -> str:
+    """Extract character name from SOUL.md first line (# SOUL.md — X)."""
+    for path in (HERMES_HOME / "SOUL.md", TPL_DIR / "SOUL-template.md"):
+        if path.exists():
+            try:
+                first = path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+                m = re.search(r"[—\-]\s*(.+)$", first)
+                if m:
+                    return m.group(1).strip()
+            except Exception:
+                pass
+    return ""
 def generate_config(llm_key, vision_key, anysearch_key,
                     gateway_token, owner_qq,
                     llm_url, llm_model, vision_url, vision_model, terminal_cwd,
                     provider_id="custom", reasoning_effort="medium",
-                    thinking_dialect="", num_ctx=""):
+                    thinking_dialect="", bot_name="", num_ctx=""):
     tpl = (TPL_DIR / "config-template.yaml").read_text(encoding="utf-8")
     for old, new in [
         ("{{DEEPSEEK_API_KEY}}", llm_key),
@@ -230,6 +243,7 @@ def generate_config(llm_key, vision_key, anysearch_key,
         ("{{REASONING_EFFORT}}", reasoning_effort or "medium"),
         ("{{THINKING_DIALECT}}", thinking_dialect or ""),
         ("{{NUM_CTX_LINE}}", (f"  ollama_num_ctx: {num_ctx}" if num_ctx else "")),
+        ("{{BOT_NAME}}", bot_name or "{{BOT_NAME}}"),
     ]:
         tpl = tpl.replace(old, new)
     return tpl
@@ -386,7 +400,7 @@ def main():
                           gateway_token, owner_qq,
                           llm_url, llm_model, vision_url, vision_model, terminal_cwd,
                           provider_id=provider_id, reasoning_effort=reasoning_effort,
-                          thinking_dialect=dialect, num_ctx=num_ctx)
+                          thinking_dialect=dialect, num_ctx=num_ctx, bot_name=detect_bot_name())
 
     napcat_token, napcat_qq = auto_read_napcat_token()
     if napcat_token:
@@ -434,4 +448,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 

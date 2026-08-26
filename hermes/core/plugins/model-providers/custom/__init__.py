@@ -46,6 +46,29 @@ def _detect_dialect(model: str | None, base_url: str | None) -> str:
     return ""
 
 
+def _config_thinking_dialect() -> str:
+    """Read model.thinking_dialect from $HERMES_HOME/config.yaml.
+
+    The transport doesn't pass this key, so the profile reads it directly
+    (same pattern as semantic_judge._load_main_model_cfg). Empty on failure.
+    """
+    try:
+        import os as _os
+        import yaml as _y
+        cfg_path = _os.path.join(
+            _os.getenv("HERMES_HOME", _os.path.expanduser("~/.hermes")),
+            "config.yaml",
+        )
+        if not _os.path.exists(cfg_path):
+            return ""
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = _y.safe_load(f) or {}
+        m = cfg.get("model", {}) or {}
+        return str(m.get("thinking_dialect", "") or "").strip().lower()
+    except Exception:
+        return ""
+
+
 class CustomProfile(ProviderProfile):
     """Custom/local endpoints — dialect-table driven thinking control."""
 
@@ -69,7 +92,10 @@ class CustomProfile(ProviderProfile):
             extra_body["options"] = options
 
         # Resolve dialect: explicit config > auto-detect > none
+        # (transport doesn't pass thinking_dialect, so read it from config.yaml here)
         dialect = (thinking_dialect or "").strip().lower()
+        if not dialect:
+            dialect = _config_thinking_dialect()
         if not dialect:
             dialect = _detect_dialect(model, base_url)
 

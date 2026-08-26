@@ -1,4 +1,4 @@
-# USER_AGENTS.md — QQ 机器人 agent 操作指南（面向用户）
+﻿# USER_AGENTS.md — QQ 机器人 agent 操作指南（面向用户）
 
 > 本文件给 **AI agent（OpenCode / Cursor / Claude Code 等）** 看，帮助你安装、配置、运行这个 QQ 群 AI 机器人模板。
 > 本文件不含任何维护者/服务器内部信息，用户可安全使用。
@@ -90,6 +90,28 @@ python extras/scripts/setup_config.py
 | `ONEBOT_HTTP_URL` | | NapCat HTTP（默认 http://127.0.0.1:3000） |
 | `OBSIDIAN_VAULT_PATH` | | 知识库文件夹路径（默认为项目内 modules/knowledge） |
 
+## 思考强度与模型方言
+
+`配置API.bat` 会让你选择**思考强度**（reasoning effort）：
+
+| 档位 | 说明 |
+|---|---|
+| off | 关闭思考，响应最快 |
+| minimal / low / medium / high / xhigh | 思考深度递增（xhigh 仅部分模型支持） |
+
+- 统一语义：无论哪家供应商，档位含义一致，引擎自动翻译成该端点的参数格式
+- 写入 `~/.hermes/config.yaml` 的 `agent.reasoning_effort`，可随时手动改
+
+**本地部署 / 自定义端点**（provider=custom）额外支持：
+
+```yaml
+model:
+  thinking_dialect: auto   # 思考参数方言: qwen|ollama|openai|kimi|auto(按模型名/URL猜)|空=不发送
+  ollama_num_ctx: 32768    # Ollama 上下文窗口（可选）
+```
+
+> 方言指不同推理后端表达"开/关思考"的 API 形状差异；auto 能识别 Qwen 和 Ollama，
+> 其他端点选对 dialect 或留空（不发送 = 用端点默认行为）。
 ## 常见问题排查
 
 | 症状 | 检查 |
@@ -104,3 +126,4 @@ python extras/scripts/setup_config.py
 
 - `.env`、`config.yaml`、`SOUL.md`、`*.db`、`sessions/`、`logs/` 含你的私密数据（QQ 号、API Key），**永不提交到任何 git 仓库**
 - 修改角色：只编辑 `templates\SOUL.md`（模板）或 `~\.hermes\SOUL.md`（运行时），不要动代码
+

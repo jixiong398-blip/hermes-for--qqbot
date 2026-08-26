@@ -46,6 +46,7 @@ bot-template/
 | 管理员 QQ | 配置API.bat | 能执行指令的人 |
 | 角色灵魂 | SOUL.md | 见下方说明 |
 | 视觉 API Key | 配置API.bat | 图片识别（可选，OpenCode Go 可复用 LLM Key） |
+| 思考强度 | 配置API.bat | off/minimal/low/medium/high/xhigh，影响回复质量与耗时（默认 medium） |
 
 ## 创建角色灵魂（必须）
 
@@ -97,3 +98,4 @@ bot-template/
 ## 给 AI agent 的操作指南
 
 如果你想用 AI agent（如 OpenCode / Cursor / Claude Code）帮你安装、配置、运行这个机器人，请让 agent 阅读 `USER_AGENTS.md`（面向用户版，不含维护者运维信息）。
+
