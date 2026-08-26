@@ -55,7 +55,7 @@ python extras/scripts/setup_config.py
 1. 阅读 `templates\SOUL-template.md` 参考格式
 2. 让 AI 基于模板写出你想要的角色（或让 agent 帮你生成）
 3. 保存为 `templates\SOUL.md`
-4. 双击 `templates\一键替换灵魂核心.bat` → 写入 `~\.hermes\SOUL.md` 并同步角色名到 .env
+4. 重跑 `配置API.bat` → 角色名从 SOUL.md 自动提取并同步到 .env（无需手动改）
 
 > **SOUL.md 必须含 `## 称呼` 节**（正式名 + 别名列表）——否则名字直呼识别（v0.14.13）失效：
 >
@@ -126,4 +126,5 @@ model:
 
 - `.env`、`config.yaml`、`SOUL.md`、`*.db`、`sessions/`、`logs/` 含你的私密数据（QQ 号、API Key），**永不提交到任何 git 仓库**
 - 修改角色：只编辑 `templates\SOUL.md`（模板）或 `~\.hermes\SOUL.md`（运行时），不要动代码
+
 

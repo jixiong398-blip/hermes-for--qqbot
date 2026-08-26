@@ -32,7 +32,7 @@ bot-template/
 ① 双击 install.bat        → 离线安装 Python + Node.js + Live2D + Hermes
 ② 启动 NapCat 扫码登录     → modules\napcat\napcat.bat → 扫码登录 → WebUI 开启 WS/HTTP 端口
 ③ 双击 配置API.bat          → 选供应商 + 填 API Key + 管理员 QQ（自动读 NapCat token）
-④ 准备角色灵魂              → 编辑 SOUL.md → 一键替换灵魂核心.bat（自动同步角色名到 .env）
+④ 准备角色灵魂              → 编辑 SOUL.md → 重跑 配置API.bat（角色名自动同步到 .env）
 ⑤ 双击 start.bat           → Dashboard 启动，一键开 Bot
 ```
 
@@ -53,7 +53,7 @@ bot-template/
 1. 阅读 `templates\SOUL-template.md` 参考格式
 2. 让 AI 基于模板写出你想要的角色
 3. 保存为 `templates\SOUL.md`
-4. 双击 `templates\一键替换灵魂核心.bat` → 写入 `~\.hermes\SOUL.md` 并同步角色名到 .env
+4. 重跑 `配置API.bat`（或 `python extras\scripts\install.py`）→ 写入 `~\.hermes\SOUL.md` 并自动同步角色名到 .env
 
 > 角色名参数化：`ONEBOT_BOT_NAME` 环境变量（env > config.yaml > 默认值），judge/recorder 自动跟随。
 > **身份装载（v0.14.13）**：SOUL.md 需含 `## 称呼` 节（正式名 + 别名列表），名字直呼（无 @）也能触发回复。
@@ -98,4 +98,5 @@ bot-template/
 ## 给 AI agent 的操作指南
 
 如果你想用 AI agent（如 OpenCode / Cursor / Claude Code）帮你安装、配置、运行这个机器人，请让 agent 阅读 `USER_AGENTS.md`（面向用户版，不含维护者运维信息）。
+
 
