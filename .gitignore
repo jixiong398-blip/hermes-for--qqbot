@@ -15,6 +15,7 @@ gateway.pid
 *.zip.*
 MAINTENANCE.md
 _*.py
+!__init__.py
 _*.bat
 _*.json
 release-notes.txt
@@ -56,3 +57,4 @@ extras/electron-offline.zip.002
 
 # 维护者运维指南（含服务器信息，只留本地）
 AGENTS.md
+
