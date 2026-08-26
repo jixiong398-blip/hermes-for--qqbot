@@ -1,5 +1,39 @@
 ﻿# bot-template 更新日志
 
+## v0.14.14 (2026-08-26)
+
+### 🔴 关键修复：分发包完整性 + 配置向导可用性
+
+- **`__init__.py` 分发缺陷**：`.gitignore` 的 `_*.py` 规则误匹配全部包标记（双下划线开头）→
+  GitHub 分发包缺失 101 个 `__init__.py`，Python import 必失败。已加 `!__init__.py` 否定规则并补回全部文件
+- **配置API.bat 路径断链（P0）**：引用不存在的 `scripts\setup_config.py`（v0.14.3 重构遗留）→
+  修正为 `extras\scripts\setup_config.py`，配置向导恢复可用
+
+### 统一思考强度配置 + thinking 方言注册表
+
+- **思考强度（reasoning effort）成为一等配置**：`config.yaml` 的 `agent.reasoning_effort`，
+  统一档位 `none/minimal/low/medium/high/xhigh`（与引擎标准一致），各家供应商自动翻译
+- **CustomProfile 方言注册表**（provider=custom 端点）：
+  - `model.thinking_dialect: qwen|ollama|openai|kimi|auto`（auto 按模型名/URL 启发式）
+  - 未声明且猜不中 → 不发任何思考参数（零误伤默认）
+  - 修复 Qwen 端点关思考无效 bug（`think=false` → `thinking:{type:disabled}`）
+
+### 配置体验升级（配置API.bat）
+
+- 13 家供应商映射真实引擎 profile（deepseek/zai/alibaba/kimi-coding/opencode-zen/openrouter/anthropic...）
+- 新增"思考强度"交互选择；本地部署分支追问端点/模型/方言/上下文窗口
+- 修复 `{{BOT_NAME}}` 占位符残留（detect_bot_name 从 SOUL.md 自动提取）
+- 修复 BOT_DIR 路径计算 bug（与 upgrade.py 同款）
+
+### 文档与模板修正
+
+- 文档幽灵引用清除（"一键替换灵魂核心.bat"从未存在 → 改指向配置API.bat/install.py 实际流程）
+- 模板双向对齐：SOUL-template 补「称呼」节（名字直呼识别依赖）；config-template 补新配置键
+- 双 OneBot 适配器加互指注释（plugins=现役 / gateway=上游遗留，防误改）
+
+**涉及文件**：`.gitignore`、`配置API.bat`、`hermes/core/plugins/model-providers/custom/__init__.py`、
+`extras/scripts/setup_config.py`、`templates/*`、`README.md`、`USER_AGENTS.md`、`UPGRADE.md` 等
+
 ## v0.14.13 (2026-08-25)
 
 ### NapCat 能力全面接入 + 热回复缓存 + judge 调度重构 + 身份装载层

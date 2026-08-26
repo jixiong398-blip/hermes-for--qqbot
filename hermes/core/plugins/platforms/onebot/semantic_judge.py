@@ -57,16 +57,62 @@ def _judge_thinking_param() -> dict:
 
 
 def _get_api_key() -> str:
-
+    """Judge/summary API key. Follows the main model (config.yaml model.api_key)
+    so a model switch applies everywhere; env DEEPSEEK_API_KEY is fallback."""
+    try:
+        cfg = _load_main_model_cfg()
+        k = str(cfg.get("api_key", "") or "").strip()
+        if k:
+            return k
+    except Exception:
+        pass
     return os.getenv("DEEPSEEK_API_KEY", "")
 
 
 def _get_api_base() -> str:
+    """Judge/summary API base. Follows config.yaml model.base_url (main
+    model); env DEEPSEEK_BASE_URL is fallback. Otherwise a model switch in
+    config.yaml leaves judge/summary on a stale endpoint (e.g. 401)."""
+    try:
+        cfg = _load_main_model_cfg()
+        b = str(cfg.get("base_url", "") or "").strip()
+        if b:
+            return b
+    except Exception:
+        pass
     return os.getenv("DEEPSEEK_BASE_URL", "")
 
 
 def _get_api_model() -> str:
+    """Judge/summary model. Follows config.yaml model.model (main model);
+    env DEEPSEEK_MODEL is fallback."""
+    try:
+        cfg = _load_main_model_cfg()
+        m = str(cfg.get("model", "") or "").strip()
+        if m:
+            return m
+    except Exception:
+        pass
     return os.getenv("DEEPSEEK_MODEL", "")
+
+
+def _load_main_model_cfg() -> Dict[str, Any]:
+    """Read the main model section from config.yaml (single source of truth
+    used by the gateway). Returns {} on any failure."""
+    try:
+        import yaml as _y
+        cfg_path = os.path.join(
+            os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes")),
+            "config.yaml",
+        )
+        if not os.path.exists(cfg_path):
+            return {}
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = _y.safe_load(f) or {}
+        m = cfg.get("model", {}) or {}
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
 
 
 def _get_bot_name() -> str:

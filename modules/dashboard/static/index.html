@@ -657,6 +657,182 @@ input,select{font-family:inherit;font-size:14px}
   .log-area{min-height:300px}
 }
 </style>
+<style id="fluent-theme">
+/* ============================================================
+   WinUI 3 / Fluent Design 主题覆盖层（Windows 11 风格）
+   原理：重定义 :root 变量切换皮肤 + 精准覆盖写死的 Apple 风格值
+   布局规则全部保留，仅替换视觉语言
+   ============================================================ */
+:root{
+  /* Fluent 调色板 */
+  --primary:#0067c0;
+  --primary-light:#1975c5;
+  --primary-ghost:#eff6fc;
+  --success:#0f7b0f;
+  --success-ghost:#dff6dd;
+  --warning:#9d5d00;
+  --warning-ghost:#fff4ce;
+  --danger:#c42b1c;
+  --danger-ghost:#fde7e9;
+  --bg:#f3f3f3;                 /* Mica 窗口底色 */
+  --card-bg:#ffffff;
+  --border:#e5e5e5;
+  --border-light:#f0f0f0;
+  --text:#1a1a1a;
+  --text2:#5d5d5d;
+  --text3:#8a8a8a;
+  /* Fluent 用边框分层，几乎无阴影 */
+  --shadow-sm:none;
+  --shadow-card:none;
+  --shadow-hover:0 2px 4px rgba(0,0,0,0.04);
+  /* WinUI 圆角体系：卡片 8px，控件 4px */
+  --radius:8px;
+  --radius-sm:8px;
+  --radius-xs:4px;
+  --font:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  --mono:"Cascadia Mono","Cascadia Code","Consolas",monospace;
+  /* Fluent 动效：快速 ease-out，无弹性 */
+  --ease:0.15s ease-out;
+  --spring:0.25s ease-out;
+  --section-bg:#fafafa;
+}
+
+/* ---- 字体与字重：Segoe UI semibold，去掉 Apple 紧字距 ---- */
+body{letter-spacing:normal}
+.header-left h1{font-size:20px;font-weight:600;letter-spacing:normal}
+.header-left .sub{font-size:12px;color:var(--text2)}
+.header{padding:16px 0 14px;align-items:center}
+.main-layout{height:calc(100vh - 92px)}
+.hero-heading h2,.card-header h2,.log-card-header h2{font-weight:600;letter-spacing:normal;font-size:15px}
+.ov-val{font-weight:600;letter-spacing:normal}
+.mh-big{font-weight:600;letter-spacing:normal}
+.service-name{letter-spacing:normal}
+.btn,.btn-hero{letter-spacing:normal;font-weight:600}
+
+/* ---- 卡片：白底 + 1px 边框 + 8px 圆角，无阴影 ---- */
+.card,.hero-card{
+  box-shadow:none;
+  border:1px solid var(--border);
+}
+.card:hover{box-shadow:0 2px 4px rgba(0,0,0,0.04)}
+.card{animation-duration:0.25s}
+
+/* ---- 按钮：Fluent 标准 4px 圆角 + 1px 边框 + 32px 高 ---- */
+.btn{
+  border:1px solid var(--border);
+  background:#fbfbfb;
+  border-radius:4px;
+  padding:6px 14px;
+  font-size:14px;
+  min-height:32px;
+  color:var(--text);
+}
+.btn:hover{background:#f5f5f5}
+.btn:active{background:#eeeeee;color:var(--text2)}
+.btn-primary,.btn-hero-start{
+  background:var(--primary);
+  color:#fff;
+  border:1px solid var(--primary);
+  box-shadow:none;
+}
+.btn-primary:hover,.btn-hero-start:hover{background:var(--primary-light);box-shadow:none}
+.btn-primary:active,.btn-hero-start:active{background:var(--primary)}
+.btn-danger,.btn-hero-stop{
+  background:#fbfbfb;
+  color:var(--danger);
+  border:1px solid var(--border);
+  box-shadow:none;
+}
+.btn-danger:hover{background:var(--danger-ghost)}
+.btn-accent{background:#fbfbfb;color:var(--text);border:1px solid var(--border)}
+.btn-accent:hover{background:#f5f5f5}
+.btn-green,.btn-success{background:var(--success);border-color:var(--success)}
+.btn-green:hover,.btn-success:hover{background:#107c10}
+.btn-lg{min-height:36px}
+
+/* ---- 服务小按钮：4px 圆角，Fluent 描边色 ---- */
+.btn-service{border-radius:4px;border-color:var(--border);background:#fbfbfb;font-size:12px}
+.btn-service-start{color:var(--primary);border-color:var(--border)}
+.btn-service-start:hover{background:var(--primary-ghost);border-color:var(--primary)}
+.btn-service-stop{color:var(--danger);border-color:var(--border)}
+.btn-service-stop:hover{background:var(--danger-ghost);border-color:var(--danger)}
+.btn-service-restart{color:var(--warning);border-color:var(--border)}
+.btn-service-restart:hover{background:var(--warning-ghost);border-color:var(--warning)}
+
+/* ---- 服务行卡片：8px 圆角白底 ---- */
+#serviceList .service-row{background:var(--card-bg);border:1px solid var(--border);border-radius:8px}
+#serviceList .service-row:hover{border-color:#d0d0d0;box-shadow:none}
+
+/* ---- 输入框：WinUI 招牌 focus 底部 accent 下划线 ---- */
+.chat-input-row input,.voice-chat-row input,.search-box input,#memSearch,#obsSearch{
+  border-radius:4px;
+  font-size:14px;
+}
+.chat-input-row input:focus,.voice-chat-row input:focus{
+  border-color:var(--border);
+  border-bottom:2px solid var(--primary);
+  box-shadow:none;
+}
+.search-box:focus-within{border-color:var(--border);border-bottom:2px solid var(--primary);box-shadow:none}
+.search-box .btn{border-radius:0 4px 4px 0;border:none;border-left:1px solid var(--border)}
+
+/* ---- 日志 tab：Fluent Pivot 下划线式 ---- */
+.log-tabs{background:transparent;border:none;border-bottom:1px solid var(--border);border-radius:0;padding:0;gap:2px}
+.log-tab{border-radius:4px 4px 0 0;padding:7px 14px;font-size:12px;position:relative}
+.log-tab.active{background:transparent;color:var(--text);box-shadow:none;font-weight:600}
+.log-tab.active::after{
+  content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;
+  background:var(--primary);border-radius:1px;
+}
+.log-tab:hover:not(.active){background:#eaeaea;color:var(--text)}
+/* 日志区：浅色 Fluent 终端 */
+.log-area{background:#f9f9f9;border:1px solid var(--border);color:#1a1a1a;border-radius:8px}
+.log-line{border-bottom:1px solid #f0f0f0}
+.log-line .ts{color:#8a8a8a}
+.log-empty{color:#8a8a8a}
+.log-area::-webkit-scrollbar-thumb{background:#c8c8c8}
+.log-area::-webkit-scrollbar-thumb:hover{background:#a0a0a0}
+.log-card:fullscreen::backdrop{background:#f3f3f3}
+.log-fullscreen-btn{border-radius:4px;background:#fbfbfb}
+
+/* ---- Badge：Fluent 方角小徽标 ---- */
+.badge{border-radius:4px;padding:2px 8px;font-weight:600;letter-spacing:normal}
+
+/* ---- 记忆分类行：NavigationView 项风格（36px 高、hover 灰、4px 圆角） ---- */
+.cat-row{border-radius:4px;min-height:32px;transition:background var(--ease)}
+.cat-row:hover{background:#eaeaea}
+.cat-count{background:#f0f0f0;color:var(--text2);border-radius:4px;font-weight:600}
+
+/* ---- 记忆工作流 chip ---- */
+.mem-wf-chip{border:1px solid var(--border);border-radius:4px;background:#fbfbfb}
+.mem-wf-chip.active{border-color:var(--success);background:var(--success-ghost)}
+.mem-wf-chip.decaying{border-color:var(--warning);background:var(--warning-ghost)}
+.mem-wf-chip.forgotten{border-color:var(--danger);background:var(--danger-ghost)}
+
+/* ---- 知识库结果项 ---- */
+.result-item{background:var(--card-bg);border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:4px;animation-duration:0.2s}
+.result-item:hover{background:var(--primary-ghost)}
+
+/* ---- Toast：Fluent InfoBar 感 ---- */
+.toast{box-shadow:0 4px 8px rgba(0,0,0,0.10);border-radius:4px;animation:toastIn 0.2s ease-out}
+
+/* ---- 滚动条：Fluent overlay 细样式 ---- */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#c8c8c8;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#a0a0a0;border:2px solid transparent;background-clip:content-box}
+
+/* ---- 语音模式按钮 ---- */
+.btn-voice{border-radius:4px}
+.btn-voice-on{box-shadow:none;background:var(--primary);border-color:var(--primary)}
+.btn-voice-on:hover{background:var(--primary-light);box-shadow:none}
+
+/* ---- 分栏拖拽条 ---- */
+.divider:hover,.divider.dragging{background:var(--primary);opacity:0.35}
+
+/* ---- 空状态/微调 ---- */
+.empty-state{color:var(--text3)}
+select{border:1px solid var(--border);border-radius:4px;background:#fbfbfb;min-height:28px}
+</style>
 </head>
 <body>
 <div class="toast-container" id="toastContainer"></div>

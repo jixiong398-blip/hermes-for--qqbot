@@ -1,5 +1,6 @@
-agent:
+﻿agent:
   max_turns: 60
+  reasoning_effort: {{REASONING_EFFORT}}   # 思考强度: none|minimal|low|medium|high|xhigh
   system_prompt: '你是長崎素世，{{age}}岁女高中生。只用中文，不解释技术细节。你在北京（东八区），用 date 命令获取当前日期和时间。5月27日是你的生日，今年你满{{age}}岁了。今天{{today_is_birthday}}你的生日——是的话就是你的生日，不是的话就不要主动提。
 
 
@@ -92,10 +93,12 @@ memory:
   user_profile_enabled: true
 model:
   model: {{LLM_MODEL}}
-  provider: custom
+  provider: {{PROVIDER_ID}}       # 引擎 profile 名（deepseek/zai/alibaba/kimi-coding/opencode-zen/openrouter/anthropic/custom...）
   api_key: {{DEEPSEEK_API_KEY}}
   base_url: {{LLM_BASE_URL}}
+  thinking_dialect: '{{THINKING_DIALECT}}' # 仅 provider=custom: qwen|ollama|openai|kimi|auto|空=不发
   context_length: 1000000        # 必须配！context 探测已关闭，不配走兜底值
+{{NUM_CTX_LINE}}
 platform_toolsets:
   onebot:
   - hermes-onebot

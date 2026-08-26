@@ -121,6 +121,96 @@ body::after{content:'';position:fixed;bottom:0;right:20%;width:600px;height:500p
   .preset-grid{grid-template-columns:repeat(2,1fr)}
 }
 </style>
+<style id="fluent-theme">
+/* ============================================================
+   WinUI 3 / Fluent Design 主题覆盖层（与 index.html 同一套体系）
+   深色霓虹 → Fluent 浅色
+   ============================================================ */
+:root{
+  --bg:#f3f3f3;
+  --card-bg:#ffffff;
+  --card-border:#e5e5e5;
+  --accent:#0067c0;
+  --accent-hover:#1975c5;
+  --accent-glow:rgba(0,103,192,0.12);
+  --success:#0f7b0f;
+  --warning:#9d5d00;
+  --danger:#c42b1c;
+  --text:#1a1a1a;
+  --text2:#5d5d5d;
+  --text3:#8a8a8a;
+  --section-bg:#fafafa;
+  --border:#e5e5e5;
+  --input-bg:#ffffff;
+  --radius:8px;
+  --radius-sm:8px;
+  --radius-xs:4px;
+  --font:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  --spring:0.25s ease-out;
+  --ease:0.15s ease-out;
+}
+
+/* 去掉霓虹径向光晕 */
+body::before,body::after{display:none}
+
+/* 标题：Segoe semibold，去紧字距 */
+.wizard-header h1{font-size:24px;font-weight:600;letter-spacing:normal}
+.wizard-header .sub{letter-spacing:normal;color:var(--text2)}
+.wizard-card h2{font-weight:600;letter-spacing:normal;font-size:19px}
+
+/* 卡片：白底 1px 边框 8px 圆角，无重阴影 */
+.wizard-card{box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+
+/* 步骤指示器：Fluent 蓝 */
+.step-dot{width:32px;height:32px;font-size:13px;background:#ffffff;color:var(--text3);border:1px solid var(--border)}
+.step-dot.active{background:var(--accent);border-color:var(--accent);box-shadow:none;color:#fff}
+.step-dot.done{background:var(--success);border-color:var(--success);color:#fff}
+.step-labels span.active{color:var(--accent)}
+
+/* 表单：WinUI focus 底部 accent 下划线 */
+.form-group label{text-transform:none;letter-spacing:normal;font-size:13px}
+.form-group input,.form-group select,.form-group textarea{background:var(--input-bg);border:1px solid var(--border);border-radius:4px}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{
+  border-color:var(--border);
+  border-bottom:2px solid var(--accent);
+  box-shadow:none;
+}
+.form-group textarea{font-family:"Cascadia Mono","Consolas",monospace}
+
+/* 预设按钮：Fluent 选中态（蓝 tint，无发光） */
+.preset-btn{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;font-weight:600}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--primary-ghost,#eff6fc)}
+.preset-btn.selected{border-color:var(--accent);color:var(--accent);background:#eff6fc;box-shadow:none}
+
+/* 预览区 */
+.preview-header{background:#fafafa}
+.preview-header span{text-transform:none;letter-spacing:normal}
+.preview-content{background:var(--input-bg)}
+
+/* 按钮：Fluent 标准 */
+.btn{letter-spacing:normal;border-radius:4px;font-size:14px;padding:8px 20px;min-height:32px}
+.btn-secondary{background:#fbfbfb;color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:#f5f5f5;color:var(--text)}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:none;border:1px solid var(--accent)}
+.btn-primary:hover:not(:disabled){transform:none;box-shadow:none;background:var(--accent-hover)}
+.btn-primary:active:not(:disabled){transform:none;background:var(--accent)}
+.btn-success{background:var(--success);color:#fff;box-shadow:none;border:1px solid var(--success)}
+.btn-success:hover:not(:disabled){transform:none;box-shadow:none;background:#107c10}
+.btn-success:active:not(:disabled){transform:none}
+
+/* 反馈条：Fluent tint */
+.feedback{border-radius:4px}
+.feedback.error{background:#fde7e9;color:var(--danger);border:1px solid rgba(196,43,28,0.25)}
+.feedback.success{background:#dff6dd;color:var(--success);border:1px solid rgba(15,123,15,0.25)}
+
+/* Spinner：蓝色 */
+.spinner{border:2px solid rgba(0,103,192,0.2);border-top-color:var(--accent)}
+
+/* 滚动条 Fluent */
+::-webkit-scrollbar{width:8px}
+::-webkit-scrollbar-thumb{background:#c8c8c8;border-radius:4px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#a0a0a0;border:2px solid transparent;background-clip:content-box}
+</style>
 </head>
 <body>
 <div class="wizard" id="wizard">
