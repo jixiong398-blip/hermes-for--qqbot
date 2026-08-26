@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 QQBot Quick Setup — 多供应商 API 配置
@@ -12,7 +12,13 @@ QQBot Quick Setup — 多供应商 API 配置
 import os, sys, secrets, json as _json
 from pathlib import Path
 
-BOT_DIR = Path(__file__).resolve().parent.parent
+# BOT_DIR = bot-template root: walk up to find dir containing install.bat
+# (script lives in extras/scripts/, so parent.parent alone is wrong)
+BOT_DIR = Path(__file__).resolve().parent
+for _ in range(4):
+    if (BOT_DIR / "install.bat").exists():
+        break
+    BOT_DIR = BOT_DIR.parent
 TPL_DIR = BOT_DIR / "templates"
 HERMES_HOME = Path.home() / ".hermes"
 
@@ -26,33 +32,60 @@ def dim(t):   return c(t, "2")
 
 
 # ════════════════════════════════════════════════════════════════
-# LLM 主模型供应商（全部 OpenAI 兼容，除 Anthropic 由 Hermes 内置支持）
+# LLM 主模型供应商
+# provider_id: Hermes 引擎 profile 名（决定请求方言，见 hermes/core/providers/）
+#   - 有上游 profile 的用真名（方言/行为自动正确）
+#   - 无 profile 的走 custom + thinking_dialect 显式声明
+# dialect: 仅 provider_id=custom 时有意义（qwen|ollama|openai|kimi|auto）
 # ════════════════════════════════════════════════════════════════
 LLM_PROVIDERS = {
     "1": {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
+          "provider_id": "deepseek", "dialect": "",
           "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat"]},
     "2": {"name": "OpenCode Go（推荐，一站式）", "base_url": "https://opencode.ai/zen/go/v1",
+          "provider_id": "opencode-zen", "dialect": "",
           "models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
     "3": {"name": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+          "provider_id": "zai", "dialect": "",
           "models": ["glm-5.2", "glm-4.6", "glm-4-flash"]},
     "4": {"name": "火山方舟（豆包）", "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "provider_id": "custom", "dialect": "qwen",
           "models": ["doubao-1.5-pro-256k", "doubao-1.5-lite-32k", "doubao-seed-1.6"]},
     "5": {"name": "阿里百炼（通义千问）", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "provider_id": "alibaba", "dialect": "",
           "models": ["qwen3.7-plus", "qwen3.6-plus", "qwen-max"]},
     "6": {"name": "MiniMax", "base_url": "https://api.minimax.chat/v1",
+          "provider_id": "custom", "dialect": "openai",
           "models": ["MiniMax-Text-01", "MiniMax-M1"]},
     "7": {"name": "Moonshot（Kimi）", "base_url": "https://api.moonshot.cn/v1",
+          "provider_id": "kimi-coding", "dialect": "",
           "models": ["moonshot-v1-auto", "kimi-k2", "moonshot-v1-32k"]},
     "8": {"name": "OpenAI", "base_url": "https://api.openai.com/v1",
+          "provider_id": "openai-compat", "dialect": "openai",
           "models": ["gpt-4.1", "gpt-4o", "o4-mini"]},
     "9": {"name": "Anthropic（Claude）", "base_url": "https://api.anthropic.com",
+          "provider_id": "anthropic", "dialect": "",
           "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]},
     "A": {"name": "SiliconFlow", "base_url": "https://api.siliconflow.cn/v1",
+          "provider_id": "custom", "dialect": "openai",
           "models": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen3-235B-A22B"]},
     "B": {"name": "OpenRouter（多模型聚合）", "base_url": "https://openrouter.ai/api/v1",
+          "provider_id": "openrouter", "dialect": "",
           "models": ["openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-flash", "deepseek/deepseek-chat"]},
-    "0": {"name": "自定义（OpenAI 兼容）", "base_url": "", "models": []},
+    "0": {"name": "本地部署 / 自定义端点（Ollama/vLLM/任意 OpenAI 兼容）",
+          "base_url": "", "provider_id": "custom", "dialect": "auto",
+          "models": []},
 }
+
+# 统一思考强度档位（与上游 VALID_REASONING_EFFORTS 一致）
+EFFORT_CHOICES = [
+    ("1", "off（关闭思考，响应最快）", "off"),
+    ("2", "minimal（极简）", "minimal"),
+    ("3", "low（低）", "low"),
+    ("4", "medium（中，推荐）", "medium"),
+    ("5", "high（高）", "high"),
+    ("6", "xhigh（极高，仅部分模型支持）", "xhigh"),
+]
 
 # ════════════════════════════════════════════════════════════════
 # 视觉识别供应商
@@ -177,7 +210,9 @@ def auto_read_napcat_token():
 
 def generate_config(llm_key, vision_key, anysearch_key,
                     gateway_token, owner_qq,
-                    llm_url, llm_model, vision_url, vision_model, terminal_cwd):
+                    llm_url, llm_model, vision_url, vision_model, terminal_cwd,
+                    provider_id="custom", reasoning_effort="medium",
+                    thinking_dialect="", num_ctx=""):
     tpl = (TPL_DIR / "config-template.yaml").read_text(encoding="utf-8")
     for old, new in [
         ("{{DEEPSEEK_API_KEY}}", llm_key),
@@ -190,6 +225,11 @@ def generate_config(llm_key, vision_key, anysearch_key,
         ("{{LLM_BASE_URL}}", llm_url),
         ("{{VISION_BASE_URL}}", vision_url),
         ("{{VISION_MODEL}}", vision_model),
+        # v0.14.14+: provider 真实化 + 思考强度/方言
+        ("{{PROVIDER_ID}}", provider_id or "custom"),
+        ("{{REASONING_EFFORT}}", reasoning_effort or "medium"),
+        ("{{THINKING_DIALECT}}", thinking_dialect or ""),
+        ("{{NUM_CTX_LINE}}", (f"  ollama_num_ctx: {num_ctx}" if num_ctx else "")),
     ]:
         tpl = tpl.replace(old, new)
     return tpl
@@ -238,11 +278,37 @@ def main():
     print(bold("  [1/4] LLM 主模型 — 聊天 & 语义判断"))
     llm_choice, llm_info = choose("选择 LLM 供应商:", LLM_PROVIDERS, default="2")
     llm_url = llm_info["base_url"]
+    provider_id = llm_info.get("provider_id", "custom")
+    dialect = llm_info.get("dialect", "")
+    num_ctx = ""
     if llm_choice == "0":
-        llm_url = ask("API 端点 (base_url)", required=True)
+        # 本地部署 / 自定义端点：全量自配
+        llm_url = ask("API 端点 (base_url，如 http://127.0.0.1:11434/v1)", required=True)
+        print(dim("    思考参数方言（不同推理后端 API 形状不同）:"))
+        print(dim("      1. auto 自动探测（按模型名/URL 猜，推荐）"))
+        print(dim("      2. qwen（DashScope/Qwen 风格 thinking:{type}）"))
+        print(dim("      3. ollama（think:true/false 风格）"))
+        print(dim("      4. openai（顶层 reasoning_effort 风格）"))
+        print(dim("      5. 不发送思考参数"))
+        d_choice = ask("    方言", default="1").strip()
+        dialect = {"1": "auto", "2": "qwen", "3": "ollama", "4": "openai", "5": ""}.get(d_choice, "auto")
+        if "ollama" in llm_url.lower() or ":11434" in llm_url:
+            num_ctx = ask("    Ollama 上下文窗口 num_ctx（回车跳过）", default="").strip()
     llm_model = choose_model(llm_info["models"])
-    llm_key = ask("API Key", required=True, secret=True)
-    print(green(f"    -> {llm_info['name']} / {llm_model}"))
+    if llm_choice == "0":
+        custom_model = ask("模型名（如 qwen3.6:35b-a3b）", required=True)
+        llm_info = dict(llm_info, models=[custom_model])
+        llm_model = custom_model
+    llm_key = ask("API Key（本地端点可留空回车）" if llm_choice == "0" else "API Key",
+                  required=(llm_choice != "0"), secret=True)
+
+    # 思考强度（统一档位，与上游 VALID_REASONING_EFFORTS 一致）
+    print(dim("    思考强度（reasoning effort，影响回复质量与耗时）:"))
+    for k, label, _v in EFFORT_CHOICES:
+        print(f"      {k}. {label}")
+    effort_choice = ask("    选择", default="4").strip()
+    reasoning_effort = next((v for k, _l, v in EFFORT_CHOICES if k == effort_choice), "medium")
+    print(green(f"    -> {llm_info['name']} / {llm_model} / 思考:{reasoning_effort}"))
     print()
 
     # ── 2. 视觉识别 ──
@@ -318,7 +384,9 @@ def main():
 
     cfg = generate_config(llm_key, vision_key, anysearch_key,
                           gateway_token, owner_qq,
-                          llm_url, llm_model, vision_url, vision_model, terminal_cwd)
+                          llm_url, llm_model, vision_url, vision_model, terminal_cwd,
+                          provider_id=provider_id, reasoning_effort=reasoning_effort,
+                          thinking_dialect=dialect, num_ctx=num_ctx)
 
     napcat_token, napcat_qq = auto_read_napcat_token()
     if napcat_token:
@@ -366,3 +434,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
