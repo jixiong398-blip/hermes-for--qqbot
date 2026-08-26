@@ -175,7 +175,7 @@ python extras\scripts\migrate_legacy.py --dry-run # 先预演，只看计划不�
   - `_bg_review_send` 加 SUPPORTS_SYSTEM_MESSAGES 检查（防 "💾 Memory updated" 发到 QQ）
 - **安装/更新流程**：
   - install.py 生成完整 .env（含 ONEBOT_BOT_NAME）
-  - 一键替换灵魂核心.bat 同步角色名到 .env
+  - 角色名由 配置API.bat / install.py 的 detect_bot_name 自动同步到 .env
   - upgrade.py 目标路径修复（真正更新 ~/.hermes/）
   - update.bat 自动调用 upgrade.py
 
@@ -269,6 +269,7 @@ A: `electron-offline.zip` 未包含时需联网安装，运行 `cd modules\live2
 **Q: 想保留旧版配置？**
 
 A: 方法二创建新目录，只把旧版的 config.yaml / SOUL.md / .env 复制过去即可。
+
 
 
 

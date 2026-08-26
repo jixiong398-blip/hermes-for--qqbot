@@ -1,3 +1,4 @@
+﻿# NOTE(maintainer): THIS is the ACTIVE OneBot adapter (v0.14.x QQ-side customizations live here).
 #         ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐         
 #          │      清   尘   璃   落      │          
 #         └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘         
@@ -3305,3 +3306,4 @@ def register(ctx):
         emoji="🐧",
         pii_safe=False,
     )
+

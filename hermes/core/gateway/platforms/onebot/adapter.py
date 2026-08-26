@@ -1,3 +1,5 @@
+﻿# NOTE(maintainer): LEGACY upstream fallback — NOT the active adapter. All v0.14.x QQ-side
+# changes live in plugins/platforms/onebot/adapter.py (registry prefers plugins). Edit THAT file.
 """
 OneBot v11 adapter for Hermes Agent.
 
@@ -1581,3 +1583,4 @@ class OneBotAdapter(BasePlatformAdapter):
         """OneBot does not support generic document send. Silently drop."""
         logger.debug("[OneBot] send_document not supported, skipping: %s", file_path)
         return SendResult(success=True, message_id=None)
+
