@@ -66,6 +66,7 @@ auto_join:
 compression:
   enabled: true
   protect_last_n: 100
+  checkpoint_required: false
 streaming:
   enabled: true
 display:
@@ -74,11 +75,16 @@ display:
   tool_progress: 'off'
 gateway:
   allow_all_users: true
+  delivery_ledger: true
   auth_token: {{GATEWAY_AUTH_TOKEN}}
   bind: loopback
   port: 18789
   reconnect_base_delay: 5
   reconnect_max_attempts: 100
+# Optional state.db routing index. Legacy sessions.json remains primary.
+durable_routing: false
+# Optional cross-process turn lease port; the in-process registry remains default.
+durable_turn_leases: false
 # v0.10.0: Live2D Cubism 4/5 — Hermes WS on :19919/hermes
 live2d:
   ws_url: ws://127.0.0.1:19919/hermes
@@ -142,6 +148,11 @@ tts:
     voice: soyo
 terminal:
   cwd: ~
+  # Docker backend controls are explicit opt-ins and are ignored by local runs.
+  docker_network: true
+  docker_extra_args: []
+  docker_persist_across_processes: false
+  docker_shared_container_key: ''
 auxiliary:
   vision:
     provider: custom

@@ -4,7 +4,7 @@
 # Live2D: Cubism 4/5 SDK (pixi-live2d-display-cubism4)
 param($version = "v0.10.0")
 
-$root = Split-Path -Parent $PSCommandPath
+$root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-Location $root
 
 Write-Host "=== QQBot Release Builder $version ===" -ForegroundColor Cyan
@@ -16,11 +16,11 @@ Write-Host "  v0.10.0: old Cubism 2 figures.zip extraction removed" -ForegroundC
 
 # 2. Extract Node.js
 Write-Host "[2/4] Setting up Node.js..." -ForegroundColor Yellow
-if (Test-Path "nodejs.zip") {
-    Expand-Archive -Path "nodejs.zip" -DestinationPath "node" -Force
-    if (Test-Path "node\node-v22.11.0-win-x64\node.exe") {
-        Copy-Item "node\node-v22.11.0-win-x64\*" "node\" -Recurse -Force
-        Remove-Item "node\node-v22.11.0-win-x64" -Recurse -Force
+if (Test-Path "extras\nodejs.zip") {
+    Expand-Archive -Path "extras\nodejs.zip" -DestinationPath "extras\node" -Force
+    if (Test-Path "extras\node\node-v22.11.0-win-x64\node.exe") {
+        Copy-Item "extras\node\node-v22.11.0-win-x64\*" "extras\node\" -Recurse -Force
+        Remove-Item "extras\node\node-v22.11.0-win-x64" -Recurse -Force
     }
     Write-Host "  Node.js extracted" -ForegroundColor Green
 }
@@ -29,7 +29,7 @@ if (Test-Path "nodejs.zip") {
 Write-Host "[3/4] Installing Live2D (Electron ~150MB)..." -ForegroundColor Yellow
 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 Set-Location modules\live2d
-& ..\..\node\npm.cmd install --registry=https://registry.npmmirror.com
+& ..\..\extras\node\npm.cmd install --registry=https://registry.npmmirror.com
 Set-Location $root
 if (Test-Path "modules\live2d\node_modules\electron") {
     Write-Host "  Live2D installed" -ForegroundColor Green
@@ -41,8 +41,8 @@ if (Test-Path "modules\live2d\node_modules\electron") {
 Write-Host "[4/4] Installing Hermes..." -ForegroundColor Yellow
 python -m venv .venv
 .venv\Scripts\activate.bat
-pip install -e hermes\ --no-deps
-pip install -r hermes\requirements.txt
+pip install -e hermes\core\ --no-deps
+pip install -r hermes\core\requirements.txt
 Write-Host "  Hermes installed" -ForegroundColor Green
 
 # Done

@@ -20,6 +20,8 @@ _*.bat
 _*.json
 release-notes.txt
 bsk-args.json
+.sisyphus/
+.test-hermes-home-*/
 **/node_modules/
 *.bak/
 *.bak.*

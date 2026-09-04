@@ -48,7 +48,7 @@ Name: "dash";    Description: "Web Dashboard"; Types: full compact; Flags: fixed
 Source: "install.bat";      DestDir: "{app}"; Flags: ignoreversion
 Source: "start.bat";        DestDir: "{app}"; Flags: ignoreversion
 Source: "Stop-All.bat";     DestDir: "{app}"; Flags: ignoreversion
-Source: "FixNapCat.bat";    DestDir: "{app}"; Flags: ignoreversion
+Source: "配置API.bat";       DestDir: "{app}"; Flags: ignoreversion
 Source: "VERSION";          DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE";          DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md";        DestDir: "{app}"; Flags: ignoreversion
@@ -56,13 +56,13 @@ Source: "CHANGELOG.md";     DestDir: "{app}"; Flags: ignoreversion
 Source: "UPGRADE.md";       DestDir: "{app}"; Flags: ignoreversion
 
 ; 鈹€鈹€ Offline packages 鈹€鈹€
-Source: "python-installer.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: core
-Source: "nodejs.zip";           DestDir: "{app}"; Flags: ignoreversion; Components: live2d
-Source: "electron-offline.zip.001"; DestDir: "{app}"; Flags: ignoreversion; Components: live2d
-Source: "electron-offline.zip.002"; DestDir: "{app}"; Flags: ignoreversion; Components: live2d
+Source: "extras\python-installer.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: core
+Source: "extras\nodejs.zip";           DestDir: "{app}"; Flags: ignoreversion; Components: live2d
+Source: "extras\electron-offline.zip.001"; DestDir: "{app}"; Flags: ignoreversion; Components: live2d
+Source: "extras\electron-offline.zip.002"; DestDir: "{app}"; Flags: ignoreversion; Components: live2d
 
 ; 鈹€鈹€ Scripts 鈹€鈹€
-Source: "scripts\*";        DestDir: "{app}\scripts"; Flags: ignoreversion recursesubdirs; Components: core
+Source: "extras\scripts\*"; DestDir: "{app}\extras\scripts"; Flags: ignoreversion recursesubdirs; Components: core
 
 ; 鈹€鈹€ Templates 鈹€鈹€
 Source: "templates\*";      DestDir: "{app}\templates"; Flags: ignoreversion recursesubdirs; Components: core
@@ -76,15 +76,12 @@ Source: "modules\live2d\*";    DestDir: "{app}\modules\live2d";    Flags: ignore
 Source: "modules\knowledge\.gitkeep"; DestDir: "{app}\modules\knowledge"; Flags: ignoreversion; Components: core
 
 ; 鈹€鈹€ NapCat 鈹€鈹€
-Source: "napcat\*"; DestDir: "{app}\napcat"; Flags: ignoreversion recursesubdirs; Components: napcat; Excludes: "napcat\napcat\cache\,napcat\napcat\logs\,napcat\napcat\config\"
+Source: "modules\napcat\*"; DestDir: "{app}\modules\napcat"; Flags: ignoreversion recursesubdirs; Components: napcat; Excludes: "modules\napcat\napcat\cache\,modules\napcat\napcat\logs\,modules\napcat\napcat\config\"
 
 ; 鈹€鈹€ Node.js portable (bundle from zip) 鈹€鈹€
-Source: "nodejs.zip";       DestDir: "{app}"; Flags: ignoreversion; Components: live2d
-
 [Icons]
 Name: "{group}\Launch Dashboard";  Filename: "{app}\start.bat"; WorkingDir: "{app}"
-Name: "{group}\Configure API Key"; Filename: "{app}\\PeiZhiAPI.bat"; WorkingDir: "{app}"
-Name: "{group}\Fix NapCat Ports";  Filename: "{app}\FixNapCat.bat"; WorkingDir: "{app}"
+Name: "{group}\Configure API Key"; Filename: "{app}\配置API.bat"; WorkingDir: "{app}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\start.bat"; WorkingDir: "{app}"; Comment: "Launch Hermes QQ Bot"
 

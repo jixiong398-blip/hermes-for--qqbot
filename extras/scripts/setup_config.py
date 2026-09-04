@@ -185,23 +185,94 @@ def auto_detect_ports():
     return ports
 
 
-def auto_read_napcat_token():
+def auto_read_napcat_credentials():
+    """Read the active account's OneBot token without using the WebUI token.
+
+    NapCat writes ``onebot11_<uin>.json`` for each logged-in account.  An
+    explicit ``ONEBOT_SELF_ID`` wins; otherwise the newest
+    ``napcat_protocol_<uin>.json`` login marker selects the account.  The base
+    ``onebot11.json`` file is never used as a fallback because it may belong to
+    a different account.  Only enabled loopback HTTP/WS servers with one
+    consistent token are accepted.
+    """
     napcat_cfg = BOT_DIR / "modules" / "napcat" / "napcat" / "config"
-    if not napcat_cfg.exists():
+    if not napcat_cfg.is_dir():
         return None, None
-    files = sorted(napcat_cfg.glob("onebot11_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    for f in files:
-        if f.stem == "onebot11":
-            continue
+
+    def safe_file(path):
         try:
-            data = _json.loads(f.read_text(encoding="utf-8"))
-            for srv in data.get("network", {}).get("httpServers", []):
-                token = srv.get("token", "").strip()
-                if token:
-                    return token, f.stem.replace("onebot11_", "")
-        except Exception:
-            continue
-    return None, None
+            info = path.lstat()
+            return (
+                info.st_mode & 0o170000 == 0o100000
+                and not path.is_symlink()
+                and 0 <= int(info.st_size) <= 2 * 1024 * 1024
+            )
+        except OSError:
+            return False
+
+    account_files = {}
+    for path in napcat_cfg.iterdir():
+        match = re.fullmatch(r"onebot11_(\d{1,32})\.json", path.name)
+        if match and safe_file(path):
+            account_files[match.group(1)] = path
+    if not account_files:
+        return None, None
+
+    selected = os.getenv("ONEBOT_SELF_ID", "").strip()
+    if selected and not selected.isdigit():
+        selected = ""
+    if selected and selected not in account_files:
+        return None, None
+    if not selected:
+        markers = []
+        for path in napcat_cfg.iterdir():
+            match = re.fullmatch(r"napcat_protocol_(\d{1,32})\.json", path.name)
+            if match and safe_file(path):
+                try:
+                    markers.append((path.stat().st_mtime, match.group(1)))
+                except OSError:
+                    pass
+        markers.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected = next((account for _, account in markers if account in account_files), "")
+        if not selected:
+            selected = max(
+                account_files,
+                key=lambda account: (account_files[account].stat().st_mtime, account),
+            )
+
+    try:
+        data = _json.loads(account_files[selected].read_text(encoding="utf-8"))
+        network = data.get("network", {})
+        if not isinstance(network, dict):
+            return None, None
+        servers = []
+        for key in ("httpServers", "websocketServers"):
+            values = network.get(key, [])
+            if not isinstance(values, list):
+                continue
+            for server in values:
+                if not isinstance(server, dict) or not server.get("enable"):
+                    continue
+                if str(server.get("host", "")).strip().lower() not in {"127.0.0.1", "localhost", "::1"}:
+                    return None, None
+                token = server.get("token", "")
+                if not isinstance(token, str):
+                    continue
+                token = token.strip()
+                if token and len(token) <= 512 and not any(ord(ch) < 32 or ord(ch) == 127 for ch in token):
+                    servers.append(token)
+        tokens = list(dict.fromkeys(servers))
+        if len(tokens) != 1:
+            return None, None
+        return tokens[0], selected
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None, None
+
+
+def auto_read_napcat_token():
+    """Backward-compatible alias returning ``(token, account_id)``."""
+
+    return auto_read_napcat_credentials()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -250,7 +321,8 @@ def generate_config(llm_key, vision_key, anysearch_key,
 
 
 def generate_env(llm_key, vision_key, anysearch_key,
-                 gateway_token, ports, knowledge_path, owner_qq):
+                 gateway_token, ports, knowledge_path, owner_qq,
+                 bot_qq=""):
     tpl = (TPL_DIR / ".env.template").read_text(encoding="utf-8")
     for old, new in [
         ("{{HERMES_HOME_PATH}}", str(HERMES_HOME)),
@@ -260,6 +332,7 @@ def generate_env(llm_key, vision_key, anysearch_key,
         ("{{GATEWAY_AUTH_TOKEN}}", gateway_token),
         ("{{DEEPSEEK_API_KEY}}", llm_key),
         ("{{OWNER_QQ}}", owner_qq),
+        ("{{ONEBOT_SELF_ID}}", bot_qq or ""),
         ("{{MIMO_TOKEN}}", vision_key or ""),
         ("{{KNOWLEDGE_PATH}}", knowledge_path),
         ("{{BOT_ROOT}}", str(BOT_DIR)),
@@ -415,9 +488,16 @@ def main():
     print(f"    V config.yaml")
 
     env = generate_env(llm_key, vision_key, anysearch_key,
-                       gateway_token, ports, knowledge_dir, owner_qq)
+                       gateway_token, ports, knowledge_dir, owner_qq,
+                       bot_qq=napcat_qq or "")
     if napcat_token:
-        env = env.replace("ONEBOT_ACCESS_TOKEN=", f"ONEBOT_ACCESS_TOKEN={napcat_token}")
+        env = re.sub(
+            r"^ONEBOT_ACCESS_TOKEN=.*$",
+            lambda _match: f"ONEBOT_ACCESS_TOKEN={napcat_token}",
+            env,
+            count=1,
+            flags=re.MULTILINE,
+        )
     (HERMES_HOME / ".env").write_text(env, encoding="utf-8")
     print(f"    V .env")
 

@@ -127,7 +127,7 @@ echo   Updating scripts...
 robocopy "%SRC_DIR%\extras\scripts" "extras\scripts" /E /NFL /NDL /NJH /NJS /NC /NS >nul
 
 echo   Updating batch files...
-for %%f in (install.bat start.bat FixNapCat.bat Stop-All.bat "配置API.bat") do (
+for %%f in (install.bat start.bat Stop-All.bat "配置API.bat") do (
     if exist "%SRC_DIR%\%%f" copy /y "%SRC_DIR%\%%f" "%%f" >nul
 )
 
@@ -138,8 +138,8 @@ if exist "%SRC_DIR%\VERSION" copy /y "%SRC_DIR%\VERSION" "VERSION" >nul
 echo   Checking for updated bundles...
 if exist "%SRC_DIR%\electron-offline.zip.001" copy /y "%SRC_DIR%\extras\electron-offline.zip.001" "extras\electron-offline.zip.001" >nul
 if exist "%SRC_DIR%\electron-offline.zip.002" copy /y "%SRC_DIR%\extras\electron-offline.zip.002" "extras\electron-offline.zip.002" >nul
-if exist "%SRC_DIR%\python-installer.exe" copy /y "%SRC_DIR%\extras\python-installer.exe" "extras\python-installer.exe" >nul
-if exist "%SRC_DIR%\nodejs.zip" copy /y "%SRC_DIR%\extras\nodejs.zip" "extras\nodejs.zip" >nul
+if exist "%SRC_DIR%\extras\python-installer.exe" copy /y "%SRC_DIR%\extras\python-installer.exe" "extras\python-installer.exe" >nul
+if exist "%SRC_DIR%\extras\nodejs.zip" copy /y "%SRC_DIR%\extras\nodejs.zip" "extras\nodejs.zip" >nul
 
 echo   Done updating files.
 

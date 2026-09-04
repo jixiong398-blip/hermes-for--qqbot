@@ -4,7 +4,25 @@
 import os, re, shutil
 from pathlib import Path
 
-BOT_DIR = Path(__file__).resolve().parent.parent  # bot-template root
+def _find_bot_dir() -> Path:
+    """Resolve the distribution root from this script's nested location."""
+
+    candidate = Path(__file__).resolve().parent
+    for _ in range(5):
+        if (candidate / "install.bat").is_file() and (
+            candidate / "hermes" / "core"
+        ).is_dir():
+            return candidate
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    # Keep import-time behavior usable for a source checkout with a partial
+    # tree; setup() will simply skip missing optional templates.
+    return Path(__file__).resolve().parents[2]
+
+
+BOT_DIR = _find_bot_dir()
 HERMES_HOME = Path.home() / ".hermes"
 
 def detect_bot_name() -> str:
@@ -35,6 +53,7 @@ def setup():
             "GATEWAY_ALLOW_ALL_USERS=true",
             "ONEBOT_WS_URL=ws://127.0.0.1:3001/",
             "ONEBOT_HTTP_URL=http://127.0.0.1:3000",
+            "ONEBOT_AUTO_DISCOVER_TOKEN=true",
             f"ONEBOT_BOT_NAME={bot_name}",
             "ONEBOT_SELF_ID=",
             "ONEBOT_ADMIN_ID=",
