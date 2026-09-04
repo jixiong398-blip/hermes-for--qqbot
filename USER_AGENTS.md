@@ -32,7 +32,7 @@
 python extras/scripts/install.py
 
 # 2. 检查 ~/.hermes/.env 已生成（核心变量）
-#    - ONEBOT_SELF_ID: bot 的 QQ 号（NapCat 登录后回填）
+#    - ONEBOT_SELF_ID: bot 的 QQ 号（登录后可在 Dashboard 的 QQ 连接中选择，自动写入）
 #    - ONEBOT_ADMIN_ID: 管理员 QQ 号
 #    - DEEPSEEK_API_KEY: LLM API Key
 #    - ONEBOT_BOT_NAME: 角色名（通常已自动提取）
@@ -43,12 +43,12 @@ python extras/scripts/setup_config.py
 
 ## 安装后必须用户手动完成（agent 无法代办）
 
-1. **启动 NapCat 扫码登录**（`modules\napcat\napcat.bat`）——QQ 会话是唯一的
+1. **启动 NapCat 扫码登录**（`modules\napcat\napcat.bat`）——登录哪个账号，Dashboard 就能发现哪个账号配置
 2. **配置 NapCat 端口**：登录后打开 `http://127.0.0.1:8899`，按引导配置 WS:3001 / HTTP:3000
 3. 运行 `配置API.bat` 填 LLM API Key + 管理员 QQ
-4. 运行 `start.bat` 一键启动
+4. 运行 `start.bat` 一键启动 Dashboard，在“QQ 连接”里选择当前 NapCat 账号；切换账号后重启 Hermes 网关生效
 
-> NapCat 登录后生成的配置文件是唯一的，无法自动代填，必须让用户手动操作。
+> NapCat 会按登录账号生成 `onebot11_<QQ>.json`。Hermes 只在本机回环配置下自动读取对应 token，不把 token 返回给 Dashboard；多账号/多实例编排暂不启用。
 
 ## 创建角色灵魂（必须）
 
@@ -69,7 +69,7 @@ python extras/scripts/setup_config.py
 
 ```
 ① 启动 NapCat 扫码登录（modules\napcat\napcat.bat）
-② start.bat → Dashboard 启动，一键开 Bot
+② start.bat → Dashboard 启动 → QQ 连接中选择当前账号 → 启动 Hermes 网关
 ```
 
 ## 更新
@@ -88,6 +88,7 @@ python extras/scripts/setup_config.py
 | `ONEBOT_BOT_NAME` | ✅ | 角色名 |
 | `ONEBOT_WS_URL` | | NapCat WS（默认 ws://127.0.0.1:3001/） |
 | `ONEBOT_HTTP_URL` | | NapCat HTTP（默认 http://127.0.0.1:3000） |
+| `ONEBOT_AUTO_DISCOVER_TOKEN` | | 是否自动使用当前登录账号的 NapCat token（默认 true） |
 | `OBSIDIAN_VAULT_PATH` | | 知识库文件夹路径（默认为项目内 modules/knowledge） |
 
 ## 思考强度与模型方言

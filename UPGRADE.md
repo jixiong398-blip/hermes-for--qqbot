@@ -1,6 +1,16 @@
 ﻿# 升级指南
 
-> v0.14.7
+> v0.14.15
+
+## v0.14.15 变更说明
+
+- OneBot completion contract 在后续用户消息已到达时不再触发错误的合成重试，避免重复 agent 轮次。
+- Feishu WebSocket 运行时参数改为实例级隔离，不污染其他平台的 `websockets` 客户端。
+- 记忆、会话、环境工具和 turn 生命周期增加跨平台边界契约；升级后首次运行可能执行兼容性检查。
+- 知识库工具不再包含任何开发机绝对路径，使用当前 vault 配置获取文件信息。
+- 新增脱敏的 QQ 空间可选配图指南；Qzone 发布器仍需用户自行部署，不随本仓库分发。
+
+本版本不覆盖 `config.yaml`、`SOUL.md`、`.env`、数据库、sessions 或日志。升级前请保留本地配置，并检查自定义补丁是否与核心文件冲突。
 
 ## 目录结构（v0.14.3+）
 
@@ -86,11 +96,25 @@ python extras\scripts\migrate_legacy.py --dry-run # 先预演，只看计划不�
 | `hermes/core/agent/memory/gateway.py` | `agent/memory/gateway.py` |
 | `hermes/core/agent/memory/short_term.py` | `agent/memory/short_term.py` |
 | `hermes/core/plugins/platforms/onebot/adapter.py` | `plugins/platforms/onebot/adapter.py` |
+| `hermes/core/plugins/platforms/onebot/config_discovery.py` | `plugins/platforms/onebot/config_discovery.py` |
+| `hermes/core/plugins/platforms/onebot/contract.py` | `plugins/platforms/onebot/contract.py` |
+| `hermes/core/plugins/platforms/onebot/transport_contract.py` | `plugins/platforms/onebot/transport_contract.py` |
+| `hermes/core/plugins/platforms/onebot/plugin.yaml` | `plugins/platforms/onebot/plugin.yaml` |
 | `hermes/core/plugins/platforms/onebot/trigger_coordinator.py` | `plugins/platforms/onebot/trigger_coordinator.py` |
 | `hermes/core/plugins/platforms/onebot/group_executor.py` | `plugins/platforms/onebot/group_executor.py` |
 | `hermes/core/plugins/platforms/onebot/group_state.py` | `plugins/platforms/onebot/group_state.py` |
 | `hermes/core/plugins/platforms/onebot/semantic_judge.py` | `plugins/platforms/onebot/semantic_judge.py` |
 | `hermes/core/plugins/platforms/onebot/media_pipeline.py` | `plugins/platforms/onebot/media_pipeline.py` |
+| `hermes/core/gateway/delivery_ledger.py` | `gateway/delivery_ledger.py` |
+| `hermes/core/gateway/session_stall.py` | `gateway/session_stall.py` |
+| `hermes/core/gateway/shutdown_flush.py` | `gateway/shutdown_flush.py` |
+| `hermes/core/gateway/turn_lease.py` | `gateway/turn_lease.py` |
+| `hermes/core/agent/empty_response_guard.py` | `agent/empty_response_guard.py` |
+| `hermes/core/agent/error_surface.py` | `agent/error_surface.py` |
+| `hermes/core/agent/errors.py` | `agent/errors.py` |
+| `hermes/core/agent/repetition_guard.py` | `agent/repetition_guard.py` |
+| `hermes/core/agent/session_activity.py` | `agent/session_activity.py` |
+| `hermes/core/agent/message_sanitization.py` | `agent/message_sanitization.py` |
 | `hermes/core/corpus_history.py` | `corpus_history.py` |
 | `hermes/core/tools/chat_history_search_tool.py` | `tools/chat_history_search_tool.py` |
 | `hermes/core/tools/memory_gateway_tool.py` | `tools/memory_gateway_tool.py` |
@@ -98,13 +122,34 @@ python extras\scripts\migrate_legacy.py --dry-run # 先预演，只看计划不�
 | `hermes/core/tools/vision_tools.py` | `tools/vision_tools.py` |
 | `hermes/core/tools/web_tools.py` | `tools/web_tools.py` |
 | `hermes/core/gateway/run.py` | `gateway/run.py` |
+| `hermes/core/gateway/config.py` | `gateway/config.py` |
+| `hermes/core/gateway/session.py` | `gateway/session.py` |
+| `hermes/core/gateway/platforms/base.py` | `gateway/platforms/base.py` |
+| `hermes/core/run_agent.py` | `run_agent.py` |
+| `hermes/core/agent/provider_projection.py` | `agent/provider_projection.py` |
+| `hermes/core/hermes_state.py` | `hermes_state.py` |
+| `hermes/core/hermes_state_common.py` | `hermes_state_common.py` |
+| `hermes/core/hermes_state_common_compat.py` | `hermes_state_common_compat.py` |
+| `hermes/core/hermes_state_portability.py` | `hermes_state_portability.py` |
+| `hermes/core/hermes_state_portability_compat.py` | `hermes_state_portability_compat.py` |
+| `hermes/core/hermes_state_replay.py` | `hermes_state_replay.py` |
+| `hermes/core/hermes_state_schema.py` | `hermes_state_schema.py` |
+| `hermes/core/hermes_state_schema_probe.py` | `hermes_state_schema_probe.py` |
+| `hermes/core/hermes_state_search.py` | `hermes_state_search.py` |
+| `hermes/core/hermes_state_v26_compat.py` | `hermes_state_v26_compat.py` |
+| `hermes/core/scripts/sessiondb_replay.py` | `scripts/sessiondb_replay.py` |
+| `hermes/core/tools/environments/contract.py` | `tools/environments/contract.py` |
+| `hermes/core/tools/spill_safety.py` | `tools/spill_safety.py` |
+| `extras/scripts/audit_upgrade_map.py` | `extras/scripts/audit_upgrade_map.py` |
 | `hermes/core/plugins/knowledge-base/__init__.py` | `plugins/knowledge-base/__init__.py` |
-| `hermes/core/plugins/knowledge-base/knowledge_base_tool.py` | `plugins/knowledge-base/knowledge_base_tool.py` |
 | `hermes/core/agent/memory/obsidian.py` | `agent/memory/obsidian.py` |
-| `scripts/qzone-post.py` | `scripts/qzone-post.py` |
-| `scripts/decrypt_cvpkg.py` | `scripts/decrypt_cvpkg.py` |
+| `extras/scripts/qzone-post.py` | `extras/scripts/qzone-post.py` |
+| `extras/scripts/decrypt_cvpkg.py` | `extras/scripts/decrypt_cvpkg.py` |
+| `配置API.bat` | `配置API.bat` |
 
 > 运行 `python scripts/upgrade.py` 自动完成以上复制，无需手动操作。
+
+> 运行时 `hermes/core` 下的 Python 包会按受限闭包自动同步；`tests/`、`docs/`、隐藏目录和 VCS 元数据不会复制。显式安装表仍用于非 Python 资产、模板和平台运行文件。
 
 ---
 
@@ -126,6 +171,12 @@ python extras\scripts\migrate_legacy.py --dry-run # 先预演，只看计划不�
 - **@ 强信号修复**：群内 @机器人 不回复/延迟（judge 判定主体漂移 + jt.seq + pending 覆盖三层根因）
 - **行为约定**：@ = 强信号必判必回，窗口内后续消息只当背景
 - 同步 docs/BUGS_v0.14.4.md + docs/UPDATE_LOG.md
+
+### 下一大版本（未发布）
+- **执行层输出契约**：判定层放行的 mention/judge/continuation/exit 轮要求可见正文；纯空输出或控制标记最多在同一会话反馈重试一次，正文混合标记时保留正文并在成功交付后处理状态。
+- **退出状态修复**：软收尾不再单独触发 exiting；新的 @、角色别名直呼或回复 bot 会复位退出状态，退出判定需要连续状态证据。
+- **升级预期**：由于执行层不再为已放行轮次提供沉默否决，升级后 bot 的发言量可能略有增加。这是设计意图；若需要降低打扰，应调优 judge 门槛或提示词，不要恢复执行层沉默标记。
+- **兼容说明**：无需迁移现有配置；真实 NapCat/provider、双平台进程/WAL、proxy 和 streaming 门禁完成前，本节只作为变更预告，不代表当前发布版本已启用。
 
 ### v0.14.1
 - **Dashboard 视觉重构**：更简洁现代，服务状态卡片（状态圆点）、响应式
@@ -269,6 +320,36 @@ A: `electron-offline.zip` 未包含时需联网安装，运行 `cd modules\live2
 **Q: 想保留旧版配置？**
 
 A: 方法二创建新目录，只把旧版的 config.yaml / SOUL.md / .env 复制过去即可。
+
+---
+
+## 当前部署流程与账号选择（2026-09）
+
+首次部署仍按以下顺序执行：
+
+```text
+① 双击 install.bat
+   → 离线安装 Python、Node.js、Live2D 和 Hermes
+② 启动 modules\napcat\napcat.bat
+   → 登录 QQ，并在 NapCat WebUI 开启 OneBot11 的 WS/HTTP 服务
+③ 双击 配置API.bat
+   → 选择 LLM、填写 API Key 和管理员 QQ；已登录账号会自动发现
+④ 准备 SOUL.md
+   → 编辑角色后重新运行 配置API.bat，同步角色名
+⑤ 双击 start.bat
+   → 打开 Dashboard，在“QQ 连接”选择当前 NapCat 登录账号，再启动 Hermes 网关
+```
+
+Dashboard 的账号选择只保存 `ONEBOT_SELF_ID`，Hermes 运行时从 NapCat 对应的
+`onebot11_<QQ>.json` 读取 token。WebUI token 与 OneBot11 token 是两套独立凭据，
+不能互相替代；token 不会显示在 Dashboard 或普通日志中。当前推荐一台机器部署一个
+Hermes Bot 实例，切换账号后重启 Hermes 网关生效。
+
+多账号、多 NapCat 和多 Hermes Bot 的统一控制平面已经列入长期计划，但暂不作为当前
+发布能力：未来需要为每个实例分配独立配置根、WS/HTTP 端口、PID/lock、Hermes profile、
+SessionDB、Memory namespace 和日志范围，不能共享现有单实例的 `~/.hermes`、`state.db`
+或记忆数据。详细设计见内部 `hermes/docs/NAPCAT_MULTI_INSTANCE_PLAN.md`；在跨平台
+进程、WAL、profile 隔离和回滚门禁完成前，不启动多实例编排。
 
 
 

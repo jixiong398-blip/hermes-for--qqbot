@@ -1,6 +1,6 @@
 ﻿# QQBot — 通用 QQ 群 AI 机器人模板
 
-> **v0.14.13** — core/ 分层引擎 · judge 提速 · 热回复缓存 · 身份装载 · poke 唤醒
+> **v0.14.15** — 可靠性契约 · 多平台 WebSocket 隔离 · 记忆边界 · QQ 空间可选配图
 
 解压即用。Python 3.12、Node.js、Live2D Electron 已内置离线包。
 
@@ -31,12 +31,12 @@ bot-template/
 ```
 ① 双击 install.bat        → 离线安装 Python + Node.js + Live2D + Hermes
 ② 启动 NapCat 扫码登录     → modules\napcat\napcat.bat → 扫码登录 → WebUI 开启 WS/HTTP 端口
-③ 双击 配置API.bat          → 选供应商 + 填 API Key + 管理员 QQ（自动读 NapCat token）
+③ 双击 配置API.bat          → 选供应商 + 填 API Key + 管理员 QQ（已登录账号自动发现）
 ④ 准备角色灵魂              → 编辑 SOUL.md → 重跑 配置API.bat（角色名自动同步到 .env）
-⑤ 双击 start.bat           → Dashboard 启动，一键开 Bot
+⑤ 双击 start.bat           → Dashboard 启动，在“QQ 连接”中选择当前 NapCat 账号，再启动 Hermes 网关
 ```
 
-> **注意**：NapCat 必须手动扫码登录。Bot QQ 号/群号/群名自动从 NapCat 发现。以后更新只需 `update.bat`。
+> **注意**：NapCat 必须手动扫码登录。Dashboard 会列出 NapCat 登录后生成的账号专属配置；选择后 Hermes 自动使用对应 OneBot token。当前默认一台机器一个 Hermes Bot 实例，多账号/多 NapCat 实例先保留为后续升级方向。以后更新只需 `update.bat`。
 
 ## 需要配置的内容
 
