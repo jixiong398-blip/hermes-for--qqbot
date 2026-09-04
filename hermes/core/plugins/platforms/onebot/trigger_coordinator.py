@@ -56,6 +56,83 @@ class TriggerCoordinator:
         self._pending_requests: Dict[str, TriggerRequest] = {}
         self._exit_countdowns: Dict[str, float] = {}
 
+    @staticmethod
+    def _reset_exiting_state(gs, group_id: str, reason: str) -> None:
+        """Reset the executable exit gate before a directed turn is queued."""
+        if gs is None:
+            return
+        state = gs.episode_state
+        old_phase = state.episode_phase or "empty"
+        state.exiting_streak = 0
+        if old_phase == "exiting":
+            # Preserve the fact that this is a live continuation, rather than
+            # relabeling it as a brand-new episode after an @/reply.
+            state.episode_phase = "mid"
+        elif old_phase in ("winding_down", ""):
+            state.episode_phase = "starting"
+        state.progression_guidance = ""
+        state.episode_label = "" if old_phase in ("exiting", "winding_down", "") else state.episode_label
+        state.conversation_mode = "" if old_phase in ("exiting", "winding_down", "") else state.conversation_mode
+        state.updated_at = time.time()
+        logger.info(
+            "[TriggerCoordinator] Reset episode phase=%s streak for %s (%s)",
+            old_phase,
+            group_id,
+            reason,
+        )
+
+    @staticmethod
+    def _enforce_exit_gate(gs, msg: dict, result: dict) -> dict:
+        """Enforce the two-observation exit gate at the dispatch boundary.
+
+        ``pre_reply_judge`` normally validates this shape, but the coordinator
+        is also called by compatibility/test paths and must not execute an
+        unvalidated ``should_exit`` result immediately.  A directed message
+        always wins and resets the executable phase before dispatch.
+        """
+        if not isinstance(result, dict):
+            return result
+        state = getattr(gs, "episode_state", None)
+        prior_phase = str(getattr(state, "episode_phase", "") or "")
+        try:
+            prior_streak = max(
+                0,
+                min(2, int(getattr(state, "exiting_streak", 0) or 0)),
+            )
+        except (TypeError, ValueError, OverflowError):
+            prior_streak = 0
+        directed = bool(
+            msg.get("_is_mentioned")
+            or msg.get("_at_all")
+            or msg.get("_name_ref")
+            or msg.get("_reply_to_bot")
+        )
+        candidate_phase = str(result.get("episode_phase", "") or "")
+        if directed:
+            result["should_exit"] = False
+            result["exit_farewell"] = False
+            result["episode_phase"] = "mid"
+            result["exiting_streak"] = 0
+            return result
+
+        wants_exit = bool(result.get("should_exit")) or candidate_phase == "exiting"
+        if prior_phase == "exiting" and candidate_phase not in ("mid", "starting", "winding_down"):
+            wants_exit = True
+            candidate_phase = "exiting"
+        if not wants_exit:
+            result["exiting_streak"] = 0
+            return result
+
+        if candidate_phase != "exiting":
+            candidate_phase = "exiting"
+        streak = min(2, prior_streak + 1 if prior_phase == "exiting" else 1)
+        result["episode_phase"] = candidate_phase
+        result["exiting_streak"] = streak
+        if streak < 2:
+            result["should_exit"] = False
+            result["exit_farewell"] = False
+        return result
+
     # ── entry point ─────────────────────────────────────────
 
     async def on_ingested(
@@ -91,15 +168,7 @@ class TriggerCoordinator:
                 self._judge_tasks.pop(group_id, None)
             gs = self._adapter._group_states.get(group_id)
             if gs is not None:
-                old_phase = gs.episode_state.episode_phase or "empty"
-                if old_phase in ("exiting", "winding_down", ""):
-                    gs.episode_state.episode_phase = "starting"
-                    gs.episode_state.progression_guidance = ""
-                    gs.episode_state.episode_label = ""
-                    gs.episode_state.conversation_mode = ""
-                    gs.episode_state.updated_at = time.time()
-                    logger.info("[TriggerCoordinator] Reset episode %s→starting for %s",
-                                old_phase, group_id)
+                self._reset_exiting_state(gs, group_id, "direct @")
                 gs.enter_attentive()
             self._exit_countdowns.pop(group_id, None)
             msg["_is_mentioned"] = True
@@ -125,10 +194,22 @@ class TriggerCoordinator:
             # treating them as ambient noise. Not a hard reply obligation.
             logger.info("[TriggerCoordinator] on_ingested AT_ALL group=%s seq=%s", group_id, seq)
             if gs is not None:
+                if self._reply_targets_bot(msg):
+                    self._reset_exiting_state(gs, group_id, "reply-to-bot")
                 gs.enter_attentive()
             self._exit_countdowns.pop(group_id, None)
             self._schedule_judge(group_id, seq, msg)
             return
+
+        # A QQ reply to the bot is a directed signal even without an @.  Do
+        # this reset before name-referral/judge scheduling so the old exiting
+        # phase cannot raise the admission threshold or stop continuation.
+        if self._reply_targets_bot(msg):
+            msg["_reply_to_bot"] = True
+            if gs is not None:
+                self._reset_exiting_state(gs, group_id, "reply-to-bot")
+                gs.enter_attentive()
+            self._exit_countdowns.pop(group_id, None)
 
         # Name-referral (fuzzy): user called the bot by any alias from
         # config/SOUL. Treat as weak @ — enter attentive, cancel exit
@@ -143,6 +224,7 @@ class TriggerCoordinator:
         if _named_msg:
             logger.info("[TriggerCoordinator] Name-referral group=%s seq=%s", group_id, seq)
             if gs is not None:
+                self._reset_exiting_state(gs, group_id, "bot alias")
                 gs.enter_attentive()
             self._exit_countdowns.pop(group_id, None)
             msg["_name_ref"] = True
@@ -219,10 +301,26 @@ class TriggerCoordinator:
             if result is None:
                 return
 
+            result = self._enforce_exit_gate(gs, msg, result)
+
             epoch_after = gs.decision_epoch
             if epoch_after != jt.epoch + 1:
                 logger.debug("[TriggerCoordinator] Judge result stale for %s, discarding", jt.group_id)
                 return
+
+            # Apply the validated state even for a no-reply result.  Without
+            # this, exiting_streak never advances to the second observation
+            # and the next judge sees stale phase data indefinitely.
+            if not result.get("should_end"):
+                old_turn = gs.episode_state.turn_count
+                # Keep fields from older/partial judge facades; the v2
+                # validator normally supplies the full shape, but tests and
+                # legacy providers may return only decision booleans.
+                merged_result = {**gs.episode_state.to_dict(), **result}
+                updated_state = EpisodeState.from_dict(merged_result)
+                updated_state.turn_count = old_turn
+                updated_state.updated_at = time.time()
+                gs.episode_state = updated_state
 
             if result.get("should_end"):
                 gs.end_episode()
@@ -230,10 +328,6 @@ class TriggerCoordinator:
                 self._adapter._generate_group_topic_summary(jt.group_id)
                 logger.info("[TriggerCoordinator] Judge ended episode for %s", jt.group_id)
             elif result.get("should_exit"):
-                old_turn = gs.episode_state.turn_count
-                gs.episode_state = EpisodeState.from_dict(result)
-                gs.episode_state.turn_count = old_turn
-                gs.episode_state.updated_at = time.time()
                 if result.get("exit_farewell"):
                     # Judge explicitly wants a last word (sass/farewell) —
                     # reply once, then go quiet. Default is silent exit.
@@ -252,10 +346,6 @@ class TriggerCoordinator:
                     logger.info("[TriggerCoordinator] Bot exited for %s: %s",
                                 jt.group_id, result.get("exit_reason", result.get("reason", ""))[:40])
             elif result.get("should_reply"):
-                old_turn = gs.episode_state.turn_count
-                gs.episode_state = EpisodeState.from_dict(result)
-                gs.episode_state.turn_count = old_turn
-                gs.episode_state.updated_at = time.time()
                 self._exit_countdowns.pop(jt.group_id, None)
                 self._submit_request(TriggerRequest(
                     group_id=jt.group_id,
@@ -362,7 +452,12 @@ class TriggerCoordinator:
         if follow_up_dicts:
             current_dict["follow_up"] = follow_up_dicts
 
-        reply_to_name, reply_to_uid = self._resolve_reply(msg)
+        reply_to_name = str(msg.get("_reply_to_name", "") or "")
+        reply_to_uid = str(msg.get("_reply_to_uid", "") or "")
+        if not (reply_to_name or reply_to_uid):
+            reply_to_name, reply_to_uid = self._resolve_reply(msg)
+            msg["_reply_to_name"] = reply_to_name
+            msg["_reply_to_uid"] = reply_to_uid
 
         attentive_state = "对话态" if gs.is_attentive() else ("旁观态" if gs.is_episode_active() else "潜水")
 
@@ -407,6 +502,24 @@ class TriggerCoordinator:
             except Exception:
                 pass
         return reply_to_name, reply_to_uid
+
+    def _reply_targets_bot(self, msg: dict) -> bool:
+        if msg.get("_reply_to_bot") is not None:
+            return bool(msg.get("_reply_to_bot"))
+        try:
+            reply_id = self._adapter._get_reply_message_id(msg)
+        except Exception:
+            reply_id = None
+        if not reply_id or msg.get("_skip_reply_context"):
+            msg["_reply_to_bot"] = False
+            return False
+        name, uid = self._resolve_reply(msg)
+        msg["_reply_to_name"] = name
+        msg["_reply_to_uid"] = uid
+        self_id = str(getattr(self._adapter, "_self_id", "") or "")
+        matched = bool(self_id and uid and str(uid) == self_id)
+        msg["_reply_to_bot"] = matched
+        return matched
 
     # ── submit to executor ──────────────────────────────────
 

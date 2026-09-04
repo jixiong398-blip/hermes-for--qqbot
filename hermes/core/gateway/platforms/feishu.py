@@ -1290,7 +1290,7 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
     ws_client_module.loop = loop
     adapter._ws_thread_loop = loop
 
-    original_connect = ws_client_module.websockets.connect
+    original_websockets = ws_client_module.websockets
     original_configure = getattr(ws_client, "_configure", None)
 
     def _apply_runtime_ws_overrides() -> None:
@@ -1307,7 +1307,14 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
             kwargs["ping_interval"] = adapter._ws_ping_interval
         if adapter._ws_ping_timeout is not None and "ping_timeout" not in kwargs:
             kwargs["ping_timeout"] = adapter._ws_ping_timeout
-        return await original_connect(*args, **kwargs)
+        return await original_websockets.connect(*args, **kwargs)
+
+    class _WebsocketsProxy:
+        def __init__(self) -> None:
+            self.connect = _connect_with_overrides
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(original_websockets, name)
 
     def _configure_with_overrides(conf: Any) -> Any:
         if original_configure is None:
@@ -1316,7 +1323,7 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
         _apply_runtime_ws_overrides()
         return result
 
-    ws_client_module.websockets.connect = _connect_with_overrides
+    ws_client_module.websockets = _WebsocketsProxy()
     if original_configure is not None:
         setattr(ws_client, "_configure", _configure_with_overrides)
     _apply_runtime_ws_overrides()
@@ -1325,7 +1332,7 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
     except Exception:
         pass
     finally:
-        ws_client_module.websockets.connect = original_connect
+        ws_client_module.websockets = original_websockets
         if original_configure is not None:
             setattr(ws_client, "_configure", original_configure)
         pending = [t for t in asyncio.all_tasks(loop) if not t.done()]

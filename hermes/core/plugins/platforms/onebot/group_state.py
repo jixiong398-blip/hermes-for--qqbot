@@ -56,6 +56,10 @@ class EpisodeState:
     status: str = "active"           # active | winding_down | closed
     continuity: str = "same_episode" # same_episode | related_shift | sharp_transition
     turn_count: int = 0
+    # Code-level exit guard.  A model may report ``exiting`` for one noisy
+    # round, but the coordinator only permits a hard exit after two
+    # consecutive observations.  Keep this small and serializable.
+    exiting_streak: int = 0
 
     # ── 话题状态 ──
     episode_label: str = ""
@@ -85,6 +89,7 @@ class EpisodeState:
             "status": self.status,
             "continuity": self.continuity,
             "turn_count": self.turn_count,
+            "exiting_streak": self.exiting_streak,
             "episode_label": self.episode_label,
             "current_thread": self.current_thread,
             "conversation_mode": self.conversation_mode,
@@ -102,10 +107,15 @@ class EpisodeState:
     @classmethod
     def from_dict(cls, d: Dict) -> "EpisodeState":
         """从 recorder/judge 输出重建。容忍缺失键 + 字段名变体。"""
+        try:
+            _streak = max(0, min(2, int(d.get("exiting_streak", 0) or 0)))
+        except (TypeError, ValueError):
+            _streak = 0
         return cls(
             status=str(d.get("status", d.get("episode_status", "active"))),
             continuity=str(d.get("continuity", "same_episode")),
             turn_count=int(d.get("turn_count", 0)),
+            exiting_streak=_streak,
             episode_label=str(d.get("episode_label", "")),
             current_thread=str(d.get("current_thread", "")),
             conversation_mode=str(d.get("conversation_mode", "")),

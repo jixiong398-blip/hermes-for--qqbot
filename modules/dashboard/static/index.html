@@ -873,6 +873,14 @@ select{border:1px solid var(--border);border-radius:4px;background:#fbfbfb;min-h
 <div id="napcatOnline" style="margin-bottom:12px">-</div>
 <div class="stat-row"><span class="key">QQ 账号</span><span class="val" id="napcatQQ">-</span></div>
 <div class="stat-row"><span class="key">昵称</span><span class="val" id="napcatNick">-</span></div>
+<div style="margin-top:14px;padding:12px;background:var(--section-bg);border-radius:8px">
+  <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">🔗 当前实例账号</div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <select id="napcatAccountSelect" style="flex:1;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);font-size:13px"><option value="">读取中…</option></select>
+    <button class="btn btn-accent" onclick="selectNapcatAccount()" id="btnSelectNapcatAccount" style="font-size:12px;padding:8px 12px">应用</button>
+  </div>
+  <div id="napcatAccountHint" style="font-size:11px;color:var(--text2);margin-top:8px;line-height:1.4">选择后重启 Hermes 网关生效</div>
+</div>
 <div class="btn-row"><button class="btn btn-primary btn-lg" onclick="startNapcat()" id="btnStart">启动 NapCat</button><button class="btn btn-danger btn-lg" onclick="stopNapcat()" id="btnStop">停止</button></div>
 <div style="margin-top:14px;padding:12px;background:var(--section-bg);border-radius:8px">
   <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">🛠️ 端口配置</div>
@@ -1015,6 +1023,9 @@ document.addEventListener("DOMContentLoaded",function(){
 async function checkNapcatPorts(){try{var r=await api("/api/napcat/port-status");$("wsPortStatus").innerHTML=r.ws_3001?'<span style="color:var(--success)">🟢 已开启</span>':'<span style="color:var(--danger)">🔴 已关闭</span>';$("httpPortStatus").innerHTML=r.http_3000?'<span style="color:var(--success)">🟢 已开启</span>':'<span style="color:var(--danger)">🔴 已关闭</span>'}catch(e){$("wsPortStatus").textContent="检查失败";$("httpPortStatus").textContent="检查失败"}}
 async function enableNapcatPorts(){if(!confirm("将生成 OneBot 配置并重启 NapCat，确定？"))return;try{var r=await api("/api/napcat/enable-ports",{method:"POST"});alert(r.success?"端口已启用，NapCat 重启中":"失败: "+r.error);checkNapcatPorts()}catch(e){alert("操作失败: "+e)}}
 async function enableAntiDetection(){try{var r=await api("/api/napcat/anti-detection",{method:"POST"});alert(r.success?"反检测已启用":"失败: "+r.error)}catch(e){alert("操作失败: "+e)}}
+async function loadNapcatAccounts(){var select=$("napcatAccountSelect"),hint=$("napcatAccountHint");if(!select)return;try{var r=await api("/api/napcat/accounts"),accounts=Array.isArray(r.accounts)?r.accounts:[];select.innerHTML="";if(!accounts.length){var empty=document.createElement("option");empty.value="";empty.textContent="未发现 NapCat 登录账号";select.appendChild(empty);hint.textContent="请先登录 NapCat 并启用 OneBot11";return}for(var i=0;i<accounts.length;i++){var a=accounts[i],o=document.createElement("option");o.value=String(a.account_id||"");o.textContent=String(a.account_id||"")+(a.available?"":"（配置不可用）");o.disabled=!a.available;select.appendChild(o)}if(r.selected_account_id)select.value=String(r.selected_account_id);var selected=accounts.filter(function(a){return String(a.account_id)===String(r.selected_account_id)})[0];hint.textContent=selected&&selected.available?(r.gateway_restart_required_after_selection?"当前网关运行中，应用后需重启网关":"自动使用账号专属 OneBot 配置"):"请选择可用的账号配置"}catch(e){select.innerHTML="";var failed=document.createElement("option");failed.value="";failed.textContent="账号读取失败";select.appendChild(failed);hint.textContent="无法读取 NapCat 账号配置"}}
+async function selectNapcatAccount(){var select=$("napcatAccountSelect"),btn=$("btnSelectNapcatAccount"),accountId=select&&select.value;if(!accountId)return toast("请选择可用的 NapCat 账号","warning");if(btn)btn.disabled=true;try{var r=await api("/api/napcat/accounts/select","POST",{account_id:accountId});if(r.success){toast(r.requires_gateway_restart?"账号已选择，请重启 Hermes 网关":"账号已选择","success");loadNapcatAccounts();refreshAll()}else{toast(r.error||"账号选择失败","error")}}catch(e){toast("账号选择失败: "+e.message,"error")}finally{if(btn)btn.disabled=false}}
+loadNapcatAccounts();
 window.addEventListener("beforeunload",function(){if(logSource)logSource.close();if(_refreshAllInterval)clearInterval(_refreshAllInterval);if(_servicePollInterval)clearInterval(_servicePollInterval)});
 </script>
 

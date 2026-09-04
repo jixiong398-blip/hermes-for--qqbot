@@ -557,6 +557,68 @@ class TestAdapterModule(unittest.TestCase):
         self.assertEqual(fake_client._reconnect_interval, 3)
         self.assertEqual(fake_client._ping_interval, 4)
 
+    def test_runtime_ws_overrides_do_not_mutate_global_websockets_connect(self):
+        import asyncio
+        import sys
+        from types import ModuleType
+        from unittest.mock import AsyncMock
+
+        import websockets
+
+        class _FakeWSClient:
+            def __init__(self):
+                self._reconnect_nonce = 30
+                self._reconnect_interval = 120
+                self._ping_interval = 120
+                self.global_connect_during_start = None
+                self.connect_result = None
+
+            def start(self):
+                self.global_connect_during_start = websockets.connect
+                self.connect_result = asyncio.get_event_loop().run_until_complete(
+                    fake_client_module.websockets.connect("wss://example.test")
+                )
+                raise RuntimeError("stop test client")
+
+        original_connect = websockets.connect
+        connect_mock = AsyncMock(return_value="connected")
+        websockets.connect = connect_mock
+        fake_client = _FakeWSClient()
+        fake_adapter = SimpleNamespace(
+            _ws_thread_loop=None,
+            _ws_reconnect_nonce=2,
+            _ws_reconnect_interval=3,
+            _ws_ping_interval=4,
+            _ws_ping_timeout=5,
+        )
+        fake_client_module = ModuleType("lark_oapi.ws.client")
+        fake_client_module.loop = None
+        fake_client_module.websockets = websockets
+        fake_ws_module = ModuleType("lark_oapi.ws")
+        fake_ws_module.client = fake_client_module
+        fake_root_module = ModuleType("lark_oapi")
+        fake_root_module.ws = fake_ws_module
+
+        original_modules = sys.modules.copy()
+        sys.modules["lark_oapi"] = fake_root_module
+        sys.modules["lark_oapi.ws"] = fake_ws_module
+        sys.modules["lark_oapi.ws.client"] = fake_client_module
+        try:
+            from gateway.platforms.feishu import _run_official_feishu_ws_client
+
+            _run_official_feishu_ws_client(fake_client, fake_adapter)
+        finally:
+            websockets.connect = original_connect
+            sys.modules.clear()
+            sys.modules.update(original_modules)
+
+        self.assertIs(fake_client_module.websockets.connect, original_connect)
+        self.assertIs(fake_client.global_connect_during_start, connect_mock)
+        self.assertEqual(fake_client.connect_result, "connected")
+        connect_mock.assert_awaited_once_with(
+            "wss://example.test", ping_interval=4, ping_timeout=5
+        )
+
 
 def _admits_group(adapter, message, sender_id, chat_id=""):
     """Group-path shim: run a message through ``_admit`` and return a bool."""

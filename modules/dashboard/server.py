@@ -13,6 +13,8 @@ Endpoints:
   GET  /api/obsidian  — obsidian vault stats
   POST /api/obsidian/search — search obsidian
   GET  /api/gateway/status  — gateway state, platforms, voice modes, session count
+  GET  /api/napcat/accounts — local NapCat account summaries (no tokens)
+  POST /api/napcat/accounts/select — select the account for this Hermes instance
   GET  /api/sessions  — active sessions
   GET  /api/gateway/sessions — active sessions with chat_type
   POST /api/sessions/end — end a session
@@ -22,13 +24,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import os
 import socket
+import stat
 import subprocess
 import sys
 import threading
 import time
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,6 +47,7 @@ STATIC_DIR = DASHBOARD_DIR / "static"
 VENV_PYTHON = str(BOT_DIR / ".venv" / "Scripts" / "python.exe")
 
 sys.path.insert(0, str(BOT_DIR / "hermes"))
+sys.path.insert(0, str(BOT_DIR / "hermes" / "core"))
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -50,6 +56,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8899"))
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
+NAPCAT_DIR = BOT_DIR / "modules" / "napcat"
+NAPCAT_CONFIG_DIR = NAPCAT_DIR / "napcat" / "config"
+
+try:
+    from plugins.platforms.onebot.config_discovery import (
+        discover_napcat_onebot_credentials,
+        list_napcat_onebot_accounts,
+    )
+except Exception:  # pragma: no cover - dashboard can run before Hermes deps exist
+    discover_napcat_onebot_credentials = None
+    list_napcat_onebot_accounts = None
 
 SERVICES = {
     "tts_adapter": {
@@ -62,7 +79,7 @@ SERVICES = {
     "napcat": {
         "name": "NapCat (QQ)",
         "port": 3000,
-        "cwd": str(BOT_DIR / "napcat"),
+        "cwd": str(NAPCAT_DIR),
         "cmd": ["cmd", "/c", "napcat.bat"],
         "color": "#34C759",
     },
@@ -104,6 +121,99 @@ _running_processes: Dict[str, subprocess.Popen] = {}
 
 LOGS: Dict[str, list] = {svc: [] for svc in SERVICES}
 LOG_LOCK = threading.Lock()
+
+_ACCOUNT_ID_RE = re.compile(r"^\d{1,32}$")
+_MAX_ENV_BYTES = 1024 * 1024
+
+
+def _read_env_value(name: str) -> str:
+    """Read one bounded .env value without exposing it to the dashboard."""
+
+    if not isinstance(name, str) or not name or not re.fullmatch(r"[A-Z0-9_]+", name):
+        return ""
+    path = HERMES_HOME / ".env"
+    try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            return ""
+        if int(info.st_size) > _MAX_ENV_BYTES:
+            return ""
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    prefix = name + "="
+    for line in lines:
+        if line.startswith(prefix):
+            return line[len(prefix):].strip().strip('"').strip("'")
+    return ""
+
+
+def _write_env_values(values: Dict[str, str]) -> bool:
+    """Atomically update bounded non-secret selection values in ``.env``."""
+
+    if not isinstance(values, dict) or not values:
+        return False
+    for key, value in values.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Z0-9_]+", key):
+            return False
+        if not isinstance(value, str) or "\x00" in value or "\r" in value or "\n" in value:
+            return False
+
+    path = HERMES_HOME / ".env"
+    try:
+        HERMES_HOME.mkdir(parents=True, exist_ok=True)
+        if path.exists() or path.is_symlink():
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                return False
+            if int(info.st_size) > _MAX_ENV_BYTES:
+                return False
+            content = path.read_text(encoding="utf-8", errors="replace")
+            mode = stat.S_IMODE(info.st_mode) or 0o600
+        else:
+            content = ""
+            mode = 0o600
+    except OSError:
+        return False
+
+    lines = content.splitlines()
+    seen: set[str] = set()
+    for index, line in enumerate(lines):
+        for key, value in values.items():
+            if line.startswith(key + "="):
+                lines[index] = key + "=" + value
+                seen.add(key)
+                break
+    for key, value in values.items():
+        if key not in seen:
+            lines.append(key + "=" + value)
+    rendered = "\n".join(lines).rstrip("\n") + "\n"
+    if len(rendered.encode("utf-8")) > _MAX_ENV_BYTES:
+        return False
+
+    temporary_path: Optional[str] = None
+    try:
+        fd, temporary_path = tempfile.mkstemp(
+            prefix=".env.dashboard-",
+            dir=str(HERMES_HOME),
+            text=True,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(rendered)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+        temporary_path = None
+        return True
+    except OSError:
+        return False
+    finally:
+        if temporary_path:
+            try:
+                Path(temporary_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _build_timeline_days(stm_daily, ltm_daily, wiki_daily):
@@ -406,6 +516,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/napcat/port-status":
             return self._handle_napcat_port_status()
 
+        elif path == "/api/napcat/accounts":
+            return self._handle_napcat_accounts()
+
         elif path == "/api/updates/check":
             return self._handle_updates_check()
 
@@ -455,6 +568,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/napcat/anti-detection":
             return self._handle_napcat_anti_detection()
+
+        elif path == "/api/napcat/accounts/select":
+            return self._handle_napcat_account_select(body)
 
         elif path == "/api/live2d/models":
             return self._handle_live2d_models()
@@ -544,7 +660,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "env_exists": env.exists(),
             "soul_exists": soul.exists(),
             "venv_exists": (BOT_DIR / ".venv" / "Scripts" / "python.exe").exists(),
-            "napcat_exists": (BOT_DIR / "napcat" / "napcat.bat").exists(),
+            "napcat_exists": (NAPCAT_DIR / "napcat.bat").exists(),
         })
 
     # ── Status ────────────────────────────────────────────────
@@ -579,16 +695,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # OneBot status
         try:
             # Try to load token from hermes .env
+            onebot_self_id = os.getenv("ONEBOT_SELF_ID", "").strip() or _read_env_value("ONEBOT_SELF_ID")
             onebot_token = os.getenv("ONEBOT_ACCESS_TOKEN", "")
             if not onebot_token:
-                env_path = HERMES_HOME / ".env"
-                if env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.startswith("ONEBOT_ACCESS_TOKEN="):
-                            onebot_token = line.split("=", 1)[1].strip()
-                            break
-            req = urllib.request.Request("http://127.0.0.1:3000/get_login_info")
-            req.add_header("Authorization", f"Bearer {onebot_token}")
+                onebot_token = _read_env_value("ONEBOT_ACCESS_TOKEN")
+            if discover_napcat_onebot_credentials is not None:
+                discovered = discover_napcat_onebot_credentials(
+                    onebot_self_id or None,
+                    config_dir=NAPCAT_CONFIG_DIR,
+                )
+                if discovered is not None:
+                    onebot_token = discovered.token
+            req = urllib.request.Request(
+                "http://127.0.0.1:3000/get_login_info",
+                data=b"{}",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {onebot_token}",
+                    "Content-Type": "application/json",
+                },
+            )
             with urllib.request.urlopen(req, timeout=3) as resp:
                 login_info = json.loads(resp.read().decode())
                 result["onebot"] = {
@@ -1083,7 +1209,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # ── NapCat Control ────────────────────────────────────────
 
     def _handle_napcat_start(self):
-        napcat_dir = str(BOT_DIR / "napcat")
+        napcat_dir = str(NAPCAT_DIR)
         try:
             proc = subprocess.Popen(
                 ["cmd", "/c", "napcat.bat"],
@@ -1150,10 +1276,98 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "napcat_running": self._check_port(6099),
         })
 
+    def _handle_napcat_accounts(self):
+        """Return safe account summaries for the single-instance selector."""
+        if list_napcat_onebot_accounts is None:
+            return self._send_json(
+                {"accounts": [], "error": "NapCat account discovery unavailable"},
+                503,
+            )
+        selected_id = os.getenv("ONEBOT_SELF_ID", "").strip() or _read_env_value(
+            "ONEBOT_SELF_ID"
+        )
+        try:
+            summaries = list_napcat_onebot_accounts(
+                selected_id or None,
+                config_dir=NAPCAT_CONFIG_DIR,
+            )
+        except Exception:
+            summaries = ()
+        accounts = [
+            {
+                "account_id": summary.account_id,
+                "available": bool(summary.available),
+                "token_configured": bool(summary.token_configured),
+                "http_port": summary.http_port,
+                "websocket_port": summary.websocket_port,
+                "selected": bool(summary.selected),
+            }
+            for summary in summaries
+        ]
+        selected = next(
+            (row["account_id"] for row in accounts if row["selected"]),
+            selected_id if any(row["account_id"] == selected_id for row in accounts) else None,
+        )
+        self._send_json(
+            {
+                "accounts": accounts,
+                "selected_account_id": selected,
+                "auto_discovery": True,
+                "gateway_restart_required_after_selection": _check_gateway_process(),
+            }
+        )
+
+    def _handle_napcat_account_select(self, body: Dict):
+        """Persist the selected account id without exposing its token."""
+        if not isinstance(body, dict):
+            return self._send_json({"success": False, "error": "JSON object required"}, 400)
+        raw_account_id = body.get("account_id", body.get("self_id"))
+        if isinstance(raw_account_id, bool):
+            return self._send_json({"success": False, "error": "invalid account_id"}, 400)
+        account_id = str(raw_account_id or "").strip()
+        if not _ACCOUNT_ID_RE.fullmatch(account_id):
+            return self._send_json({"success": False, "error": "invalid account_id"}, 400)
+        if discover_napcat_onebot_credentials is None:
+            return self._send_json(
+                {"success": False, "error": "NapCat account discovery unavailable"},
+                503,
+            )
+        try:
+            credentials = discover_napcat_onebot_credentials(
+                account_id,
+                config_dir=NAPCAT_CONFIG_DIR,
+            )
+        except Exception:
+            credentials = None
+        if credentials is None:
+            return self._send_json(
+                {"success": False, "error": "NapCat account config unavailable"},
+                409,
+            )
+        if not _write_env_values(
+            {
+                "ONEBOT_SELF_ID": account_id,
+                "ONEBOT_AUTO_DISCOVER_TOKEN": "true",
+            }
+        ):
+            return self._send_json(
+                {"success": False, "error": "failed to update Hermes account selection"},
+                500,
+            )
+        logger.info("NapCat account selection updated for the current Hermes instance")
+        self._send_json(
+            {
+                "success": True,
+                "selected_account_id": account_id,
+                "token_source": "napcat_account_config",
+                "requires_gateway_restart": _check_gateway_process(),
+            }
+        )
+
     def _handle_napcat_anti_detection(self):
         """Enable anti-detection settings in NapCat config."""
         try:
-            cfg_dir = BOT_DIR / "napcat" / "napcat" / "config"
+            cfg_dir = NAPCAT_CONFIG_DIR
             # Detect current QQ from newest protocol file
             qq = None
             protocol_files = sorted(cfg_dir.glob("napcat_protocol_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)

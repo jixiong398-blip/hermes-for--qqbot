@@ -1,0 +1,89 @@
+"""Dashboard account-selector contract tests.
+
+All NapCat files here are temporary fixtures; no real token or service is
+accessed.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import modules.dashboard.server as server
+
+
+def _write_config(directory: Path, account_id: str, token: str) -> None:
+    payload = {
+        "network": {
+            "httpServers": [
+                {"enable": True, "host": "127.0.0.1", "port": 3000, "token": token}
+            ],
+            "websocketServers": [
+                {"enable": True, "host": "127.0.0.1", "port": 3001, "token": token}
+            ],
+        }
+    }
+    (directory / f"onebot11_{account_id}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    (directory / f"napcat_protocol_{account_id}.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+
+class _FakeHandler:
+    def __init__(self):
+        self.data = None
+        self.status = None
+
+    def _send_json(self, data, status=200):
+        self.data = data
+        self.status = status
+
+
+def test_account_list_is_redacted_and_selection_writes_only_selector_values(
+    tmp_path, monkeypatch
+):
+    config_dir = tmp_path / "napcat-config"
+    config_dir.mkdir()
+    _write_config(config_dir, "222", "fixture-secret")
+
+    monkeypatch.setattr(server, "NAPCAT_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(server, "HERMES_HOME", tmp_path / "hermes-home")
+    monkeypatch.setattr(server, "_check_gateway_process", lambda: False)
+
+    listed = _FakeHandler()
+    server.DashboardHandler._handle_napcat_accounts(listed)
+    selected = _FakeHandler()
+    server.DashboardHandler._handle_napcat_account_select(
+        selected, {"account_id": "222"}
+    )
+
+    assert listed.status == 200
+    assert listed.data["accounts"][0]["account_id"] == "222"
+    assert "fixture-secret" not in json.dumps(listed.data)
+    assert selected.status == 200
+    assert selected.data["success"] is True
+    env = (server.HERMES_HOME / ".env").read_text(encoding="utf-8")
+    assert "ONEBOT_SELF_ID=222" in env
+    assert "ONEBOT_AUTO_DISCOVER_TOKEN=true" in env
+    assert "fixture-secret" not in env
+
+
+def test_account_selection_rejects_unknown_or_malformed_ids(tmp_path, monkeypatch):
+    config_dir = tmp_path / "napcat-config"
+    config_dir.mkdir()
+    _write_config(config_dir, "222", "fixture-secret")
+    monkeypatch.setattr(server, "NAPCAT_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(server, "HERMES_HOME", tmp_path / "hermes-home")
+
+    for body in ({"account_id": "999"}, {"account_id": "../222"}, {"account_id": True}):
+        handler = _FakeHandler()
+        server.DashboardHandler._handle_napcat_account_select(handler, body)
+        assert handler.status in {400, 409}
+        assert handler.data["success"] is False
+
+
+def test_dashboard_uses_the_distribution_napcat_directory():
+    assert server.NAPCAT_DIR.name == "napcat"
+    assert server.SERVICES["napcat"]["cwd"] == str(server.NAPCAT_DIR)

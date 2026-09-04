@@ -6,19 +6,25 @@ description: >
   QQ Bot via OneBot v11 protocol (NapCat/Lagrange/go-cqhttp).
   Connects Hermes to QQ over WebSocket and relays group/DM messages.
 author: Nagasaki
-requires_env:
-  - name: ONEBOT_WS_URL
-    description: "OneBot WebSocket URL (e.g. ws://127.0.0.1:3001/onebot/v11/ws)"
-    prompt: "WebSocket URL"
-    password: false
-  - name: ONEBOT_ACCESS_TOKEN
-    description: "OneBot access token"
-    prompt: "Access token"
-    password: true
+requires_env: []
 optional_env:
+  - name: ONEBOT_WS_URL
+    description: "OneBot WebSocket URL (defaults to the local NapCat endpoint)"
+    prompt: "WebSocket URL (leave empty for local NapCat)"
+    password: false
   - name: ONEBOT_HTTP_URL
-    description: "OneBot HTTP API URL (e.g. http://127.0.0.1:3000)"
-    prompt: "HTTP URL"
+    description: "OneBot HTTP URL (defaults to the local NapCat endpoint)"
+    prompt: "HTTP URL (leave empty for local NapCat)"
+    password: false
+  # NapCat deployments discover this from the selected account file. Keep the
+  # manual value available for remote OneBot-compatible servers.
+  - name: ONEBOT_ACCESS_TOKEN
+    description: "Optional OneBot access token (auto-discovered for NapCat)"
+    prompt: "Access token (leave empty for NapCat auto-discovery)"
+    password: true
+  - name: ONEBOT_AUTO_DISCOVER_TOKEN
+    description: "Automatically use the token from the logged-in NapCat account config"
+    prompt: "Auto-discover NapCat account token"
     password: false
   - name: ONEBOT_HOME_CHANNEL
     description: "Default chat for cron delivery"

@@ -56,17 +56,22 @@ Or via environment variables:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import inspect
 import json
 import logging
+import math
 import os
 import re
+import socket
 import time
 import uuid
 import subprocess
 import sys as _sys
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 from hermes_constants import get_state_db_path
 
@@ -82,6 +87,43 @@ try:
 except ImportError:
     HTTPX_AVAILABLE = False
 
+
+def _websocket_header_keyword() -> Optional[str]:
+    """Return the installed websockets header keyword across supported APIs."""
+
+    if not WEBSOCKETS_AVAILABLE:
+        return None
+    try:
+        parameters = inspect.signature(websockets.connect).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "additional_headers" in parameters:
+        return "additional_headers"
+    if "extra_headers" in parameters:
+        return "extra_headers"
+    return None
+
+
+def _connect_onebot_websocket(url: str, access_token: str):
+    """Build a forward WebSocket connection for websockets 12.x and 15.x.
+
+    ``websockets`` renamed ``extra_headers`` to ``additional_headers`` in
+    14/15.  Keep authentication fail-closed when neither spelling is exposed,
+    rather than silently dropping the bearer token.
+    """
+
+    kwargs: Dict[str, Any] = {
+        "ping_interval": 15,
+        "ping_timeout": 30,
+    }
+    token = str(access_token or "").strip()
+    if token:
+        keyword = _websocket_header_keyword()
+        if keyword is None:
+            raise RuntimeError("installed websockets client has no supported header parameter")
+        kwargs[keyword] = {"Authorization": f"Bearer {token}"}
+    return websockets.connect(url, **kwargs)
+
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -90,8 +132,71 @@ from gateway.platforms.base import (
     SendResult,
 )
 from gateway.session import SessionSource, build_session_key
+from .contract import (
+    OneBotCapabilitySnapshot,
+    MessageEnvelope,
+    normalize_onebot_message,
+)
+from .config_discovery import discover_napcat_onebot_credentials
+from .transport_contract import (
+    OneBotEndpoint,
+    OneBotEndpointError,
+    OneBotTransportDescriptor,
+    OneBotTransportError,
+    classify_http_status,
+    classify_transport_exception,
+    parse_onebot_receipt,
+    MAX_MEDIA_DOWNLOAD_BYTES,
+    validate_media_response,
+    validate_media_url,
+    validate_onebot_endpoints,
+    validate_onebot_handshake,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Control markers are transport directives, not user-visible message text.
+# Keep the expression deliberately narrow so ordinary bracketed prose is not
+# removed, while accepting model output with arbitrary case/whitespace.
+_CONTROL_MARKER_RE = re.compile(r"\s*\[(QUIET|SILENT)\]\s*", re.IGNORECASE)
+
+
+def _onebot_event_timestamp(payload: Any) -> Optional[datetime]:
+    """Convert a OneBot seconds timestamp to the shared event type."""
+
+    if not isinstance(payload, dict):
+        return None
+    try:
+        raw = float(payload.get("time"))
+        if not math.isfinite(raw) or raw <= 0 or raw > 1_000_000_000_000:
+            return None
+        return datetime.fromtimestamp(raw)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+@dataclass(frozen=True)
+class GroupTurnCompletion:
+    """Bounded completion contract for one GroupExecutor turn.
+
+    The object is intentionally transport-neutral.  ``delivery_text`` is the
+    text that was actually eligible for delivery after control-marker
+    normalization; an empty value means that no visible body was delivered,
+    even when the adapter returned a successful no-op for a marker or an
+    internal message.
+    """
+
+    completed: bool = False
+    timed_out: bool = False
+    interrupted: bool = False
+    delivery_text: str = ""
+    normalized_text: str = ""
+    delivery_attempted: bool = False
+    delivery_succeeded: bool = False
+    failed: bool = False
+    state_recorded: bool = False
+    marker_names: tuple[str, ...] = ()
 
 
 # ── QQ system face emoji (type=face) id → name map ──────────────────────────
@@ -209,6 +314,10 @@ class OneBotAdapter(BasePlatformAdapter):
         OneBotAdapter._instance = self
         self._ws = None
         self._ws_task: Optional[asyncio.Task] = None
+        # Forward/reverse sockets can complete the TCP handshake before NapCat
+        # reports a rejected bearer token. Keep this pending until the first
+        # protocol frame so a transport connection is not mistaken for auth.
+        self._ws_auth_pending: bool = False
         self._http_client = None
         self._echo_counter = 0
         self._pending_echo: Dict[str, asyncio.Future] = {}
@@ -221,6 +330,9 @@ class OneBotAdapter(BasePlatformAdapter):
             self._bot_name: str = os.getenv("ONEBOT_BOT_NAME", "").strip() or ""
         self._ws_url: str = ""
         self._http_url: str = ""
+        self._ws_endpoint: Optional[OneBotEndpoint] = None
+        self._http_endpoint: Optional[OneBotEndpoint] = None
+        self._last_transport_descriptor: Optional[OneBotTransportDescriptor] = None
         self._access_token: str = ""
         self._reverse_ws: bool = False     # gateway listens, NapCat connects
         self._reverse_ws_port: int = 3002   # port to listen on in reverse mode
@@ -228,6 +340,11 @@ class OneBotAdapter(BasePlatformAdapter):
         self._require_mention: bool = False
         self._allowed_users: set = set()
         self._blocked_users: set = set()
+        # Seed admin state before _load_config/connect.  Some recovery and
+        # offline contract paths invoke message handling on a minimally
+        # constructed adapter; an absent value must mean "no admin override",
+        # never raise AttributeError or broaden command authority.
+        self._admin_id: str = ""
 
         # Image+text debouncing: wait for rapid follow-up text after image
         self._image_text_delay_seconds = float(os.getenv("HERMES_ONEBOT_IMAGE_TEXT_DELAY_SECONDS", "2.5"))
@@ -240,7 +357,11 @@ class OneBotAdapter(BasePlatformAdapter):
 
         from .group_state import GroupStateRegistry
         self._group_states = GroupStateRegistry()
-        self._group_send_results: Dict[str, "asyncio.Future"] = {}
+        # GroupExecutor uses a per-turn nonce here.  Keep the legacy Future
+        # shape accepted as a fallback for older callers/tests, but never let
+        # a group-wide status send resolve another turn's waiter.
+        self._group_send_results: Dict[str, Any] = {}
+        self._group_turn_context: Dict[str, str] = {}
 
         # Image description cache: avoid re-calling vision API for same image
         self._image_descriptions: Dict[str, str] = {}
@@ -282,6 +403,7 @@ class OneBotAdapter(BasePlatformAdapter):
         if chat_id.startswith("group:"):
             group_id = chat_id.split(":", 1)[1]
             label = "[语音]" if is_voice else ""
+            state_recorded = False
             self._persist_chat_message(group_id, "group", 0, "bot", text, is_bot=1,
                                        message_id=message_id, reply_to_id=reply_to_id)
             self._last_bot_reply[group_id] = (time.time(), text)
@@ -293,11 +415,14 @@ class OneBotAdapter(BasePlatformAdapter):
                                     text=f"{label}{text}", is_bot=True)
                 )
                 _gs.record_reply(text)
+                state_recorded = True
             except Exception:
                 pass
             logger.info("[OneBot] add_bot_reply_to_buffer: group=%s text=%d chars", group_id, len(text))
+            return state_recorded
         else:
             self._persist_chat_message(chat_id, "private", 0, "bot", text, is_bot=1)
+            return False
 
     def _schedule_group_run(self, request):
         self._group_executor.schedule(request)
@@ -529,6 +654,35 @@ class OneBotAdapter(BasePlatformAdapter):
     def name(self) -> str:
         return "OneBot (QQ)"
 
+    def capability_snapshot(self) -> OneBotCapabilitySnapshot:
+        """Return the static OneBot capability contract plus live state."""
+        return OneBotCapabilitySnapshot(
+            connected=bool(self.is_connected),
+            ws_loopback=(
+                self._ws_endpoint.is_loopback
+                if self._ws_endpoint is not None
+                else True
+            ),
+            http_loopback=(
+                self._http_endpoint.is_loopback
+                if self._http_endpoint is not None
+                else True
+            ),
+            auth_configured=bool(self._access_token),
+            transport_error_code=(
+                self._last_transport_descriptor.code
+                if self._last_transport_descriptor is not None
+                else None
+            ),
+        )
+
+    def normalize_event(self, payload: Any) -> Optional[MessageEnvelope]:
+        """Expose the pure ingress normalizer for gateway/test callers."""
+        return normalize_onebot_message(
+            payload,
+            bot_id=str(self._self_id) if self._self_id is not None else None,
+        )
+
     def _recall_context(self, message_text: str, sender_id: str,
                         sender_name: str, session_id: str = "") -> str:
         try:
@@ -567,31 +721,118 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.warning("[OneBot] _recall_context failed: %s", e, exc_info=True)
             return ""
 
-    def _load_config(self) -> None:
+    def _load_config(self) -> bool:
         extra = self.config.extra if self.config else {}
+        if not isinstance(extra, dict):
+            extra = {}
 
-        self._ws_url = os.getenv("ONEBOT_WS_URL", extra.get("ws_url", "ws://127.0.0.1:3001/onebot/v11/ws"))
-        self._access_token = os.getenv("ONEBOT_ACCESS_TOKEN", extra.get("access_token", ""))
-        # Reverse WebSocket: Gateway listens, NapCat connects to us
-        _rp = extra.get("reverse_ws_port", 0)
-        if not _rp:
-            _rp = int(os.getenv("ONEBOT_REVERSE_WS_PORT", "0") or 0)
-        self._reverse_ws_port = int(_rp) if _rp else 0
+        raw_ws_url = (
+            os.getenv("ONEBOT_WS_URL")
+            or extra.get("ws_url")
+            or "ws://127.0.0.1:3001/onebot/v11/ws"
+        )
+        raw_http_url = os.getenv("ONEBOT_HTTP_URL") or extra.get("http_url")
+        try:
+            self._ws_endpoint, self._http_endpoint = validate_onebot_endpoints(
+                raw_ws_url,
+                raw_http_url,
+            )
+        except OneBotEndpointError as error:
+            self._ws_endpoint = None
+            self._http_endpoint = None
+            self._ws_url = ""
+            self._http_url = ""
+            self._last_transport_descriptor = OneBotTransportDescriptor(
+                layer="endpoint",
+                code=error.code,
+                retryable=False,
+                message=str(error),
+            )
+            self._set_fatal_error(error.code, str(error), retryable=False)
+            return False
+
+        self._ws_url = self._ws_endpoint.url
+        self._http_url = self._http_endpoint.url
+        self._access_token = str(
+            os.getenv("ONEBOT_ACCESS_TOKEN")
+            or extra.get("access_token")
+            or ""
+        ).strip()
+
+        auto_discover_value = extra.get(
+            "auto_discover_token",
+            os.getenv("ONEBOT_AUTO_DISCOVER_TOKEN", "true"),
+        )
+        if isinstance(auto_discover_value, bool):
+            auto_discover = auto_discover_value
+        else:
+            auto_discover = str(auto_discover_value).strip().lower() not in {
+                "0",
+                "false",
+                "no",
+                "off",
+            }
+        if (
+            auto_discover
+            and self._ws_endpoint is not None
+            and self._http_endpoint is not None
+            and self._ws_endpoint.is_loopback
+            and self._http_endpoint.is_loopback
+        ):
+            discovered = discover_napcat_onebot_credentials(
+                self._self_id,
+                config_dir=(
+                    extra.get("napcat_config_dir")
+                    or os.getenv("ONEBOT_NAPCAT_CONFIG_DIR")
+                    or None
+                ),
+            )
+            if discovered is not None:
+                self._access_token = discovered.token
+                if self._self_id is None:
+                    try:
+                        self._self_id = int(discovered.account_id)
+                    except (TypeError, ValueError, OverflowError):
+                        self._self_id = None
+                logger.info(
+                    "[OneBot] Loaded account-specific NapCat OneBot credentials"
+                )
+
+        # Reverse WebSocket: Gateway listens, NapCat connects to us. Invalid
+        # ports are configuration failures, not runtime connection retries.
+        try:
+            _rp = extra.get("reverse_ws_port") or os.getenv(
+                "ONEBOT_REVERSE_WS_PORT", "0"
+            )
+            if isinstance(_rp, bool):
+                raise ValueError
+            self._reverse_ws_port = int(_rp or 0)
+            if not 0 <= self._reverse_ws_port <= 65_535:
+                raise ValueError
+        except (TypeError, ValueError):
+            message = "OneBot reverse WebSocket port is invalid"
+            self._last_transport_descriptor = OneBotTransportDescriptor(
+                layer="endpoint",
+                code="invalid_port",
+                retryable=False,
+                message=message,
+            )
+            self._set_fatal_error("invalid_port", message, retryable=False)
+            return False
         self._reverse_ws = self._reverse_ws_port > 0
         self._ws_server = None
 
-        # Reconnect interval from config
-        _ri = extra.get("reconnect_interval", 0)
-        if not _ri:
-            _ri = int(os.getenv("ONEBOT_RECONNECT_INTERVAL", "10") or 10)
-        self._ws_reconnect_interval = int(_ri)
-
-        # Derive HTTP URL from WS URL (replace ws:// with http://, remove path)
-        parsed = urlparse(self._ws_url)
-        self._http_url = os.getenv(
-            "ONEBOT_HTTP_URL",
-            extra.get("http_url", f"http://{parsed.hostname}:{parsed.port}")
-        )
+        # Reconnect interval from config. A malformed value should not make
+        # the adapter constructor or reconnect loop crash.
+        try:
+            _ri = extra.get("reconnect_interval") or os.getenv(
+                "ONEBOT_RECONNECT_INTERVAL", "10"
+            )
+            if isinstance(_ri, bool):
+                raise ValueError
+            self._ws_reconnect_interval = max(1, int(_ri or 10))
+        except (TypeError, ValueError):
+            self._ws_reconnect_interval = 10
 
         # require_mention: group messages need @mention
         rm = extra.get("require_mention")
@@ -601,14 +842,16 @@ class OneBotAdapter(BasePlatformAdapter):
             self._require_mention = os.getenv("ONEBOT_REQUIRE_MENTION", "false").lower() in ("true", "1", "yes")
 
         # Allowed users (whitelist)
-        allowed_str = os.getenv("ONEBOT_ALLOWED_USERS", extra.get("allowed_users", ""))
+        self._allowed_users = set()
+        allowed_str = os.getenv("ONEBOT_ALLOWED_USERS") or extra.get("allowed_users", "")
         if isinstance(allowed_str, list):
             self._allowed_users = {str(u) for u in allowed_str}
         elif allowed_str:
             self._allowed_users = {u.strip() for u in str(allowed_str).split(",") if u.strip()}
 
         # Blocked users (blacklist)
-        blocked_str = os.getenv("ONEBOT_BLOCKED_USERS", extra.get("blocked_users", ""))
+        self._blocked_users = set()
+        blocked_str = os.getenv("ONEBOT_BLOCKED_USERS") or extra.get("blocked_users", "")
         if isinstance(blocked_str, list):
             self._blocked_users = {str(u) for u in blocked_str}
         elif blocked_str:
@@ -621,13 +864,15 @@ class OneBotAdapter(BasePlatformAdapter):
         self._admin_id = str(
             extra.get("admin_id", "")
             or os.getenv("ONEBOT_ADMIN_ID", "")
-        )
+        ).strip()
 
         # ── v0.14.11: invite approval + admin command state ──
         self._invite_pending: Dict[str, dict] = {}    # flag -> {group_id, inviter, ts}
         self._invite_notified: Dict[str, float] = {}  # group_id -> last notify ts (5min debounce)
         self._contact_cards: Dict[str, dict] = {}     # group_id -> {ts, sender, context}
         self._processed_flags: set = set()            # dedupe for invite flags
+        self._last_transport_descriptor = None
+        return True
 
     # ------------------------------------------------------------------
     # Connection
@@ -638,8 +883,13 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.error("websockets package not installed. Run: pip install websockets")
             self._set_fatal_error("no_websockets", "websockets package not installed", retryable=False)
             return False
+        if not HTTPX_AVAILABLE:
+            logger.error("httpx package not installed. Run: pip install httpx")
+            self._set_fatal_error("no_httpx", "httpx package not installed", retryable=False)
+            return False
 
-        self._load_config()
+        if not self._load_config():
+            return False
         logger.info("[OneBot] Connecting: reverse_ws=%s, WS %s, HTTP %s", 
                      self._reverse_ws, self._ws_url, self._http_url)
 
@@ -659,6 +909,7 @@ class OneBotAdapter(BasePlatformAdapter):
             """Handle one incoming NapCat connection."""
             logger.info("[OneBot] Reverse WS: NapCat connected")
             self._ws = ws
+            self._ws_auth_pending = True
             self._mark_connected()
             # Init HTTP client
             if HTTPX_AVAILABLE:
@@ -684,22 +935,23 @@ class OneBotAdapter(BasePlatformAdapter):
             logger.info("[OneBot] Reverse WS server started on port %s", port)
             return True
         except Exception as e:
-            logger.error("[OneBot] Reverse WS server failed: %s", e)
-            self._set_fatal_error("reverse_ws_failed", str(e), retryable=True)
+            descriptor = classify_transport_exception(e, operation="ws_listen")
+            self._last_transport_descriptor = descriptor
+            logger.error("[OneBot] Reverse WS server failed: %s", descriptor.message)
+            self._set_fatal_error(
+                descriptor.code,
+                descriptor.message,
+                retryable=descriptor.retryable,
+            )
             return False
 
     async def _connect_forward_ws(self) -> bool:
         """Connect to NapCat as a WebSocket client (original behavior)."""
         try:
-            additional_headers = {}
-            if self._access_token:
-                additional_headers["Authorization"] = f"Bearer {self._access_token}"
-
-            self._ws = await websockets.connect(
+            self._ws_auth_pending = True
+            self._ws = await _connect_onebot_websocket(
                 self._ws_url,
-                additional_headers=additional_headers if additional_headers else None,
-                ping_interval=15,
-                ping_timeout=30,
+                self._access_token,
             )
             self._ws_task = asyncio.create_task(self._ws_loop())
             self._persist_worker_task = asyncio.create_task(self._persist_worker())
@@ -717,8 +969,14 @@ class OneBotAdapter(BasePlatformAdapter):
             asyncio.create_task(self._recover_missed_messages())
             return True
         except Exception as e:
-            logger.error("[OneBot] Connection failed: %s", e)
-            self._set_fatal_error("connection_failed", str(e), retryable=True)
+            descriptor = classify_transport_exception(e, operation="ws_connect")
+            self._last_transport_descriptor = descriptor
+            logger.error("[OneBot] Connection failed: %s", descriptor.message)
+            self._set_fatal_error(
+                descriptor.code,
+                descriptor.message,
+                retryable=descriptor.retryable,
+            )
             return False
 
     async def disconnect(self) -> None:
@@ -782,6 +1040,44 @@ class OneBotAdapter(BasePlatformAdapter):
 
                 logger.info("[OneBot] Received: post_type=%s, keys=%s", payload.get("post_type"), list(payload.keys()))
 
+                if self._ws_auth_pending:
+                    handshake = validate_onebot_handshake(payload)
+                    if (
+                        handshake.state == "invalid"
+                        and handshake.descriptor.code in {"onebot_retcode", "auth_failed"}
+                    ):
+                        self._ws_auth_pending = False
+                        descriptor = OneBotTransportDescriptor(
+                            layer="auth",
+                            code="ws_auth_failed",
+                            retryable=False,
+                            message="OneBot WebSocket authentication was rejected",
+                        )
+                        self._mark_disconnected()
+                        self._last_transport_descriptor = descriptor
+                        self._set_fatal_error(
+                            descriptor.code,
+                            descriptor.message,
+                            retryable=descriptor.retryable,
+                        )
+                        try:
+                            await self._ws.close()
+                        except Exception:
+                            pass
+                        asyncio.create_task(self._notify_fatal_error())
+                        break
+                    # A valid event or successful protocol response proves the
+                    # socket is usable. Subsequent action errors must not tear
+                    # down an otherwise authenticated connection.
+                    if (
+                        payload.get("post_type")
+                        or (
+                            payload.get("status") in {"ok", "async"}
+                            and payload.get("retcode", 0) == 0
+                        )
+                    ):
+                        self._ws_auth_pending = False
+
                 if "echo" in payload:
                     self._handle_echo_response(payload)
                     continue
@@ -807,12 +1103,29 @@ class OneBotAdapter(BasePlatformAdapter):
         except websockets.exceptions.ConnectionClosed:
             logger.warning("[OneBot] WebSocket connection closed")
             self._mark_disconnected()
-            self._set_fatal_error("ws_disconnected", "WebSocket connection closed", retryable=True)
+            descriptor = OneBotTransportDescriptor(
+                layer="connection",
+                code="ws_disconnected",
+                retryable=True,
+                message="OneBot WebSocket connection closed",
+            )
+            self._last_transport_descriptor = descriptor
+            self._set_fatal_error(
+                descriptor.code,
+                descriptor.message,
+                retryable=descriptor.retryable,
+            )
             asyncio.create_task(self._notify_fatal_error())
         except Exception as e:
-            logger.error("[OneBot] Error in event loop: %s", e)
+            descriptor = classify_transport_exception(e, operation="ws_event")
+            logger.error("[OneBot] Error in event loop: %s", descriptor.message)
             self._mark_disconnected()
-            self._set_fatal_error("ws_error", str(e), retryable=True)
+            self._last_transport_descriptor = descriptor
+            self._set_fatal_error(
+                descriptor.code,
+                descriptor.message,
+                retryable=descriptor.retryable,
+            )
             asyncio.create_task(self._notify_fatal_error())
 
     # ------------------------------------------------------------------
@@ -829,17 +1142,68 @@ class OneBotAdapter(BasePlatformAdapter):
     async def _send_action(self, action: str, params: dict, timeout: float = 15.0) -> dict:
         """Send an API action via HTTP POST."""
         if not self._http_client:
-            raise RuntimeError("OneBot HTTP client not initialized")
+            descriptor = OneBotTransportDescriptor(
+                layer="connection",
+                code="http_not_connected",
+                retryable=True,
+                message="OneBot HTTP client is not initialized",
+            )
+            self._last_transport_descriptor = descriptor
+            raise OneBotTransportError(descriptor)
 
         try:
-            response = await self._http_client.post(action, json=params)
-            result = response.json()
-            if result.get("retcode") != 0:
-                logger.warning("[OneBot] Action %s failed: %s", action, result)
+            operation = "send" if action in {"send_group_msg", "send_private_msg"} else "action"
+            try:
+                request_timeout = max(0.1, float(timeout))
+            except (TypeError, ValueError):
+                request_timeout = 15.0
+            response = await asyncio.wait_for(
+                self._http_client.post(action, json=params),
+                timeout=request_timeout,
+            )
+            status_descriptor = classify_http_status(
+                getattr(response, "status_code", 200),
+                operation=operation,
+            )
+            if status_descriptor.code != "http_ok":
+                raise OneBotTransportError(status_descriptor)
+            try:
+                result = response.json()
+            except Exception as error:
+                raise OneBotTransportError(
+                    classify_transport_exception(error, operation=operation)
+                ) from error
+            receipt = parse_onebot_receipt(result, operation="action")
+            if not receipt.ok:
+                self._last_transport_descriptor = receipt.descriptor
+                logger.warning(
+                    "[OneBot] Action %s returned %s (retcode=%s)",
+                    action,
+                    receipt.descriptor.code,
+                    receipt.retcode,
+                )
+                if receipt.descriptor.code != "onebot_retcode":
+                    raise OneBotTransportError(receipt.descriptor)
+            else:
+                self._last_transport_descriptor = None
             return result
-        except Exception as e:
-            logger.error("[OneBot] HTTP action %s failed: %s", action, e)
+        except OneBotTransportError as error:
+            self._last_transport_descriptor = error.descriptor
+            logger.error(
+                "[OneBot] HTTP action %s failed: %s",
+                action,
+                error.descriptor.message or error.descriptor.code,
+            )
             raise
+        except Exception as error:
+            descriptor = classify_transport_exception(error, operation=operation)
+            self._last_transport_descriptor = descriptor
+            logger.error(
+                "[OneBot] HTTP action %s failed: %s",
+                action,
+                descriptor.message or descriptor.code,
+            )
+            raise OneBotTransportError(descriptor) from error
 
     # ------------------------------------------------------------------
     # Message parsing
@@ -1119,6 +1483,151 @@ class OneBotAdapter(BasePlatformAdapter):
     # Message processing
     # ------------------------------------------------------------------
 
+    async def _validate_media_download_url(
+        self,
+        url: Any,
+        *,
+        allow_file: bool = True,
+    ) -> OneBotTransportDescriptor:
+        """Validate a media destination before opening an HTTP stream.
+
+        ``validate_media_url`` handles parser ambiguity and literal address
+        forms without I/O.  This boundary additionally resolves DNS in a
+        worker thread and rejects every private/reserved answer, closing the
+        hostname and rebinding gap while preserving explicit loopback NapCat
+        and the configured OneBot HTTP host.
+        """
+        descriptor = validate_media_url(url, allow_file=allow_file)
+        if descriptor.code != "media_url_ok":
+            # A private literal is only acceptable when it is the explicitly
+            # configured OneBot HTTP endpoint.  Loopback is already accepted
+            # by the pure validator for local NapCat deployments.
+            if descriptor.code != "media_private_address" or not isinstance(url, str):
+                return descriptor
+
+        try:
+            from urllib.parse import urlsplit
+
+            parsed = urlsplit(str(url).strip())
+            scheme = parsed.scheme.lower()
+            if scheme == "file":
+                return descriptor
+            host = (parsed.hostname or "").strip().lower().rstrip(".")
+            if not host:
+                return OneBotTransportDescriptor(
+                    layer="media", code="invalid_media_url", retryable=False,
+                    message="OneBot media reference is invalid",
+                )
+
+            def _is_loopback_host(value: str) -> bool:
+                if value in {"localhost", "localhost.localdomain", "ip6-localhost"}:
+                    return True
+                try:
+                    address = ipaddress.ip_address(value)
+                except ValueError:
+                    return False
+                mapped = getattr(address, "ipv4_mapped", None)
+                return bool(address.is_loopback or (mapped and mapped.is_loopback))
+
+            trusted_host = ""
+            trusted_scheme = ""
+            trusted_port = None
+            endpoint = getattr(self, "_http_endpoint", None)
+            if endpoint is not None:
+                trusted_host = str(getattr(endpoint, "host", "") or "").strip().lower().rstrip(".")
+                trusted_scheme = str(getattr(endpoint, "scheme", "") or "").strip().lower()
+                try:
+                    trusted_port = int(getattr(endpoint, "port", 0) or 0)
+                except (TypeError, ValueError):
+                    trusted_port = None
+            if not trusted_host:
+                try:
+                    endpoint_url = urlsplit(str(getattr(self, "_http_url", "") or ""))
+                    trusted_host = (endpoint_url.hostname or "").strip().lower().rstrip(".")
+                    trusted_scheme = endpoint_url.scheme.lower()
+                    trusted_port = endpoint_url.port
+                except ValueError:
+                    trusted_host = ""
+                    trusted_scheme = ""
+                    trusted_port = None
+
+            if trusted_scheme and trusted_port is None:
+                trusted_port = {"http": 80, "https": 443}.get(trusted_scheme)
+            effective_port = parsed.port or {"http": 80, "https": 443}.get(scheme)
+            is_configured_endpoint = bool(
+                trusted_host
+                and host == trusted_host
+                and scheme == trusted_scheme
+                and effective_port == trusted_port
+            )
+
+            if _is_loopback_host(host):
+                # A minimally constructed adapter may not have loaded its
+                # default endpoint yet; retain the documented local NapCat
+                # HTTP port in that case.  Once configured, require the exact
+                # authority so a media URL cannot pivot to another localhost
+                # service/port.
+                if is_configured_endpoint or (
+                    not trusted_host and scheme == "http" and effective_port == 3000
+                ):
+                    return OneBotTransportDescriptor(
+                        layer="media", code="media_url_ok", retryable=False,
+                    )
+                return OneBotTransportDescriptor(
+                    layer="media", code="media_private_address", retryable=False,
+                    message="OneBot media reference targets a private address",
+                )
+
+            try:
+                answers = await asyncio.to_thread(
+                    socket.getaddrinfo,
+                    host,
+                    None,
+                    socket.AF_UNSPEC,
+                    socket.SOCK_STREAM,
+                )
+            except (OSError, socket.gaierror):
+                return OneBotTransportDescriptor(
+                    layer="media", code="media_dns_failed", retryable=False,
+                    message="OneBot media host could not be resolved",
+                )
+            if not answers:
+                return OneBotTransportDescriptor(
+                    layer="media", code="media_dns_failed", retryable=False,
+                    message="OneBot media host could not be resolved",
+                )
+
+            for answer in answers:
+                try:
+                    resolved = ipaddress.ip_address(answer[4][0])
+                except (IndexError, TypeError, ValueError):
+                    return OneBotTransportDescriptor(
+                        layer="media", code="media_dns_failed", retryable=False,
+                        message="OneBot media host resolution was invalid",
+                    )
+                is_cgnat = resolved.version == 4 and resolved in ipaddress.ip_network("100.64.0.0/10")
+                is_private = (
+                    resolved.is_private
+                    or resolved.is_link_local
+                    or resolved.is_reserved
+                    or resolved.is_unspecified
+                    or resolved.is_multicast
+                    or is_cgnat
+                )
+                if is_private and not is_configured_endpoint:
+                    return OneBotTransportDescriptor(
+                        layer="media", code="media_private_address", retryable=False,
+                        message="OneBot media host resolved to a private address",
+                    )
+            return OneBotTransportDescriptor(
+                layer="media", code="media_url_ok", retryable=False,
+            )
+        except Exception:
+            return OneBotTransportDescriptor(
+                layer="media", code="media_url_invalid", retryable=False,
+                message="OneBot media destination validation failed",
+            )
+
     async def _get_voice_file(self, msg: dict) -> Optional[str]:
         """Download a voice message from OneBot and return the local file path."""
         segments = msg.get("message", [])
@@ -1134,11 +1643,21 @@ class OneBotAdapter(BasePlatformAdapter):
                     # Download via HTTP
                     import httpx
                     try:
-                        async with httpx.AsyncClient(timeout=30.0) as client:
-                            resp = await client.get(file_url)
-                            resp.raise_for_status()
+                        url_descriptor = await self._validate_media_download_url(
+                            file_url,
+                            allow_file=False,
+                        )
+                        if url_descriptor.code != "media_url_ok":
+                            raise OneBotTransportError(url_descriptor)
+                        async with httpx.AsyncClient(
+                            timeout=30.0,
+                            follow_redirects=False,
+                        ) as client:
+                            voice_data, response_headers = await self._fetch_media_bytes(
+                                client, file_url
+                            )
                             # Determine extension from content-type or default to .ogg
-                            content_type = resp.headers.get("content-type", "")
+                            content_type = response_headers.get("content-type", "")
                             if "amr" in content_type:
                                 ext = ".amr"
                             elif "wav" in content_type:
@@ -1152,8 +1671,8 @@ class OneBotAdapter(BasePlatformAdapter):
                             cache_dir = get_audio_cache_dir()
                             filename = f"onebot_{msg.get('message_id', 'unknown')}{ext}"
                             filepath = cache_dir / filename
-                            filepath.write_bytes(resp.content)
-                            logger.info("[OneBot] Downloaded voice file: %s (%d bytes)", filepath, len(resp.content))
+                            filepath.write_bytes(voice_data)
+                            logger.info("[OneBot] Downloaded voice file: %s (%d bytes)", filepath, len(voice_data))
                             return str(filepath)
                     except Exception as e:
                         logger.warning("[OneBot] Failed to download voice file from URL: %s", e)
@@ -1165,6 +1684,16 @@ class OneBotAdapter(BasePlatformAdapter):
                         file_data = file_result.get("data", {})
                         file_content = file_data.get("file", "")
                         if file_content:
+                            if isinstance(file_content, bytes):
+                                file_bytes = file_content
+                            else:
+                                file_bytes = str(file_content).encode("utf-8", errors="replace")
+                            descriptor = validate_media_response(
+                                200,
+                                body_length=len(file_bytes),
+                            )
+                            if descriptor.code != "media_ok":
+                                raise OneBotTransportError(descriptor)
                             from gateway.platforms.base import get_audio_cache_dir
                             cache_dir = get_audio_cache_dir()
                             filename = f"onebot_{msg.get('message_id', 'unknown')}.ogg"
@@ -1236,6 +1765,161 @@ class OneBotAdapter(BasePlatformAdapter):
         mapping = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp"}
         return mapping.get(ext.lower(), "image/jpeg")
+
+    @staticmethod
+    def _validated_media_response_content(response: Any) -> bytes:
+        """Return bounded media bytes or raise a safe transport error."""
+        headers = getattr(response, "headers", {}) or {}
+        content = getattr(response, "content", b"")
+        try:
+            body_length = len(content)
+        except Exception as error:
+            raise OneBotTransportError(
+                OneBotTransportDescriptor(
+                    layer="media",
+                    code="invalid_media_body",
+                    retryable=False,
+                    message="OneBot media response body was invalid",
+                )
+            ) from error
+        descriptor = validate_media_response(
+            getattr(response, "status_code", 200),
+            content_length=(headers.get("content-length") if hasattr(headers, "get") else None),
+            body_length=body_length,
+        )
+        if descriptor.code != "media_ok":
+            raise OneBotTransportError(descriptor)
+        if not isinstance(content, bytes):
+            raise OneBotTransportError(
+                OneBotTransportDescriptor(
+                    layer="media",
+                    code="invalid_media_body",
+                    retryable=False,
+                    message="OneBot media response body was invalid",
+                )
+            )
+        return content
+
+    @staticmethod
+    async def _fetch_media_bytes(
+        client: Any,
+        url: str,
+        *,
+        chunk_size: int = 64 * 1024,
+    ) -> tuple[bytes, Any]:
+        """Stream a media response with a hard pre-read and cumulative limit.
+
+        ``httpx.AsyncClient.get()`` buffers the full response before returning,
+        so checking ``response.content`` afterwards is not a memory bound. This
+        helper uses the streaming context manager, rejects an oversized
+        Content-Length before reading, and checks every chunk before retaining
+        it. It returns ``(body, headers)`` so callers can preserve extension or
+        MIME handling without exposing the response object.
+        """
+
+        stream = getattr(client, "stream", None)
+        if not callable(stream):
+            raise OneBotTransportError(
+                OneBotTransportDescriptor(
+                    layer="media",
+                    code="streaming_unavailable",
+                    retryable=False,
+                    message="OneBot media streaming is unavailable",
+                )
+            )
+
+        async with stream("GET", url) as response:
+            headers = getattr(response, "headers", {}) or {}
+            content_length = (
+                headers.get("content-length")
+                if hasattr(headers, "get")
+                else None
+            )
+            try:
+                declared_length = (
+                    None
+                    if content_length in (None, "")
+                    else int(content_length)
+                )
+            except (TypeError, ValueError):
+                declared_length = None
+                length_invalid = True
+            else:
+                length_invalid = (
+                    declared_length is not None and declared_length < 0
+                )
+            if length_invalid:
+                raise OneBotTransportError(
+                    OneBotTransportDescriptor(
+                        layer="media",
+                        code="invalid_media_length",
+                        retryable=False,
+                        message="OneBot media response length was invalid",
+                    )
+                )
+            if (
+                declared_length is not None
+                and declared_length > MAX_MEDIA_DOWNLOAD_BYTES
+            ):
+                raise OneBotTransportError(
+                    OneBotTransportDescriptor(
+                        layer="media",
+                        code="media_too_large",
+                        retryable=False,
+                        message="OneBot media response exceeded the size limit",
+                    )
+                )
+            descriptor = validate_media_response(
+                getattr(response, "status_code", 200),
+                content_length=content_length,
+            )
+            if descriptor.code != "media_ok":
+                raise OneBotTransportError(descriptor)
+
+            iterator = getattr(response, "aiter_bytes", None)
+            if not callable(iterator):
+                raise OneBotTransportError(
+                    OneBotTransportDescriptor(
+                        layer="media",
+                        code="streaming_unavailable",
+                        retryable=False,
+                        message="OneBot media streaming is unavailable",
+                    )
+                )
+
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in iterator(chunk_size=chunk_size):
+                if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                    raise OneBotTransportError(
+                        OneBotTransportDescriptor(
+                            layer="media",
+                            code="invalid_media_body",
+                            retryable=False,
+                            message="OneBot media response body was invalid",
+                        )
+                    )
+                chunk_bytes = bytes(chunk)
+                total += len(chunk_bytes)
+                if total > MAX_MEDIA_DOWNLOAD_BYTES:
+                    raise OneBotTransportError(
+                        OneBotTransportDescriptor(
+                            layer="media",
+                            code="media_too_large",
+                            retryable=False,
+                            message="OneBot media response exceeded the size limit",
+                        )
+                    )
+                chunks.append(chunk_bytes)
+
+            final_descriptor = validate_media_response(
+                getattr(response, "status_code", 200),
+                content_length=content_length,
+                body_length=total,
+            )
+            if final_descriptor.code != "media_ok":
+                raise OneBotTransportError(final_descriptor)
+            return b"".join(chunks), headers
 
     def _transcribe_voice(self, voice_path: str) -> str:
         """Transcribe a voice file using FunASR SenseVoiceSmall. Cached per path."""
@@ -1500,6 +2184,12 @@ class OneBotAdapter(BasePlatformAdapter):
             if file_url:
                 import httpx
                 try:
+                    url_descriptor = await self._validate_media_download_url(
+                        file_url,
+                        allow_file=True,
+                    )
+                    if url_descriptor.code != "media_url_ok":
+                        raise OneBotTransportError(url_descriptor)
                     # Handle file:/// and file:// URLs
                     if file_url.startswith("file://"):
                         local_path = unquote(file_url[7:] if file_url.startswith("file:///") else file_url[5:])
@@ -1509,6 +2199,12 @@ class OneBotAdapter(BasePlatformAdapter):
                         if os.path.exists(local_path):
                             with open(local_path, "rb") as f:
                                 img_data = f.read()
+                            descriptor = validate_media_response(
+                                200,
+                                body_length=len(img_data),
+                            )
+                            if descriptor.code != "media_ok":
+                                raise OneBotTransportError(descriptor)
                             cached_path = cache_image_from_bytes(img_data, ext=ext)
                             paths.append(cached_path)
                             logger.info("[OneBot] Loaded image from local file: %s", cached_path)
@@ -1517,12 +2213,14 @@ class OneBotAdapter(BasePlatformAdapter):
                             logger.warning("[OneBot] Local file not found: %s", local_path)
                     else:
                         # HTTP/HTTPS URL
-                        async with httpx.AsyncClient(timeout=30.0) as client:
-                            resp = await client.get(file_url)
-                            resp.raise_for_status()
-                            cached_path = cache_image_from_bytes(resp.content, ext=ext)
+                        async with httpx.AsyncClient(
+                            timeout=30.0,
+                            follow_redirects=False,
+                        ) as client:
+                            img_data, _ = await self._fetch_media_bytes(client, file_url)
+                            cached_path = cache_image_from_bytes(img_data, ext=ext)
                             paths.append(cached_path)
-                            logger.info("[OneBot] Downloaded image from URL: %s (%d bytes)", cached_path, len(resp.content))
+                            logger.info("[OneBot] Downloaded image from URL: %s (%d bytes)", cached_path, len(img_data))
                             continue
                 except Exception as e:
                     logger.warning("[OneBot] Failed to download image from URL: %s", e)
@@ -1564,7 +2262,12 @@ class OneBotAdapter(BasePlatformAdapter):
                                     img_data = file_content.encode()
                         else:
                             img_data = bytes(file_content)
-                        
+                        descriptor = validate_media_response(
+                            200,
+                            body_length=len(img_data),
+                        )
+                        if descriptor.code != "media_ok":
+                            raise OneBotTransportError(descriptor)
                         cached_path = cache_image_from_bytes(img_data, ext=ext)
                         paths.append(cached_path)
                         logger.info("[OneBot] Downloaded image via get_file: %s", cached_path)
@@ -1572,10 +2275,18 @@ class OneBotAdapter(BasePlatformAdapter):
                     elif file_url_api:
                         # Fallback to URL from get_file response
                         import httpx
-                        async with httpx.AsyncClient(timeout=30.0) as client:
-                            resp = await client.get(file_url_api)
-                            resp.raise_for_status()
-                            cached_path = cache_image_from_bytes(resp.content, ext=ext)
+                        url_descriptor = await self._validate_media_download_url(
+                            file_url_api,
+                            allow_file=False,
+                        )
+                        if url_descriptor.code != "media_url_ok":
+                            raise OneBotTransportError(url_descriptor)
+                        async with httpx.AsyncClient(
+                            timeout=30.0,
+                            follow_redirects=False,
+                        ) as client:
+                            img_data, _ = await self._fetch_media_bytes(client, file_url_api)
+                            cached_path = cache_image_from_bytes(img_data, ext=ext)
                             paths.append(cached_path)
                             logger.info("[OneBot] Downloaded image via get_file URL: %s", cached_path)
                             continue
@@ -2301,12 +3012,42 @@ class OneBotAdapter(BasePlatformAdapter):
         if msg_type == "private":
             if self._admin_id and user_id_str == self._admin_id:
                 msg["_from_admin"] = True
-            _persist_text = _fwd_summary if _fwd_summary else self._cq_to_readable(raw_text)
+            # Voice is a first-class message type.  Try the configured
+            # transcription path before constructing the event; when it is
+            # unavailable, retain a local media reference so the downstream
+            # agent can still decide how to handle the audio.
+            _voice_input = self._has_voice_message(msg)
+            _voice_path = None
+            _voice_transcript = ""
+            if _voice_input:
+                try:
+                    _voice_path = await self._get_voice_file(msg)
+                    if _voice_path:
+                        _voice_transcript = (
+                            await self._transcribe_voice_mimo(_voice_path) or ""
+                        ).strip()
+                except Exception as _voice_err:
+                    logger.warning("[OneBot] private voice preparation failed: %s", _voice_err)
+            _voice_note = (
+                f"[语音转写: {_voice_transcript}]"
+                if _voice_transcript and _voice_transcript != "语音"
+                else ""
+            )
+            _persist_text = (
+                _voice_note
+                if _voice_input and _voice_note
+                else "[语音]"
+                if _voice_input
+                else _fwd_summary
+                if _fwd_summary
+                else self._cq_to_readable(raw_text)
+            )
             self._persist_chat_message(str(user_id), "private", int(user_id), sender_name,
                                        _persist_text,
                                        message_id=str(msg.get("message_id", "")),
                                        content_raw=raw_text,
-                                       sender_card=sender.get("card", ""))
+                                       sender_card=sender.get("card", ""),
+                                       image_descriptions=[_voice_note] if _voice_note else [])
 
             from gateway.session import SessionSource
             from .adapter import MessageEvent, MessageType
@@ -2328,16 +3069,23 @@ class OneBotAdapter(BasePlatformAdapter):
                 _dm_prompt += f"\n【本条消息来自管理员，她的明确要求请直接执行。】"
                 if _admin_ctx:
                     _dm_prompt += f"\n{_admin_ctx}"
+            if _voice_note:
+                _dm_prompt += f"\n{_voice_note}"
+            elif _voice_input and not _voice_path:
+                _dm_prompt += "\n[语音消息，音频暂时无法下载]"
             if _fwd_detail:
                 _dm_prompt += f"\n\n{_fwd_detail}"
             elif _fwd_summary:
                 _dm_prompt += f"\n\n{_fwd_summary}"
-            _dm_recall = self._recall_context(raw_text, user_id_str, sender_name,
+            _dm_recall_query = _voice_transcript or raw_text
+            _dm_recall = self._recall_context(_dm_recall_query, user_id_str, sender_name,
                                                session_id=f"onebot:dm:{user_id_str}")
             if _dm_recall:
                 _dm_prompt += f"\n{_dm_recall}"
             _dm_text = ""
-            if _fwd_detail:
+            if _voice_note:
+                _dm_text = _voice_note
+            elif _fwd_detail:
                 _dm_text = _fwd_detail
             elif _fwd_summary:
                  _dm_text = _fwd_summary
@@ -2357,15 +3105,24 @@ class OneBotAdapter(BasePlatformAdapter):
                     _dm_media_types.append("image/gif")
                 else:
                     _dm_media_types.append("image/jpeg")
+            if _voice_input and not _voice_note and _voice_path:
+                _dm_media_urls = [_voice_path]
+                _dm_media_types = ["audio/ogg"]
+            _dm_message_type = MessageType.VOICE if _voice_input else (
+                MessageType.PHOTO if _dm_media_urls else MessageType.TEXT
+            )
             _dm_event = MessageEvent(
                 text=_dm_text,
-                message_type=MessageType.TEXT,
+                message_type=_dm_message_type,
                 source=_dm_source,
                 raw_message=msg,
                 message_id=str(msg.get("message_id", "")),
-                media_urls=_dm_media_urls or None,
-                media_types=_dm_media_types or None,
+                # Keep empty lists rather than None so downstream media
+                # pipelines can iterate the normalized contract uniformly.
+                media_urls=_dm_media_urls,
+                media_types=_dm_media_types,
                 channel_prompt=_dm_prompt,
+                timestamp=_onebot_event_timestamp(msg) or datetime.now(),
             )
             await self._dispatch_to_agent(_dm_event)
             return
@@ -2734,13 +3491,137 @@ class OneBotAdapter(BasePlatformAdapter):
     # Sending messages
     # ------------------------------------------------------------------
 
-    def _resolve_group_send(self, gid: str, text: str) -> None:
-        """Resolve the GroupExecutor's send-result future for a group."""
+    def _register_group_turn(self, gid: str, nonce: str, future: "asyncio.Future") -> None:
+        """Register a nonce-scoped completion future for one group turn."""
         if not gid:
             return
-        fut = self._group_send_results.get(gid)
+        current = self._group_send_results.get(gid)
+        if not isinstance(current, dict):
+            current = {}
+            self._group_send_results[gid] = current
+        current[nonce] = future
+        self._group_turn_context[gid] = nonce
+
+    def _unregister_group_turn(self, gid: str, nonce: str) -> None:
+        """Remove one nonce without disturbing another active waiter."""
+        current = self._group_send_results.get(gid)
+        if isinstance(current, dict):
+            current.pop(nonce, None)
+            if not current:
+                self._group_send_results.pop(gid, None)
+                if self._group_turn_context.get(gid) == nonce:
+                    self._group_turn_context.pop(gid, None)
+        elif current is not None and self._group_turn_context.get(gid) == nonce:
+            self._group_send_results.pop(gid, None)
+            self._group_turn_context.pop(gid, None)
+
+    def _resolve_group_send(
+        self,
+        gid: str,
+        text: str = "",
+        *,
+        nonce: Optional[str] = None,
+        completion: Optional[GroupTurnCompletion] = None,
+    ) -> None:
+        """Resolve exactly one GroupExecutor waiter, if one is registered.
+
+        A nonce is required for the new contract.  The old direct-Future form
+        remains supported for compatibility, but a dict-backed waiter is
+        intentionally ignored when a sender has no nonce (for example a
+        status/progress message).
+        """
+        if not gid:
+            return
+        current = self._group_send_results.get(gid)
+        fut = None
+        if isinstance(current, dict):
+            if nonce:
+                fut = current.get(nonce)
+        else:
+            # Legacy callers install a Future directly.  There is no safe
+            # nonce to compare in that shape, so preserve the old behavior.
+            fut = current
         if fut is not None and not fut.done():
-            fut.set_result(text)
+            fut.set_result(completion if completion is not None else text)
+
+    @staticmethod
+    def _normalize_control_markers(content: Any) -> tuple[str, tuple[str, ...]]:
+        """Return ``(visible_body, markers)`` without leaking directives."""
+        if not isinstance(content, str):
+            return "", ()
+        markers = tuple(dict.fromkeys(
+            match.upper() for match in _CONTROL_MARKER_RE.findall(content)
+        ))
+        if not markers:
+            return content, ()
+        return _CONTROL_MARKER_RE.sub(" ", content).strip(), markers
+
+    def _apply_control_marker_state(
+        self,
+        gid: str,
+        markers: tuple[str, ...],
+        body: str,
+        result: SendResult,
+        *,
+        defer_pure: bool = False,
+    ) -> None:
+        """Apply marker state only after a visible body was delivered.
+
+        Pure markers from a GroupExecutor turn are deliberately deferred: the
+        executor owns the one-shot feedback retry and must not be put into
+        quiet state before that retry gets a chance to run.
+        """
+        if not gid or not markers or not getattr(result, "success", False):
+            return
+        if body and self._is_internal_leak(body):
+            # Internal/system payloads are successful no-ops from the
+            # transport perspective; they are not a delivered bot turn and
+            # must not commit a QUIET marker attached to them.
+            return
+        if not body and defer_pure:
+            return
+        try:
+            state = self._group_states.get(gid)
+            if body and not self._is_internal_leak(body):
+                if "QUIET" in markers:
+                    self._last_bot_reply.pop(gid, None)
+                    state.go_quiet()
+                return
+            if "QUIET" in markers:
+                self._last_bot_reply.pop(gid, None)
+                state.go_quiet()
+            elif "SILENT" in markers:
+                state.record_silent()
+        except Exception:
+            logger.debug("[OneBot] marker state update failed", exc_info=True)
+
+    def _completion_for_delivery(
+        self,
+        *,
+        gid: str,
+        body: str,
+        markers: tuple[str, ...],
+        result: SendResult,
+        completed: bool = True,
+        interrupted: bool = False,
+    ) -> GroupTurnCompletion:
+        """Build a bounded result used by GroupExecutor and recorder paths."""
+        delivered = bool(
+            getattr(result, "success", False)
+            and body
+            and not self._is_internal_leak(body)
+        )
+        return GroupTurnCompletion(
+            completed=completed,
+            interrupted=interrupted,
+            delivery_text=body if delivered else "",
+            normalized_text=body,
+            delivery_attempted=bool(body),
+            delivery_succeeded=delivered,
+            failed=bool(body) and not delivered,
+            state_recorded=bool(getattr(result, "_onebot_state_recorded", False)),
+            marker_names=markers,
+        )
 
     async def send(
         self,
@@ -2749,13 +3630,104 @@ class OneBotAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        result = await self._send_message_impl(chat_id, content, reply_to, metadata)
-        if chat_id.startswith("group:"):
+        body, markers = self._normalize_control_markers(content)
+        gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
+        turn_nonce = self._group_turn_context.get(gid) if gid else None
+
+        # A pure marker is a successful adapter no-op.  Do not call the
+        # network, and defer state for a registered executor turn until its
+        # output contract has decided whether to retry.
+        if markers and not body:
+            result = SendResult(success=True, message_id=None)
+            self._apply_control_marker_state(
+                gid, markers, body, result, defer_pure=bool(turn_nonce)
+            )
+            if gid and not turn_nonce:
+                self._resolve_group_send(gid, "")
+            return result
+
+        result = await self._send_message_impl(chat_id, body, reply_to, metadata)
+        self._apply_control_marker_state(
+            gid, markers, body, result, defer_pure=bool(turn_nonce)
+        )
+        if gid and not turn_nonce:
+            completion = self._completion_for_delivery(
+                gid=gid, body=body, markers=markers, result=result,
+            )
             self._resolve_group_send(
-                chat_id.split(":", 1)[1],
-                content if result.success else "",
+                gid,
+                completion.delivery_text,
+                completion=completion,
             )
         return result
+
+    async def _send_final_with_delivery_ledger(
+        self,
+        *,
+        event: MessageEvent,
+        session_key: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[dict],
+    ) -> SendResult:
+        """Normalize final output and publish its nonce-scoped completion."""
+        body, markers = self._normalize_control_markers(content)
+        gid = event.source.chat_id.split(":", 1)[1] if event.source.chat_id.startswith("group:") else ""
+        nonce = getattr(event, "_onebot_group_turn_nonce", None)
+        if markers and not body:
+            result = SendResult(success=True, message_id=None)
+        else:
+            # Passing the normalized body through the shared ledger avoids
+            # recording control directives as a user-visible obligation.
+            result = await super()._send_final_with_delivery_ledger(
+                event=event,
+                session_key=session_key,
+                content=body if markers else content,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+        self._apply_control_marker_state(
+            gid, markers, body, result, defer_pure=bool(nonce)
+        )
+        if nonce:
+            completion = self._completion_for_delivery(
+                gid=gid, body=body, markers=markers, result=result,
+            )
+            self._resolve_group_send(
+                gid,
+                completion.delivery_text,
+                nonce=nonce,
+                completion=completion,
+            )
+        return result
+
+    async def on_processing_complete(self, event: MessageEvent, outcome) -> None:
+        """Resolve empty/error turns that never enter the final send path."""
+        await super().on_processing_complete(event, outcome)
+        nonce = getattr(event, "_onebot_group_turn_nonce", None)
+        if not nonce:
+            return
+        gid = event.source.chat_id.split(":", 1)[1] if event.source.chat_id.startswith("group:") else ""
+        if not gid:
+            return
+        from gateway.platforms.base import ProcessingOutcome
+        session_key = build_session_key(
+            event.source,
+            group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
+            thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False),
+        )
+        completion = GroupTurnCompletion(
+            completed=True,
+            interrupted=(
+                outcome == ProcessingOutcome.CANCELLED
+                or session_key in self._pending_messages
+            ),
+            failed=bool(
+                getattr(event, "_onebot_agent_failed", False)
+                or outcome == ProcessingOutcome.FAILURE
+            ),
+        )
+        self._resolve_group_send(gid, "", nonce=nonce, completion=completion)
 
     @staticmethod
     def _is_internal_leak(text: str) -> bool:
@@ -2799,29 +3771,40 @@ class OneBotAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
+        """Normalize control markers for both public and legacy direct callers."""
+        body, markers = self._normalize_control_markers(content)
+        gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
+        context_nonce = self._group_turn_context.get(gid) if gid else None
+        if markers and not body:
+            result = SendResult(success=True, message_id=None)
+        else:
+            result = await self._send_message_impl_core(
+                chat_id, body, reply_to, metadata,
+            )
+        self._apply_control_marker_state(
+            gid, markers, body, result, defer_pure=bool(context_nonce)
+        )
+        if markers and not body and gid and not context_nonce:
+            self._resolve_group_send(gid, "")
+        return result
+
+    async def _send_message_impl_core(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
         """Send a text message to a QQ chat."""
+        # ``send()`` normally normalizes markers before reaching this method.
+        # Keep the lower-level entry point defensive for existing callers and
+        # tests that invoke it directly.
+        content, _direct_markers = self._normalize_control_markers(content)
         if chat_id.startswith("group:") and content:
             logger.debug("[OneBot] send: chat_id=%s len=%d starts=%s", chat_id, len(content), content[:80])
-        if content and "[QUIET]" in content:
-            _gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
-            logger.info("[OneBot] LLM chose [QUIET], going silent, group=%s", _gid)
-            if _gid:
-                self._last_bot_reply.pop(_gid, None)
-                try:
-                    self._group_states.get(_gid).go_quiet()
-                except Exception:
-                    pass
-            self._resolve_group_send(_gid, "")
-            return SendResult(success=True, message_id=None)
-        if content and "[SILENT]" in content:
-            logger.info("[OneBot] LLM chose [SILENT], suppressing message")
-            if chat_id.startswith("group:"):
-                _sgid = chat_id.split(":", 1)[1]
-                try:
-                    self._group_states.get(_sgid).record_silent()
-                except Exception:
-                    pass
-                self._resolve_group_send(_sgid, "")
+        if _direct_markers and not content:
+            # Lower-level callers have no turn context to retry; retain the
+            # no-network marker behavior without changing ordinary empty sends.
             return SendResult(success=True, message_id=None)
 
         # ── QQ 最终防线：拦截内部/Hermes 系统消息，防止泄露到群聊 ──
@@ -2830,7 +3813,6 @@ class OneBotAdapter(BasePlatformAdapter):
         if content and self._is_internal_leak(content):
             _gid = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else ""
             logger.warning("[OneBot] Blocked internal/system content from reaching QQ (len=%d): %s", len(content), content[:60])
-            self._resolve_group_send(_gid, "")
             return SendResult(success=True, message_id=None)
 
         if content and chat_id.startswith("group:"):
@@ -2949,15 +3931,29 @@ class OneBotAdapter(BasePlatformAdapter):
                         await asyncio.sleep(0.6)
                 result = last_result or SendResult(success=True, message_id=None)
                 if result.success:
-                    self.add_bot_reply_to_buffer(chat_id, content,
-                                                 message_id=str(result.message_id) if result.message_id else "",
-                                                 reply_to_id=reply_to or "")
+                    state_recorded = self.add_bot_reply_to_buffer(
+                        chat_id,
+                        content,
+                        message_id=str(result.message_id) if result.message_id else "",
+                        reply_to_id=reply_to or "",
+                    )
+                    try:
+                        result._onebot_state_recorded = bool(state_recorded)
+                    except Exception:
+                        pass
                 return result
         result = await self._send_text_with_retry(chat_id, content, max_retries=3, reply_to=reply_to)
         if result.success:
-            self.add_bot_reply_to_buffer(chat_id, content,
-                                         message_id=str(result.message_id) if result.message_id else "",
-                                         reply_to_id=reply_to or "")
+            state_recorded = self.add_bot_reply_to_buffer(
+                chat_id,
+                content,
+                message_id=str(result.message_id) if result.message_id else "",
+                reply_to_id=reply_to or "",
+            )
+            try:
+                result._onebot_state_recorded = bool(state_recorded)
+            except Exception:
+                pass
         return result
 
     async def _send_text_with_retry(self, chat_id, content, max_retries=3, reply_to=None, **kwargs):
@@ -3012,25 +4008,70 @@ class OneBotAdapter(BasePlatformAdapter):
             params["message"] = _segments
 
         last_error = None
-        for attempt in range(max_retries):
+        try:
+            attempts = max(1, int(max_retries))
+        except (TypeError, ValueError):
+            attempts = 3
+        for attempt in range(attempts):
             try:
                 if attempt > 0:
                     delay = 2 * attempt
-                    logger.info("[OneBot] Send retry %d/%d after %ds", attempt + 1, max_retries, delay)
+                    logger.info("[OneBot] Send retry %d/%d after %ds", attempt + 1, attempts, delay)
                     await asyncio.sleep(delay)
                 result = await self._send_action(action, params)
-                if result and result.get("data"):
-                    msg_id = result["data"].get("message_id")
+                receipt = parse_onebot_receipt(
+                    result,
+                    require_message_id=True,
+                    operation="send",
+                )
+                if receipt.ok:
+                    msg_id = receipt.message_id
                     logger.info("[OneBot] Send OK: attempt=%d", attempt + 1)
                     return SendResult(success=True, message_id=str(msg_id) if msg_id else None, raw_response=result)
-                err_msg = result.get("message", "Unknown error") if result else "No response"
-                logger.warning("[OneBot] Send attempt %d failed: %s", attempt + 1, err_msg)
+                err_msg = receipt.descriptor.message or receipt.descriptor.code
+                logger.warning(
+                    "[OneBot] Send attempt %d failed: %s",
+                    attempt + 1,
+                    receipt.descriptor.code,
+                )
                 last_error = err_msg
-            except Exception as e:
-                logger.warning("[OneBot] Send attempt %d exception: %s", attempt + 1, e)
-                last_error = str(e)
+                if not receipt.descriptor.retryable:
+                    return SendResult(
+                        success=False,
+                        error=last_error,
+                        raw_response=result,
+                        retryable=False,
+                    )
+            except OneBotTransportError as error:
+                descriptor = error.descriptor
+                logger.warning(
+                    "[OneBot] Send attempt %d failed: %s",
+                    attempt + 1,
+                    descriptor.code,
+                )
+                last_error = descriptor.message or descriptor.code
+                if not descriptor.retryable:
+                    return SendResult(
+                        success=False,
+                        error=last_error,
+                        retryable=False,
+                    )
+            except Exception as error:
+                descriptor = classify_transport_exception(error, operation="send")
+                logger.warning(
+                    "[OneBot] Send attempt %d failed: %s",
+                    attempt + 1,
+                    descriptor.code,
+                )
+                last_error = descriptor.message or descriptor.code
+                if not descriptor.retryable:
+                    return SendResult(
+                        success=False,
+                        error=last_error,
+                        retryable=False,
+                    )
 
-        logger.error("[OneBot] All %d send attempts failed: %s", max_retries, last_error)
+        logger.error("[OneBot] All %d send attempts failed: %s", attempts, last_error)
         return SendResult(success=False, error=last_error or "All retries failed", retryable=True)
 
     async def send_image(
@@ -3068,15 +4109,38 @@ class OneBotAdapter(BasePlatformAdapter):
                     return SendResult(success=False, error="Invalid private chat_id", retryable=False)
                 result = await self._send_action("send_private_msg", {"user_id": uid, "message": message})
 
-            msg_id = (result.get("data") or {}).get("message_id")
+            receipt = parse_onebot_receipt(
+                result,
+                require_message_id=True,
+                operation="send",
+            )
+            if not receipt.ok:
+                return SendResult(
+                    success=False,
+                    error=receipt.descriptor.message or receipt.descriptor.code,
+                    raw_response=result,
+                    retryable=receipt.descriptor.retryable,
+                )
+            msg_id = receipt.message_id
             return SendResult(
                 success=True,
                 message_id=str(msg_id) if msg_id else None,
                 raw_response=result,
             )
+        except OneBotTransportError as error:
+            return SendResult(
+                success=False,
+                error=error.descriptor.message or error.descriptor.code,
+                retryable=error.descriptor.retryable,
+            )
         except Exception as e:
-            logger.error("[OneBot] Failed to send image: %s", e)
-            return SendResult(success=False, error=str(e), retryable=True)
+            descriptor = classify_transport_exception(e, operation="send")
+            logger.error("[OneBot] Failed to send image: %s", descriptor.message)
+            return SendResult(
+                success=False,
+                error=descriptor.message or descriptor.code,
+                retryable=descriptor.retryable,
+            )
 
     async def send_voice(
         self,
@@ -3089,7 +4153,7 @@ class OneBotAdapter(BasePlatformAdapter):
         """Send an audio file as a voice message via OneBot."""
         if not self._ws or not self._http_client:
             logger.warning("[OneBot] Cannot send media: not connected")
-            return None
+            return SendResult(success=False, error="Not connected", retryable=True)
 
         try:
             # OneBot v11 supports record/file segments for voice messages
@@ -3118,15 +4182,38 @@ class OneBotAdapter(BasePlatformAdapter):
                     return SendResult(success=False, error="Invalid private chat_id", retryable=False)
                 result = await self._send_action("send_private_msg", {"user_id": uid, "message": message})
 
-            msg_id = (result.get("data") or {}).get("message_id")
+            receipt = parse_onebot_receipt(
+                result,
+                require_message_id=True,
+                operation="send",
+            )
+            if not receipt.ok:
+                return SendResult(
+                    success=False,
+                    error=receipt.descriptor.message or receipt.descriptor.code,
+                    raw_response=result,
+                    retryable=receipt.descriptor.retryable,
+                )
+            msg_id = receipt.message_id
             return SendResult(
                 success=True,
                 message_id=str(msg_id) if msg_id else None,
                 raw_response=result,
             )
+        except OneBotTransportError as error:
+            return SendResult(
+                success=False,
+                error=error.descriptor.message or error.descriptor.code,
+                retryable=error.descriptor.retryable,
+            )
         except Exception as e:
-            logger.error("[OneBot] Failed to send voice: %s", e)
-            return SendResult(success=False, error=str(e), retryable=True)
+            descriptor = classify_transport_exception(e, operation="send")
+            logger.error("[OneBot] Failed to send voice: %s", descriptor.message)
+            return SendResult(
+                success=False,
+                error=descriptor.message or descriptor.code,
+                retryable=descriptor.retryable,
+            )
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """OneBot doesn't support typing indicators natively, so this is a no-op."""
@@ -3288,7 +4375,15 @@ def _env_enablement():
     extra = {"ws_url": ws}
     if token:
         extra["access_token"] = token
-    return {"extra": extra}
+    seed = {"extra": extra}
+    home = os.getenv("ONEBOT_HOME_CHANNEL", "").strip()
+    if home:
+        seed["home_channel"] = {
+            "chat_id": home,
+            "name": os.getenv("ONEBOT_HOME_CHANNEL_NAME", "OneBot Home"),
+            "thread_id": os.getenv("ONEBOT_HOME_CHANNEL_THREAD_ID") or None,
+        }
+    return seed
 
 def register(ctx):
     ctx.register_platform(
@@ -3306,4 +4401,3 @@ def register(ctx):
         emoji="🐧",
         pii_safe=False,
     )
-

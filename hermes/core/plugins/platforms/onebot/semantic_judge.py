@@ -314,14 +314,16 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 
 - continuity: 上一轮的话题连续性（same_episode / related_shift / sharp_transition）
 - episode_phase: 上一轮对话阶段（starting / mid / winding_down / exiting）
+- exiting_streak: 上一轮连续判定为 exiting 的次数（只有达到2才允许 should_exit=true）
 - soyo_moves: $bot_name 上一轮做了什么
 - progression_guidance: 上一轮给的明确指令——这一轮必须遵守
 - overused_moves: 下一轮必须避免的动作——不要重复这些
 
 **关键规则**:
 - 如果 progression_guidance 说"不要再主动说话" → 除非被直接@$bot_name，否则 should_reply=false
-- 如果 episode_phase 是 "exiting" → should_reply 门槛大幅提高
+- 如果 episode_phase 是 "exiting" → should_reply 门槛大幅提高；除非 exiting_streak 已达到2，不能 should_exit
 - 如果 soyo_moves 包含离开/道别 → 对方没有明确挽留时 should_reply=false
+- 软收尾（“你们聊”“你们继续”）不是离场声明；不得仅凭 bot 的客套话升级为 exiting
 
 ## 指向证据层级
 
@@ -390,7 +392,7 @@ $bot_name 默认保持沉默。只有在被明确叫到、或对话直接涉及 
 - 对方明确驱赶，且驱赶**直接指向 $bot_name**（@$bot_name、QQ 回复 $bot_name 的消息、或语境明确在对 $bot_name 说话）——"去玩吧""一边去""别说了""闭嘴""退下""stop"
 - $bot_name 上一轮表达了离开意图，对方回应了确认（"嗯""好""去吧""拜拜"）
 - 对话在跟另一个 bot 进行，且形成了 bot 之间的循环，$bot_name 插在中间不合适
-- 上一轮 episode_phase 已经是 "exiting"，且仍然没有新的指向 $bot_name 的消息
+- 上一轮 episode_phase 已经是 "exiting"，且仍然没有新的指向 $bot_name 的消息；并且 exiting_streak 已连续达到2轮
 
 **重要边界：对别人说的驱赶词不算。** 例如某群友对第三人说"玩去吧""去玩吧"（哪怕 $bot_name 在旁边），这不是驱赶 $bot_name——只判 should_reply=false，不判 should_exit。
 
@@ -451,7 +453,7 @@ should_exit=true 时配套判断。**默认 false：安静退出，不发任何�
 ## 输出格式
 
 只输出 JSON，不要多余文字：
-{"should_reply": true/false, "should_end": true/false, "should_exit": true/false, "exit_farewell": true/false, "continuity": "...", "conversation_mode": "...", "episode_phase": "...", "speaker_role": "...", "current_thread": "...", "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "progression_guidance": "...", "reason": "一句话说明"}"""
+{"should_reply": true/false, "should_end": true/false, "should_exit": true/false, "exit_farewell": true/false, "continuity": "...", "conversation_mode": "...", "episode_phase": "...", "exiting_streak": 0/1/2, "speaker_role": "...", "current_thread": "...", "topic_active": true/false, "is_loop": true/false, "use_reply_feature": true/false, "indirect_speech_context": "", "progression_guidance": "...", "reason": "一句话说明"}"""
 
 
 def _build_pre_reply_judge_prompt(
@@ -483,6 +485,7 @@ def _build_pre_reply_judge_prompt(
         parts.append(f"- 话题标签: {episode_state.get('episode_label', '')}")
         parts.append(f"- 连续性: {episode_state.get('continuity', '')}")
         parts.append(f"- 阶段: {episode_state.get('episode_phase', '')}")
+        parts.append(f"- exiting 连续轮数: {episode_state.get('exiting_streak', 0)}")
         parts.append(f"- 交互模式: {episode_state.get('conversation_mode', '')}")
         parts.append(f"- 当前话题: {episode_state.get('current_thread', '')}")
         moves = episode_state.get("soyo_moves", [])
@@ -561,6 +564,7 @@ _JUDGE_V2_KEYS = {
     "speaker_role", "current_thread",
     "topic_active", "is_loop", "use_reply_feature",
     "indirect_speech_context", "progression_guidance", "reason",
+    "exiting_streak",
 }
 
 _JUDGE_V2_STR_KEYS = {
@@ -574,6 +578,13 @@ _JUDGE_V2_BOOL_KEYS = {
     "topic_active", "is_loop", "use_reply_feature",
 }
 
+_EXITING_STREAK_MAX = 2
+_EXITING_PHASES = {"starting", "mid", "winding_down", "exiting", ""}
+_EXPLICIT_EXIT_RE = re.compile(
+    r"(?:拜拜|再见|先走(?:了|啦)?|不打扰了|我(?:先)?去忙了|我先下了|下线了|告辞|退出|离开了|\b(?:bye|goodbye|gotta\s+go|i(?:'m| am)\s+leaving)\b)",
+    re.IGNORECASE,
+)
+
 _JUDGE_V2_FALLBACK: Dict[str, Any] = {
     "should_reply": False, "should_end": False, "should_exit": False,
     "exit_farewell": False,
@@ -581,8 +592,34 @@ _JUDGE_V2_FALLBACK: Dict[str, Any] = {
     "episode_phase": "mid", "speaker_role": "unknown", "current_thread": "",
     "topic_active": True, "is_loop": False, "use_reply_feature": False,
     "indirect_speech_context": "", "progression_guidance": "",
-    "reason": "fail-closed fallback",
+    "reason": "fail-closed fallback", "exiting_streak": 0,
 }
+
+
+def _judge_v2_fallback(
+    is_mentioned: bool,
+    attentive_state: str,
+    episode_state: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build a fail-closed fallback without erasing a live exit counter."""
+    fallback = dict(_JUDGE_V2_FALLBACK)
+    fallback["should_reply"] = _fail_closed_should_reply(
+        is_mentioned, attentive_state, episode_state
+    )
+    if isinstance(episode_state, dict) and episode_state.get("episode_phase") == "exiting":
+        fallback["episode_phase"] = "exiting"
+        try:
+            prior = max(
+                0,
+                min(_EXITING_STREAK_MAX, int(episode_state.get("exiting_streak", 0) or 0)),
+            )
+        except (TypeError, ValueError):
+            prior = 0
+        fallback["exiting_streak"] = min(_EXITING_STREAK_MAX, prior + 1)
+        # Provider/judge failure must never hard-exit a live group.  A future
+        # successful judge can still complete the two-round gate.
+        fallback["should_exit"] = False
+    return fallback
 
 
 def _parse_judge_json(text: str) -> Optional[Dict[str, Any]]:
@@ -615,7 +652,39 @@ def _parse_judge_json(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _validate_judge_v2(raw: Dict[str, Any], is_mentioned: bool = False) -> Dict[str, Any]:
+def _apply_exiting_streak(
+    result: Dict[str, Any],
+    prior_episode_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Enforce the two-round exit gate in code, independent of the prompt."""
+    prior = prior_episode_state if isinstance(prior_episode_state, dict) else {}
+    try:
+        prior_streak = max(0, min(_EXITING_STREAK_MAX, int(prior.get("exiting_streak", 0) or 0)))
+    except (TypeError, ValueError):
+        prior_streak = 0
+    phase = result.get("episode_phase", "")
+    if phase not in _EXITING_PHASES:
+        phase = "mid"
+        result["episode_phase"] = phase
+    if phase == "exiting":
+        streak = min(_EXITING_STREAK_MAX, prior_streak + 1)
+        result["exiting_streak"] = streak
+        if streak < _EXITING_STREAK_MAX:
+            result["should_exit"] = False
+    else:
+        result["exiting_streak"] = 0
+        # A malformed response must not hard-exit while reporting a non-exit
+        # phase.  Normal no-reply behavior remains unchanged.
+        if result.get("should_exit"):
+            result["should_exit"] = False
+    return result
+
+
+def _validate_judge_v2(
+    raw: Dict[str, Any],
+    is_mentioned: bool = False,
+    episode_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     for key in _JUDGE_V2_KEYS:
         if key not in raw:
             if key == "should_reply":
@@ -628,7 +697,7 @@ def _validate_judge_v2(raw: Dict[str, Any], is_mentioned: bool = False) -> Dict[
     for key in _JUDGE_V2_STR_KEYS:
         if key in raw and not isinstance(raw[key], str):
             raw[key] = str(raw[key])
-    return raw
+    return _apply_exiting_streak(raw, episode_state)
 
 
 async def pre_reply_judge(
@@ -681,9 +750,7 @@ async def _pre_reply_judge_unlocked(
         api_key, api_base, api_model = _get_api_key(), _get_api_base(), _get_api_model()
         if not api_key or not api_base or not api_model:
             logger.warning("[PreReplyJudge] No API config, fail-closed (mentioned=%s)", is_mentioned)
-            fb = dict(_JUDGE_V2_FALLBACK)
-            fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
-            return fb
+            return _judge_v2_fallback(is_mentioned, attentive_state, episode_state)
 
         group_attention = _calculate_group_attention(recent_messages, bot_self_id)
         bot_continuity = _has_bot_turn_continuity(recent_messages, bot_self_id)
@@ -739,7 +806,11 @@ async def _pre_reply_judge_unlocked(
         raw = _parse_judge_json(msg_content)
         if raw is None:
             raise ValueError(f"Bad judge JSON: {msg_content[:80]}")
-        result = _validate_judge_v2(raw, is_mentioned)
+        result = _validate_judge_v2(
+            raw,
+            is_mentioned,
+            episode_state=episode_state,
+        )
         logger.info(
             "[PreReplyJudge] reply=%s end=%s exit=%s phase=%s continuity=%s mode=%s reason=%s (group=%s)",
             result["should_reply"], result["should_end"],
@@ -751,14 +822,10 @@ async def _pre_reply_judge_unlocked(
 
     except asyncio.TimeoutError:
         logger.warning("[PreReplyJudge] Timeout, fail-closed (mentioned=%s)", is_mentioned)
-        fb = dict(_JUDGE_V2_FALLBACK)
-        fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
-        return fb
+        return _judge_v2_fallback(is_mentioned, attentive_state, episode_state)
     except Exception as e:
         logger.warning("[PreReplyJudge] Error: %s, fail-closed (mentioned=%s)", e, is_mentioned)
-        fb = dict(_JUDGE_V2_FALLBACK)
-        fb["should_reply"] = _fail_closed_should_reply(is_mentioned, attentive_state, episode_state)
-        return fb
+        return _judge_v2_fallback(is_mentioned, attentive_state, episode_state)
 
 
 def _fail_closed_should_reply(
@@ -1223,7 +1290,8 @@ _POST_REPLY_RECORDER_PROMPT = """你是 $bot_name 的对话状态记录器。根
 
 **episode_phase 转换规则**:
 - $bot_name 被赶走 / 明确说了要离开 / 连续被冷落 → "exiting"
-- $bot_name 说了"我去练贝斯了""你们聊""拜拜""先走了""不打扰了"等 → "exiting"
+- $bot_name 明确说了"拜拜""再见""先走了""不打扰了""我去忙了"等离场话 → "exiting"
+- "你们聊""哈哈你们继续"等客套软收尾最多记为 "winding_down"，不能单独升级为 "exiting"
 - 话题自然聊完了收束 → "winding_down"
 - 对话正常继续 → "mid"
 - 刚被@第一次回复 → "starting"
@@ -1258,7 +1326,55 @@ _POST_REPLY_RECORDER_PROMPT = """你是 $bot_name 的对话状态记录器。根
 
 # 输出格式
 只输出 JSON，不要多余文字：
-{"episode_status": "...", "continuity": "...", "episode_phase": "...", "conversation_mode": "...", "current_thread": "...", "soyo_moves": [...], "overused_moves": [...], "open_loops": [...], "resolved_threads": [...], "progression_guidance": "...", "episode_label": "..."}"""
+{"episode_status": "...", "continuity": "...", "episode_phase": "...", "exiting_streak": 0/1/2, "conversation_mode": "...", "current_thread": "...", "soyo_moves": [...], "overused_moves": [...], "open_loops": [...], "resolved_threads": [...], "progression_guidance": "...", "episode_label": "..."}"""
+
+
+def _sanitize_recorder_state(
+    raw: Any,
+    prior_episode_state: Optional[Dict[str, Any]] = None,
+    *,
+    bot_reply: str = "",
+    recent_messages: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Keep recorder output inside the executable episode-state contract."""
+    prior = dict(prior_episode_state) if isinstance(prior_episode_state, dict) else {}
+    if not isinstance(raw, dict):
+        return prior
+    result = {**prior, **raw}
+    phase = result.get("episode_phase", prior.get("episode_phase", "mid"))
+    if not isinstance(phase, str) or phase not in _EXITING_PHASES:
+        phase = prior.get("episode_phase", "mid")
+    explicit_exit = bool(_EXPLICIT_EXIT_RE.search(str(bot_reply or "")))
+    # A user-side expulsion is accepted only with a direct-address hint.  A
+    # generic "go away" aimed at another member must not promote the bot.
+    if not explicit_exit:
+        for message in recent_messages or []:
+            if not isinstance(message, dict) or message.get("is_bot"):
+                continue
+            text = str(message.get("text", "") or "")
+            if message.get("is_at") and re.search(
+                r"(?:别说了|闭嘴|退下|滚|去玩吧|一边去)", text
+            ):
+                explicit_exit = True
+                break
+    if phase == "exiting" and not explicit_exit:
+        phase = "winding_down"
+    result["episode_phase"] = phase
+    if phase == "exiting":
+        try:
+            prior_streak = max(
+                0,
+                min(_EXITING_STREAK_MAX, int(prior.get("exiting_streak", 0) or 0)),
+            )
+        except (TypeError, ValueError):
+            prior_streak = 0
+        result["exiting_streak"] = min(
+            _EXITING_STREAK_MAX,
+            max(1, prior_streak + 1),
+        )
+    else:
+        result["exiting_streak"] = 0
+    return result
 
 
 async def post_reply_recorder(
@@ -1329,7 +1445,12 @@ async def post_reply_recorder(
                 logger.warning("[PostReplyRecorder] Empty LLM response")
                 return prior_episode_state or {}
 
-            result = json.loads(content)
+            result = _sanitize_recorder_state(
+                json.loads(content),
+                prior_episode_state,
+                bot_reply=bot_reply,
+                recent_messages=capped,
+            )
             logger.info(
                 "[PostReplyRecorder] phase=%s continuity=%s guidance=%s",
                 result.get("episode_phase", "?"),

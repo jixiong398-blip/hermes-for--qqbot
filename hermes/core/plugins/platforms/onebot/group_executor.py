@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from .trigger_coordinator import TriggerRequest
@@ -18,6 +20,13 @@ class AgentOutcome:
     kind: str = "sent"       # "sent" | "silent" | "quiet" | "failed"
     reply_text: str = ""     # actual reply text (for recorder)
     sent_message_ids: Tuple[str, ...] = ()
+    completed: bool = False
+    timed_out: bool = False
+    interrupted: bool = False
+    delivery_attempted: bool = False
+    delivery_succeeded: bool = False
+    failed: bool = False
+    state_recorded: bool = False
 
 
 class GroupExecutor:
@@ -131,12 +140,49 @@ class GroupExecutor:
                 return
 
             outcome = await self._run_agent_locked(event)
+            # The judge has already admitted this turn, so a missing visible
+            # body is an execution-contract violation.  Retry once in the
+            # same session after the first BasePlatformAdapter task has
+            # released its guard.  ``channel_prompt`` is the existing
+            # ephemeral system-prompt channel; it is never a user transcript
+            # entry and avoids the nonexistent ``event.with_system_note`` API.
+            if (
+                outcome.kind == "silent"
+                and outcome.completed
+                and not outcome.timed_out
+                and not outcome.interrupted
+                and not outcome.delivery_attempted
+                and not outcome.failed
+                and not self._has_newer_group_request(gs, snapshot_seq)
+            ):
+                logger.info(
+                    "[GroupExecutor] empty output (contract violation), "
+                    "in-session retry, group=%s mode=%s",
+                    gid,
+                    request.mode,
+                )
+                retry_event = self._build_contract_retry_event(event)
+                retry_outcome = await self._run_agent_locked(retry_event)
+                if retry_outcome.reply_text.strip():
+                    outcome = retry_outcome
+                else:
+                    outcome = retry_outcome
+                    logger.warning(
+                        "[GroupExecutor] output contract violated twice, "
+                        "giving up, group=%s mode=%s",
+                        gid,
+                        request.mode,
+                    )
             gs.mark_consumed(snapshot_seq)
             self._apply_outcome(gid, event, outcome, gs)
 
             if request.mode == "exit":
-                # Last word delivered (or attempted) — leave the conversation.
-                gs.go_quiet()
+                # A failed/empty final word must not silently commit a quiet
+                # state.  Mixed ``body + [QUIET]`` is applied by the adapter
+                # only after successful delivery; ordinary exit replies quiet
+                # here after their visible body is confirmed.
+                if outcome.kind == "sent" and outcome.reply_text.strip():
+                    gs.go_quiet()
 
             if outcome.kind == "sent" and outcome.reply_text:
                 await self._record_episode_state(request, gs, outcome)
@@ -144,6 +190,11 @@ class GroupExecutor:
             await self._adapter._update_rolling_summary(gid)
 
     # ── build event ─────────────────────────────────────────
+
+    @staticmethod
+    def _has_newer_group_request(gs, snapshot_seq: int) -> bool:
+        """Return whether ingestion advanced beyond the admitted snapshot."""
+        return gs.last_user_seq > snapshot_seq
 
     async def _build_event(self, request, snapshot, state_meta):
         group_id = request.group_id
@@ -170,7 +221,7 @@ class GroupExecutor:
             self._adapter._get_raw_text(request.raw_msg) or ""
         )
 
-        from .adapter import MessageEvent, MessageType
+        from .adapter import MessageEvent, MessageType, _onebot_event_timestamp
         return MessageEvent(
             text=text,
             message_type=MessageType.TEXT,
@@ -178,6 +229,7 @@ class GroupExecutor:
             raw_message=request.raw_msg,
             message_id=str(request.raw_msg.get("message_id", "")),
             channel_prompt=channel_prompt,
+            timestamp=_onebot_event_timestamp(request.raw_msg) or datetime.now(),
         )
 
     async def _build_channel_prompt(
@@ -265,13 +317,18 @@ class GroupExecutor:
                 "如果跟当前话题其实不搭，就当没看见。"
             )
 
-        channel_prompt += (
-            "\n\n[工具] 你可以用以下标记控制行为：\n"
-            "- 不想回话就只输出 [SILENT]（无其他文字），下次有人说话你还可以接\n"
-            "- 觉得话题跟你完全没关系了就输出 [QUIET]（无其他文字），之后不再被叫到就不说话\n"
-            "- 想引用某条消息就在回复里用 [reply:消息ID]\n"
-            "\n[搜索历史] 你可以调用 search_chat_history 工具搜索群聊历史"
-        )
+        if request.mode == "exit":
+            channel_prompt += (
+                "\n\n[工具] 想引用某条消息就在回复里用 [reply:消息ID]。\n"
+                "说完最后一句后在末尾附 [QUIET] 表示正式退席。不能只有标记没有话。\n"
+                "\n[搜索历史] 你可以调用 search_chat_history 工具搜索群聊历史"
+            )
+        else:
+            channel_prompt += (
+                "\n\n[标记] 想引用某条消息就在回复里用 [reply:消息ID]。\n"
+                "本轮你已被叫到，必须给出大家能看到的回复——沉默不是可选项。\n"
+                "\n[搜索历史] 你可以调用 search_chat_history 工具搜索群聊历史"
+            )
 
         return self._limit_prompt_size(channel_prompt)
 
@@ -307,35 +364,145 @@ class GroupExecutor:
     # ── agent execution ────────────────────────────────────
 
     async def _run_agent_locked(self, event) -> AgentOutcome:
-        group_id = str(event.source.chat_id)
+        chat_id = str(event.source.chat_id)
+        group_id = chat_id.split(":", 1)[1] if chat_id.startswith("group:") else chat_id
         fut = asyncio.get_event_loop().create_future()
-        self._adapter._group_send_results[group_id] = fut
+        nonce = uuid.uuid4().hex
+        setattr(event, "_onebot_group_turn_nonce", nonce)
+        # Tell GatewayRunner that this is an admitted OneBot group turn.  A
+        # model-level ``(empty)`` failure must remain an empty completion so
+        # the executor can apply its one-shot contract retry instead of the
+        # generic Gateway user notice path.
+        setattr(event, "_onebot_contract_required", True)
+        register = getattr(self._adapter, "_register_group_turn", None)
+        if callable(register):
+            register(group_id, nonce, fut)
+        else:
+            # Compatibility with lightweight adapters used by older callers.
+            self._adapter._group_send_results[group_id] = fut
+        session_key = ""
+        try:
+            from gateway.session import build_session_key
+            extra = getattr(getattr(self._adapter, "config", None), "extra", {}) or {}
+            if not isinstance(extra, dict):
+                extra = {}
+            session_key = build_session_key(
+                event.source,
+                group_sessions_per_user=extra.get("group_sessions_per_user", True),
+                thread_sessions_per_user=extra.get("thread_sessions_per_user", False),
+            )
+        except Exception:
+            session_key = str(event.source.chat_id)
+        owner_task = None
         try:
             # base.handle_message spawns a background task and returns
             # immediately (None) — its return value is NOT the reply.
-            # Wait for the adapter's send() to resolve this group's
-            # future with the actual reply text.  Timeout raised 45s→120s:
-            # a slow LLM turn (30s+) + tool calls can exceed the old cap,
-            # and a timeout here DROPS the reply (future popped unresolved
-            # while the agent is still generating).  With 120s the signal
-            # arrives before the cap in practice.
             await self._adapter.handle_message(event)
+            owner_task = getattr(self._adapter, "_session_tasks", {}).get(session_key)
             try:
-                reply_text = await asyncio.wait_for(fut, timeout=120)
+                completion = await asyncio.wait_for(fut, timeout=120)
             except asyncio.TimeoutError:
                 logger.info("[GroupExecutor] send signal timeout for %s (background may still finish)", group_id)
-                reply_text = ""
-            return AgentOutcome(kind="sent", reply_text=reply_text)
+                return AgentOutcome(kind="failed", timed_out=True)
+
+            released = await self._wait_for_session_release(session_key, owner_task)
+            if not released:
+                return AgentOutcome(
+                    kind="failed",
+                    completed=bool(getattr(completion, "completed", False)),
+                    interrupted=True,
+                    failed=bool(getattr(completion, "failed", False)),
+                    delivery_attempted=bool(getattr(completion, "delivery_attempted", False)),
+                    delivery_succeeded=bool(getattr(completion, "delivery_succeeded", False)),
+                    state_recorded=bool(getattr(completion, "state_recorded", False)),
+                )
+            if isinstance(completion, str):
+                reply_text = completion
+                return AgentOutcome(
+                    kind="sent" if reply_text.strip() else "silent",
+                    reply_text=reply_text,
+                    completed=True,
+                    delivery_attempted=bool(reply_text.strip()),
+                    delivery_succeeded=bool(reply_text.strip()),
+                )
+            reply_text = str(getattr(completion, "delivery_text", "") or "")
+            completed = bool(getattr(completion, "completed", False))
+            interrupted = bool(getattr(completion, "interrupted", False))
+            timed_out = bool(getattr(completion, "timed_out", False))
+            delivery_attempted = bool(getattr(completion, "delivery_attempted", False))
+            failed = bool(getattr(completion, "failed", False))
+            state_recorded = bool(getattr(completion, "state_recorded", False))
+            delivered = bool(getattr(completion, "delivery_succeeded", False) and reply_text.strip())
+            return AgentOutcome(
+                kind="sent" if delivered else ("failed" if interrupted or timed_out or failed else "silent"),
+                reply_text=reply_text,
+                completed=completed,
+                timed_out=timed_out,
+                interrupted=interrupted,
+                delivery_attempted=delivery_attempted,
+                delivery_succeeded=delivered,
+                failed=failed,
+                state_recorded=state_recorded,
+            )
         except Exception as e:
             logger.warning("[GroupExecutor] Agent failed: %s", e)
-            return AgentOutcome(kind="failed", reply_text="")
+            return AgentOutcome(kind="failed", completed=False)
         finally:
-            self._adapter._group_send_results.pop(group_id, None)
+            unregister = getattr(self._adapter, "_unregister_group_turn", None)
+            if callable(unregister):
+                unregister(group_id, nonce)
+            else:
+                self._adapter._group_send_results.pop(group_id, None)
+
+    async def _wait_for_session_release(self, session_key: str, owner_task) -> bool:
+        """Wait for BasePlatformAdapter's old owner to release its guard."""
+        active_sessions = getattr(self._adapter, "_active_sessions", None)
+        session_tasks = getattr(self._adapter, "_session_tasks", None)
+        if not isinstance(active_sessions, dict) or not isinstance(session_tasks, dict):
+            return True
+        deadline = asyncio.get_running_loop().time() + 15.0
+        current = asyncio.current_task()
+        while asyncio.get_running_loop().time() < deadline:
+            # A real user follow-up queued while the first task was unwinding
+            # owns the session next; feedback must never overwrite it.
+            if session_key in getattr(self._adapter, "_pending_messages", {}):
+                return False
+            task = session_tasks.get(session_key)
+            if task is current:
+                return False
+            if task is None and session_key not in active_sessions:
+                return True
+            if owner_task is not None and task is not owner_task:
+                # A drain task is now processing a queued user event.  Do not
+                # inject a synthetic retry into that chain.
+                if task is not None and not getattr(task, "done", lambda: True)():
+                    return False
+            if session_key not in active_sessions:
+                return True
+            await asyncio.sleep(0.01)
+        logger.warning("[GroupExecutor] session guard release timeout for %s", session_key[:80])
+        return False
+
+    @staticmethod
+    def _build_contract_retry_event(event):
+        note = (
+            "[系统] 你的上一条回复没有任何可见正文。"
+            "请直接用你的语气给出大家能看到的回复；不要只输出 [QUIET] 或 [SILENT]。"
+        )
+        prompt = (getattr(event, "channel_prompt", None) or "").strip()
+        retry_prompt = f"{prompt}\n\n{note}" if prompt else note
+        try:
+            retry = replace(event, channel_prompt=retry_prompt)
+        except (TypeError, ValueError):
+            retry = event
+            retry.channel_prompt = retry_prompt
+        setattr(retry, "_onebot_contract_retry", True)
+        return retry
 
     def _apply_outcome(self, group_id, event, outcome, gs):
         if outcome.kind == "sent":
-            if gs.attentive.active:
-                gs.record_reply()
+            if gs.attentive.active and not outcome.state_recorded:
+                gs.record_reply(outcome.reply_text)
             gs.last_agent_ts = time.time()
         elif outcome.kind == "silent":
             gs.record_silent()

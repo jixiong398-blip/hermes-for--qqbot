@@ -78,7 +78,7 @@ def test_onebot_voice_uses_mimo_transcript_before_gateway_stt():
     # Corpus/buffer persistence must carry transcript (mirrors image branch
     # where _describe_image result is appended to m_text before persist).
     voice_persist = [c for c in adapter._persist_chat_message.call_args_list
-                     if (c.args[1] if len(c.args) > 1 else c.kwargs.get("chat_type")) == "group"]
+                     if (c.args[1] if len(c.args) > 1 else c.kwargs.get("chat_type")) == "private"]
     assert voice_persist, "_persist_chat_message was not called for the voice branch"
     args, kwargs = voice_persist[-1]
     persisted_text = args[4] if len(args) > 4 else kwargs.get("content", "")
@@ -119,7 +119,7 @@ def test_onebot_voice_keeps_gateway_stt_fallback_when_mimo_has_no_text():
     assert event.media_types == ["audio/ogg"]
 
     voice_persist = [c for c in adapter._persist_chat_message.call_args_list
-                     if (c.args[1] if len(c.args) > 1 else c.kwargs.get("chat_type")) == "group"]
+                     if (c.args[1] if len(c.args) > 1 else c.kwargs.get("chat_type")) == "private"]
     assert voice_persist, "_persist_chat_message was not called for the voice branch"
     args, kwargs = voice_persist[-1]
     persisted_text = args[4] if len(args) > 4 else kwargs.get("content", "")
