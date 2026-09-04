@@ -91,7 +91,7 @@ _KNOWN_DELIVERY_PLATFORMS = frozenset({
     "telegram", "discord", "slack", "whatsapp", "signal",
     "matrix", "mattermost", "homeassistant", "dingtalk", "feishu",
     "wecom", "wecom_callback", "weixin", "sms", "email", "webhook", "bluebubbles",
-    "qqbot", "yuanbao",
+    "onebot", "yuanbao",
 })
 
 # Platforms that support a configured cron/notification home target, mapped to
@@ -110,16 +110,13 @@ _HOME_TARGET_ENV_VARS = {
     "wecom": "WECOM_HOME_CHANNEL",
     "weixin": "WEIXIN_HOME_CHANNEL",
     "bluebubbles": "BLUEBUBBLES_HOME_CHANNEL",
-    "qqbot": "QQBOT_HOME_CHANNEL",
+    "onebot": "ONEBOT_HOME_CHANNEL",
 }
 
-# Legacy env var names kept for back-compat.  Each entry is the current
-# primary env var → the previous name.  _get_home_target_chat_id falls
-# back to the legacy name if the primary is unset, so users who set the
-# old name before the rename keep working until they migrate.
-_LEGACY_HOME_TARGET_ENV_VARS = {
-    "QQBOT_HOME_CHANNEL": "QQ_HOME_CHANNEL",
-}
+# Legacy env var names kept for back-compat. Each entry is the current primary
+# env var -> the previous name.  The removed QQBot API intentionally has no
+# delivery alias here; old cron jobs must be migrated to onebot.
+_LEGACY_HOME_TARGET_ENV_VARS = {}
 
 from cron.jobs import get_due_jobs, mark_job_run, save_job_output, advance_next_run
 
@@ -261,6 +258,13 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
     origin = _resolve_origin(job)
 
     if deliver_value == "local":
+        return None
+
+    if deliver_value.lower() == "qqbot" or deliver_value.lower().startswith("qqbot:"):
+        logger.warning(
+            "Cron job %s targets removed qqbot delivery; migrate it to onebot",
+            job.get("name", job.get("id", "?")),
+        )
         return None
 
     if deliver_value == "origin":

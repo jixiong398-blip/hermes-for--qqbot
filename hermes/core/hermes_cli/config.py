@@ -446,6 +446,13 @@ DEFAULT_CONFIG = {
         # on flaky primaries; raise it if you prefer to tolerate longer
         # provider hiccups on a single provider.
         "api_max_retries": 3,
+        # Empty-response retry guard.  Deterministic zero-output responses
+        # can otherwise re-send and re-bill the full conversation three times.
+        # Missing usage or unknown pricing keeps the legacy retry behavior.
+        "empty_response_guard": {
+            "enabled": True,
+            "cost_threshold_usd": 0.25,
+        },
         "service_tier": "",
         # Tool-use enforcement: injects system prompt guidance that tells the
         # model to actually call tools instead of describing intended actions.
@@ -569,11 +576,26 @@ DEFAULT_CONFIG = {
         # When on, SETUID/SETGID caps are omitted from the container since
         # no privilege drop is needed.
         "docker_run_as_host_user": False,
+        # Docker network policy and extra flags are explicit backend controls.
+        # Extra flags are appended after Hermes' generated arguments to retain
+        # the upstream escape hatch; use only with a trusted configuration.
+        "docker_network": True,
+        "docker_extra_args": [],
+        # Cross-process reuse is staged behind an explicit opt-in until live
+        # daemon/profile-race evidence is available.
+        "docker_persist_across_processes": False,
+        "docker_shared_container_key": "",
         # Persistent shell — keep a long-lived bash shell across execute() calls
         # so cwd/env vars/shell variables survive between commands.
         # Enabled by default for non-local backends (SSH); local is always opt-in
         # via TERMINAL_LOCAL_PERSISTENT env var.
         "persistent_shell": True,
+    },
+
+    # Durable final-response obligations. The ledger is best-effort and only
+    # records a row when a platform final-send path opts into the wrapper.
+    "gateway": {
+        "delivery_ledger": True,
     },
 
     "web": {
@@ -698,6 +720,9 @@ DEFAULT_CONFIG = {
         "target_ratio": 0.20,         # fraction of threshold to preserve as recent tail
         "protect_last_n": 20,         # minimum recent messages to keep uncompressed
         "hygiene_hard_message_limit": 400,  # gateway session-hygiene force-compress threshold by message count
+        # Require an active MemoryProvider checkpoint before lossy rewrites.
+        # False preserves historical best-effort behavior for v1 providers.
+        "checkpoint_required": False,
     },
 
     # Anthropic prompt caching (Claude via OpenRouter or native Anthropic API).
@@ -4866,6 +4891,10 @@ def set_config_value(key: str, value: str):
         "terminal.docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
         "terminal.docker_run_as_host_user": "TERMINAL_DOCKER_RUN_AS_HOST_USER",
         "terminal.docker_env": "TERMINAL_DOCKER_ENV",
+        "terminal.docker_network": "TERMINAL_DOCKER_NETWORK",
+        "terminal.docker_extra_args": "TERMINAL_DOCKER_EXTRA_ARGS",
+        "terminal.docker_persist_across_processes": "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES",
+        "terminal.docker_shared_container_key": "TERMINAL_DOCKER_SHARED_CONTAINER_KEY",
         # terminal.cwd intentionally excluded — CLI resolves at runtime,
         # gateway bridges it in gateway/run.py. Persisting to .env causes
         # stale values to poison child processes.

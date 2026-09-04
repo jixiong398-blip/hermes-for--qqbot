@@ -9,6 +9,7 @@ view) and don't need this.
 import hashlib
 import logging
 import os
+import posixpath
 import shlex
 import shutil
 import signal
@@ -86,8 +87,18 @@ def quoted_mkdir_command(dirs: list[str]) -> str:
 
 
 def unique_parent_dirs(files: list[tuple[str, str]]) -> list[str]:
-    """Extract sorted unique parent directories from (host, remote) pairs."""
-    return sorted({str(Path(remote).parent) for _, remote in files})
+    """Extract sorted POSIX remote parent directories.
+
+    Remote paths are always POSIX paths, even when the controller runs on
+    Windows. pathlib.Path follows the controller's native flavour and turns
+    /home/user/file into a Windows-style path on Windows.
+    """
+    parents = {
+        posixpath.dirname(remote) or "."
+        for _, remote in files
+        if isinstance(remote, str) and remote
+    }
+    return sorted(parents)
 
 
 def _sha256_file(path: str) -> str:

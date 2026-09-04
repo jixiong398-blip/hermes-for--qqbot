@@ -217,6 +217,12 @@ def _handle_send(args):
     except (ValueError, KeyError):
         return tool_error(f"Unknown platform: {platform_name}")
 
+    if platform_name == "qqbot":
+        return tool_error(
+            "The official QQBot adapter was removed. "
+            "Configure OneBot/NapCat and send to onebot:<chat_id> instead."
+        )
+
     pconfig = config.platforms.get(platform)
     if not pconfig or not pconfig.enabled:
         # Weixin can be configured purely via .env; synthesize a pconfig so
@@ -344,6 +350,16 @@ def _parse_target_ref(platform_name: str, target_ref: str):
         if target_ref.strip().isdigit():
             return f"group:{target_ref.strip()}", None, True
         return None, None, False
+    if platform_name == "onebot":
+        normalized = target_ref.strip()
+        if normalized.startswith("group:"):
+            group_id = normalized.split(":", 1)[1].strip()
+            if group_id.isdigit():
+                return f"group:{group_id}", None, True
+        if normalized.startswith("private:"):
+            user_id = normalized.split(":", 1)[1].strip()
+            if user_id.isdigit():
+                return user_id, None, True
     if platform_name in _PHONE_PLATFORMS:
         match = _E164_TARGET_RE.fullmatch(target_ref)
         if match:
@@ -1780,6 +1796,15 @@ async def _send_qqbot(pconfig, chat_id, message):
     the official QQ Bot API only works for verified bots, while NapCat
     uses the OneBot v11 HTTP API which works for personal QQ accounts.
     """
+    # The official QQBot adapter was removed from this distribution. Keep this
+    # legacy symbol import-compatible, but never contact the old REST service.
+    return _error(
+        "The official QQBot adapter was removed. "
+        "Configure OneBot/NapCat and target onebot:<chat_id>."
+    )
+
+    # Historical implementation below remains unreachable during the staged
+    # migration and will be deleted once downstream callers are migrated.
     onebot_http = os.getenv("ONEBOT_HTTP_URL", "")
     if onebot_http:
         try:

@@ -367,7 +367,21 @@ class EpisodeIndex:
                limit: int = DEFAULT_LIMIT,
                min_score: float = DEFAULT_MIN_SCORE,
                cooldown_sec: float = DEFAULT_COOLDOWN_SEC,
-               include_own_session: bool = False) -> List[EpisodeFragment]:
+               include_own_session: bool = False,
+               target_chat_type: Optional[str] = None) -> List[EpisodeFragment]:
+        """Search shareable fragments, optionally constrained to a target scope.
+
+        The historical API intentionally searched all shareable scopes.  A
+        Gateway/MemoryProvider that knows the current chat type can pass it to
+        prevent private-DM fragments from entering a group context while
+        retaining anonymous group-to-group recall.
+        """
+        normalized_target = str(target_chat_type or "").strip().lower()
+        target_scope = None
+        if normalized_target == "dm":
+            target_scope = "dm"
+        elif normalized_target in {"group", "channel", "thread"}:
+            target_scope = "group"
         q_tokens = tokenize_for_match(query, limit=MAX_QUERY_TOKENS)
         if len(q_tokens) < 2:
             return []
@@ -398,9 +412,22 @@ class EpisodeIndex:
 
         norm = sum(idf.values()) or 1.0
         ph2 = ",".join("?" * len(idf))
+        scope_sql = ""
+        scope_params = list(idf.keys())
+        if target_scope is not None:
+            # Apply the target scope before ranking/capping candidates. A
+            # large number of unrelated DM fragments must not consume the
+            # bounded top-40 pool and hide a valid group fragment.
+            scope_sql = (
+                " AND episode_id IN ("
+                "SELECT id FROM episode_fragments WHERE scope = ?"
+                ")"
+            )
+            scope_params.append(target_scope)
         rows = conn.execute(
-            f"SELECT episode_id, token FROM episode_tokens WHERE token IN ({ph2})",
-            list(idf.keys()),
+            f"SELECT episode_id, token FROM episode_tokens "
+            f"WHERE token IN ({ph2}){scope_sql}",
+            scope_params,
         ).fetchall()
 
         raw: Dict[int, float] = defaultdict(float)
@@ -434,6 +461,8 @@ class EpisodeIndex:
             if not include_own_session and exclude_session and sess == exclude_session:
                 continue
             scope = r[3]
+            if target_scope is not None and scope != target_scope:
+                continue
             if scope == "dm" and not self.enable_dm:
                 continue
             last_surface = float(r[16] or 0)
@@ -466,8 +495,14 @@ class EpisodeIndex:
 
     def build_context(self, query: str, exclude_session: Optional[str] = None,
                       limit: int = DEFAULT_LIMIT, max_chars: int = 900,
-                      mark: bool = True) -> str:
-        frags = self.search(query, exclude_session=exclude_session, limit=limit)
+                      mark: bool = True,
+                      target_chat_type: Optional[str] = None) -> str:
+        frags = self.search(
+            query,
+            exclude_session=exclude_session,
+            limit=limit,
+            target_chat_type=target_chat_type,
+        )
         if not frags:
             return ""
 

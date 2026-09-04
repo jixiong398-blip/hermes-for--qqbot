@@ -1292,6 +1292,10 @@ class BasePlatformAdapter(ABC):
         self._post_delivery_callbacks: Dict[str, Any] = {}
         self._expected_cancelled_tasks: set[asyncio.Task] = set()
         self._busy_session_handler: Optional[Callable[[MessageEvent, str], Awaitable[bool]]] = None
+        # GatewayRunner enables durable final-response ledger writes after a
+        # platform is fully constructed. Direct adapter instances remain
+        # disabled by default so unit/partial-start paths keep old timing.
+        self._delivery_ledger_enabled: bool = False
         # Auto-TTS on voice input: ``_auto_tts_default`` is the global default
         # (``voice.auto_tts`` in config.yaml, pushed by GatewayRunner on connect).
         # Per-chat overrides live in two sets populated from ``_voice_mode``:
@@ -2580,6 +2584,95 @@ class BasePlatformAdapter(ABC):
             return
         self._start_session_processing(pending_event, session_key)
 
+    async def _send_final_with_delivery_ledger(
+        self,
+        *,
+        event: MessageEvent,
+        session_key: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[dict],
+    ) -> SendResult:
+        """Send a final response with best-effort durable obligation marks.
+
+        The ledger is intentionally outside ``_send_with_retry``: a retry is
+        one logical delivery obligation, while each adapter attempt remains
+        an implementation detail. Ledger I/O runs off the event loop and any
+        ledger failure falls through to the normal send path.
+        """
+        ledger_module = None
+        obligation_id = None
+        ledger_active = False
+        try:
+            from gateway import delivery_ledger as ledger_module
+
+            enabled = getattr(self, "_delivery_ledger_enabled", None)
+            if enabled is None:
+                enabled = ledger_module.ledger_enabled()
+                self._delivery_ledger_enabled = bool(enabled)
+            if enabled and session_key and content:
+                source = getattr(event, "source", None)
+                message_ref = getattr(event, "message_id", None)
+                if not message_ref:
+                    message_ref = str(getattr(event, "timestamp", "") or "")
+                obligation_id = ledger_module.compute_obligation_id(
+                    session_key,
+                    str(message_ref or ""),
+                    content,
+                )
+                thread_id = metadata.get("thread_id") if isinstance(metadata, dict) else None
+                await asyncio.to_thread(
+                    ledger_module.record_obligation,
+                    obligation_id=obligation_id,
+                    session_key=session_key,
+                    platform=getattr(getattr(self, "platform", None), "value", "") or "unknown",
+                    chat_id=getattr(source, "chat_id", "") or "",
+                    thread_id=thread_id,
+                    content=content,
+                    adapter_profile=getattr(self, "adapter_profile", None),
+                )
+                await asyncio.to_thread(ledger_module.mark_attempting, obligation_id)
+                ledger_active = True
+        except Exception:
+            logger.debug(
+                "Final delivery ledger prepare failed; continuing send",
+                exc_info=True,
+            )
+
+        try:
+            result = await self._send_with_retry(
+                chat_id=event.source.chat_id,
+                content=content,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            if ledger_active and ledger_module and obligation_id:
+                try:
+                    await asyncio.to_thread(
+                        ledger_module.mark_failed,
+                        obligation_id,
+                        "send_path_degraded" if isinstance(exc, (ConnectionError, TimeoutError)) else str(exc),
+                    )
+                except Exception:
+                    logger.debug("Final delivery ledger failure mark failed", exc_info=True)
+            raise
+
+        if ledger_active and ledger_module and obligation_id:
+            try:
+                if getattr(result, "success", False):
+                    await asyncio.to_thread(ledger_module.mark_delivered, obligation_id)
+                else:
+                    error = getattr(result, "error", None) or (
+                        "send_path_degraded"
+                        if getattr(result, "retryable", False)
+                        else "delivery_failed"
+                    )
+                    await asyncio.to_thread(ledger_module.mark_failed, obligation_id, str(error))
+            except Exception:
+                logger.debug("Final delivery ledger terminal mark failed", exc_info=True)
+        return result
+
     async def _dispatch_active_session_command(
         self,
         event: MessageEvent,
@@ -2962,8 +3055,9 @@ class BasePlatformAdapter(ABC):
                         _thread_metadata["notify"] = True
                     else:
                         _thread_metadata = {"notify": True}
-                    result = await self._send_with_retry(
-                        chat_id=event.source.chat_id,
+                    result = await self._send_final_with_delivery_ledger(
+                        event=event,
+                        session_key=session_key,
                         content=text_content,
                         reply_to=_reply_anchor,
                         metadata=_thread_metadata,

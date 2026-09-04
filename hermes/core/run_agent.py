@@ -37,6 +37,7 @@ import concurrent.futures
 import contextvars
 import copy
 import hashlib
+import inspect
 import json
 import logging
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ import sys
 import tempfile
 import time
 import threading
+from functools import wraps
 from types import SimpleNamespace
 import urllib.request
 import uuid
@@ -138,10 +140,25 @@ from tools.browser_tool import cleanup_browser
 
 
 # Agent internals extracted to agent/ package for modularity
-from agent.memory_manager import StreamingContextScrubber, build_memory_context_block, sanitize_context
+from agent.memory_manager import (
+    StreamingContextScrubber,
+    build_memory_context_block,
+    direct_messages_for_pre_compress_memory,
+    sanitize_context,
+)
+from agent.memory_provider import is_trivial_prompt
 from agent.think_scrubber import StreamingThinkScrubber
 from agent.retry_utils import jittered_backoff
+from agent.repetition_guard import is_repetition_dominated
+from agent import empty_response_guard as _empty_guard
 from agent.error_classifier import classify_api_error, FailoverReason
+from agent import error_surface as _error_surface
+from agent.message_metadata_contract import append_message as _append_message
+from agent.turn_context_contract import (
+    clone_message_for_api as _clone_message_for_api,
+    compose_user_api_content as _compose_user_api_content,
+    drop_stale_api_content as _drop_stale_api_content,
+)
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS,
     MEMORY_GUIDANCE, SESSION_SEARCH_GUIDANCE, SKILLS_GUIDANCE,
@@ -614,6 +631,7 @@ def _sanitize_messages_surrogates(messages: list) -> bool:
         content = msg.get("content")
         if isinstance(content, str) and _SURROGATE_RE.search(content):
             msg["content"] = _SURROGATE_RE.sub('\ufffd', content)
+            _drop_stale_api_content(msg)
             found = True
         elif isinstance(content, list):
             for part in content:
@@ -621,6 +639,7 @@ def _sanitize_messages_surrogates(messages: list) -> bool:
                     text = part.get("text")
                     if isinstance(text, str) and _SURROGATE_RE.search(text):
                         part["text"] = _SURROGATE_RE.sub('\ufffd', text)
+                        _drop_stale_api_content(msg)
                         found = True
         name = msg.get("name")
         if isinstance(name, str) and _SURROGATE_RE.search(name):
@@ -828,6 +847,7 @@ def _sanitize_messages_non_ascii(messages: list) -> bool:
             sanitized = _strip_non_ascii(content)
             if sanitized != content:
                 msg["content"] = sanitized
+                _drop_stale_api_content(msg)
                 found = True
         elif isinstance(content, list):
             for part in content:
@@ -837,6 +857,7 @@ def _sanitize_messages_non_ascii(messages: list) -> bool:
                         sanitized = _strip_non_ascii(text)
                         if sanitized != text:
                             part["text"] = sanitized
+                            _drop_stale_api_content(msg)
                             found = True
         # Sanitize name field (can contain non-ASCII in tool results)
         name = msg.get("name")
@@ -910,10 +931,12 @@ def _strip_images_from_messages(messages: list) -> bool:
         if len(new_parts) < len(content):
             if new_parts:
                 msg["content"] = new_parts
+                _drop_stale_api_content(msg)
             elif msg.get("role") == "tool":
                 # Preserve tool_call_id linkage — providers require every
                 # assistant tool_call to have a matching tool response.
                 msg["content"] = "[image content removed — server does not support images]"
+                _drop_stale_api_content(msg)
             else:
                 # Synthetic image-only user/assistant message with no text;
                 # safe to drop.
@@ -1025,6 +1048,57 @@ def _qwen_portal_headers() -> dict:
     }
 
 
+def _attach_error_surface_to_run_result(fn):
+    """Add an advisory error descriptor without changing agent control flow."""
+
+    @wraps(fn)
+    def _wrapped(self, *args, **kwargs):
+        result = fn(self, *args, **kwargs)
+        try:
+            # An empty sentinel is a distinct terminal outcome.  Do not carry
+            # a prior transient API classification (for example HTTP 429)
+            # into it unless the result itself recorded that status.
+            _classified_error = getattr(self, "_last_classified_error", None)
+            if isinstance(result, dict) and result.get("final_response") == "(empty)":
+                _classified_error = None
+            return _error_surface.attach_error_surface(
+                result,
+                provider=getattr(self, "provider", "") or "",
+                model=getattr(self, "model", "") or "",
+                classified_error=_classified_error,
+            )
+        except Exception:  # pragma: no cover - reporting must fail open
+            logger.debug(
+                "run_conversation error-surface attachment failed",
+                exc_info=True,
+            )
+            return result
+
+    return _wrapped
+
+
+def _callable_accepts_keyword(method: Any, keyword: str) -> Optional[bool]:
+    """Inspect a hook's keyword support without invoking provider code.
+
+    ``None`` means the callable cannot be introspected; callers should retain
+    the enriched call in that case and let the normal best-effort boundary
+    handle any runtime failure.  Distinguishing an unsupported keyword before
+    invocation avoids retrying a provider's own ``TypeError`` as if it were a
+    legacy signature mismatch.
+    """
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return None
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return True
+    parameter = signature.parameters.get(keyword)
+    return parameter is not None and parameter.kind != inspect.Parameter.POSITIONAL_ONLY
+
+
 class AIAgent:
     """
     AI Agent with tool calling capabilities.
@@ -1114,6 +1188,8 @@ class AIAgent:
         checkpoint_max_total_size_mb: int = 500,
         checkpoint_max_file_size_mb: int = 10,
         pass_session_id: bool = False,
+        persist_session_activity: bool = False,
+        session_activity_callback: callable = None,
     ):
         """
         Initialize the AI Agent.
@@ -1862,6 +1938,12 @@ class AIAgent:
         self._parent_session_id = parent_session_id
         self._last_flushed_db_idx = 0  # tracks DB-write cursor to prevent duplicate writes
         self._session_db_created = False  # DB row deferred to run_conversation()
+        # Durable activity is strictly opt-in.  Gateway/CLI callers keep the
+        # existing in-memory watchdog behavior unless they provide an
+        # explicit callback or set persist_session_activity=True.
+        self._persist_session_activity = bool(persist_session_activity)
+        self._session_activity_callback = session_activity_callback
+        self._session_activity_last_persist_mono = 0.0
         self._session_init_model_config = {
             "max_iterations": self.max_iterations,
             "reasoning_config": reasoning_config,
@@ -2019,6 +2101,12 @@ class AIAgent:
         _agent_section = _agent_cfg.get("agent", {})
         if not isinstance(_agent_section, dict):
             _agent_section = {}
+        (
+            self._empty_guard_enabled,
+            self._empty_guard_cost_threshold_usd,
+        ) = _empty_guard.resolve_guard_settings(
+            _agent_section.get("empty_response_guard")
+        )
         self._tool_use_enforcement = _agent_section.get("tool_use_enforcement", "auto")
 
         # App-level API retry count (wraps each model API call).  Default 3,
@@ -2049,6 +2137,12 @@ class AIAgent:
         compression_enabled = str(_compression_cfg.get("enabled", True)).lower() in ("true", "1", "yes")
         compression_target_ratio = float(_compression_cfg.get("target_ratio", 0.20))
         compression_protect_last = int(_compression_cfg.get("protect_last_n", 20))
+        # Optional fail-closed mode for lossy context rewrites.  It remains
+        # disabled by default so existing installations and legacy providers
+        # keep their historical best-effort compression behavior.
+        self.compression_checkpoint_required = str(
+            _compression_cfg.get("checkpoint_required", False)
+        ).lower() in ("true", "1", "yes", "on")
 
         # Read optional explicit context_length override for the auxiliary
         # compression model. Custom endpoints often cannot report this via
@@ -4337,12 +4431,35 @@ class AIAgent:
             msg = messages[idx]
             if isinstance(msg, dict) and msg.get("role") == "user":
                 msg["content"] = override
+                _drop_stale_api_content(msg)
+
+    def _session_message_metadata_columns(self) -> set[str]:
+        """Return gated message metadata columns without triggering DDL."""
+
+        session_db = getattr(self, "_session_db", None)
+        reader = getattr(session_db, "message_metadata_columns", None)
+        if not callable(reader):
+            return set()
+        try:
+            columns = reader()
+        except Exception:
+            return set()
+        if not isinstance(columns, (set, frozenset, tuple, list)):
+            return set()
+        return set(columns) & {
+            "api_content", "display_kind", "display_metadata"
+        }
 
     def _persist_session(self, messages: List[Dict], conversation_history: List[Dict] = None):
         """Save session state to both JSON log and SQLite on any exit path.
 
         Ensures conversations are never lost, even on errors or early returns.
         """
+        if getattr(self, "_suppress_session_persistence", False):
+            # OneBot output-contract retries are API-only feedback turns.  Do
+            # not append their synthetic user turn or answer to durable logs.
+            self._session_messages = messages
+            return
         self._drop_trailing_empty_response_scaffolding(messages)
         self._apply_persist_user_message_override(messages)
         self._session_messages = messages
@@ -4491,6 +4608,7 @@ class AIAgent:
                         if prev_content and new_content
                         else (prev_content or new_content)
                     )
+                    _drop_stale_api_content(prev)
                     repairs += 1
                     continue
             merged.append(msg)
@@ -4518,6 +4636,7 @@ class AIAgent:
                 self._ensure_db_session()
             start_idx = len(conversation_history) if conversation_history else 0
             flush_from = max(start_idx, self._last_flushed_db_idx)
+            _sidecar_columns = self._session_message_metadata_columns()
             for msg in messages[flush_from:]:
                 role = msg.get("role", "unknown")
                 content = msg.get("content")
@@ -4543,20 +4662,41 @@ class AIAgent:
                     ]
                 elif isinstance(msg.get("tool_calls"), list):
                     tool_calls_data = msg["tool_calls"]
-                self._session_db.append_message(
-                    session_id=self.session_id,
-                    role=role,
-                    content=content,
-                    tool_name=msg.get("tool_name"),
-                    tool_calls=tool_calls_data,
-                    tool_call_id=msg.get("tool_call_id"),
-                    finish_reason=msg.get("finish_reason"),
-                    reasoning=msg.get("reasoning") if role == "assistant" else None,
-                    reasoning_content=msg.get("reasoning_content") if role == "assistant" else None,
-                    reasoning_details=msg.get("reasoning_details") if role == "assistant" else None,
-                    codex_reasoning_items=msg.get("codex_reasoning_items") if role == "assistant" else None,
-                    codex_message_items=msg.get("codex_message_items") if role == "assistant" else None,
-                )
+                append_kwargs = {
+                    "session_id": self.session_id,
+                    "role": role,
+                    "content": content,
+                    "tool_name": msg.get("tool_name"),
+                    "tool_calls": tool_calls_data,
+                    "tool_call_id": msg.get("tool_call_id"),
+                    "finish_reason": msg.get("finish_reason"),
+                    "reasoning": msg.get("reasoning") if role == "assistant" else None,
+                    "reasoning_content": msg.get("reasoning_content") if role == "assistant" else None,
+                    "reasoning_details": msg.get("reasoning_details") if role == "assistant" else None,
+                    "codex_reasoning_items": msg.get("codex_reasoning_items") if role == "assistant" else None,
+                    "codex_message_items": msg.get("codex_message_items") if role == "assistant" else None,
+                }
+                if "timestamp" in msg:
+                    # Keep legacy/fake writers compatible when they do not
+                    # expose the optional timestamp keyword.
+                    _timestamp_supported = _callable_accepts_keyword(
+                        self._session_db.append_message, "timestamp"
+                    )
+                    if _timestamp_supported is not False:
+                        append_kwargs["timestamp"] = msg.get("timestamp")
+                for _metadata_key in (
+                    "api_content",
+                    "display_kind",
+                    "display_metadata",
+                ):
+                    if _metadata_key not in msg or _metadata_key not in _sidecar_columns:
+                        continue
+                    _metadata_supported = _callable_accepts_keyword(
+                        self._session_db.append_message, _metadata_key
+                    )
+                    if _metadata_supported is not False:
+                        append_kwargs[_metadata_key] = msg.get(_metadata_key)
+                self._session_db.append_message(**append_kwargs)
             self._last_flushed_db_idx = len(messages)
         except Exception as e:
             logger.warning("Session DB append_message failed: %s", e)
@@ -4794,7 +4934,7 @@ class AIAgent:
             user_query (str): Original user query
             completed (bool): Whether the conversation completed successfully
         """
-        if not self.save_trajectories:
+        if not self.save_trajectories or getattr(self, "_suppress_session_persistence", False):
             return
         
         trajectory = self._convert_to_trajectory_format(messages, user_query, completed)
@@ -5058,6 +5198,8 @@ class AIAgent:
         REASONING_SCRATCHPAD tags are converted to <think> blocks for consistency.
         Overwritten after each turn so it always reflects the latest state.
         """
+        if getattr(self, "_suppress_session_persistence", False):
+            return
         messages = messages or self._session_messages
         if not messages:
             return
@@ -5328,10 +5470,80 @@ class AIAgent:
             steer_text[:120] + ("..." if len(steer_text) > 120 else ""),
         )
 
-    def _touch_activity(self, desc: str) -> None:
-        """Update the last-activity timestamp and description (thread-safe)."""
-        self._last_activity_ts = time.time()
-        self._last_activity_desc = desc
+    def _touch_activity(
+        self,
+        desc: str,
+        *,
+        provenance=None,
+        force_persist: bool = False,
+    ) -> None:
+        """Update in-memory activity and optionally publish a durable stamp."""
+        now = time.time()
+        try:
+            from agent.session_activity import (
+                SESSION_ACTIVITY_HEARTBEAT_MIN_INTERVAL_SECONDS,
+                bound_activity_description,
+                normalize_activity_provenance,
+            )
+
+            bounded_desc = bound_activity_description(desc)
+            normalized_provenance = normalize_activity_provenance(provenance)
+            provenance_value = normalized_provenance.value
+        except Exception:
+            bounded_desc = str(desc)[:120] if desc is not None else ""
+            provenance_value = "unknown"
+            SESSION_ACTIVITY_HEARTBEAT_MIN_INTERVAL_SECONDS = 60.0
+
+        self._last_activity_ts = now
+        self._last_activity_desc = bounded_desc
+
+        callback = getattr(self, "_session_activity_callback", None)
+        persist_db = bool(getattr(self, "_persist_session_activity", False))
+        session_db = getattr(self, "_session_db", None)
+        if callback is None and not persist_db:
+            return
+        if callback is None and (
+            session_db is None or not getattr(self, "session_id", None)
+        ):
+            return
+
+        monotonic_now = time.monotonic()
+        last_persist = float(
+            getattr(self, "_session_activity_last_persist_mono", 0.0) or 0.0
+        )
+        if (
+            not force_persist
+            and monotonic_now - last_persist
+            < SESSION_ACTIVITY_HEARTBEAT_MIN_INTERVAL_SECONDS
+        ):
+            return
+        try:
+            if callback is not None:
+                callback(
+                    self.session_id,
+                    bounded_desc,
+                    provenance=provenance_value,
+                    now=now,
+                    force_persist=force_persist,
+                )
+            else:
+                touch = getattr(session_db, "touch_session_activity", None)
+                if not callable(touch):
+                    return
+                touch(
+                    self.session_id,
+                    bounded_desc,
+                    provenance=provenance_value,
+                    now=now,
+                    force_persist=force_persist,
+                )
+            self._session_activity_last_persist_mono = monotonic_now
+        except Exception as error:
+            # Observation persistence must never affect the agent response.
+            logger.debug(
+                "Durable session activity skipped (%s)",
+                type(error).__name__,
+            )
 
     def _capture_rate_limits(self, http_response: Any) -> None:
         """Parse x-ratelimit-* headers from an HTTP response and cache the state.
@@ -5454,6 +5666,7 @@ class AIAgent:
         original_user_message: Any,
         final_response: Any,
         interrupted: bool,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Mirror a completed turn into external memory providers.
 
@@ -5481,19 +5694,34 @@ class AIAgent:
         providers are strictly best-effort — a misconfigured or offline
         backend must not block the user from seeing their response.
         """
-        if interrupted:
+        if interrupted or getattr(self, "_suppress_session_persistence", False):
             return
         if not (self._memory_manager and final_response and original_user_message):
             return
+        # Providers accept plain text, while gateway and multimodal callers
+        # may supply typed content blocks.  Keep the provider-facing turn
+        # shape stable and avoid persisting transport-only structures.
+        user_text = _summarize_user_message_for_log(original_user_message)
+        response_text = _summarize_user_message_for_log(final_response)
+        if not (user_text and response_text):
+            return
+        _sync_kwargs = {"session_id": self.session_id or ""}
+        if messages is not None:
+            _sync_kwargs["messages"] = list(messages)
         try:
             self._memory_manager.sync_all(
-                original_user_message, final_response,
-                session_id=self.session_id or "",
+                user_text,
+                response_text,
+                **_sync_kwargs,
             )
-            self._memory_manager.queue_prefetch_all(
-                original_user_message,
-                session_id=self.session_id or "",
-            )
+            # Acknowledgements and slash commands have no useful recall
+            # signal; syncing the completed turn still happens, but warming a
+            # provider search for it only adds latency and stale context.
+            if not is_trivial_prompt(user_text):
+                self._memory_manager.queue_prefetch_all(
+                    user_text,
+                    session_id=self.session_id or "",
+                )
         except Exception:
             pass
 
@@ -10076,19 +10304,71 @@ class AIAgent:
             focus_topic,
         )
 
-        # Notify external memory provider before compression discards context
+        # Notify memory providers before compression discards context.  Legacy
+        # providers retain the raw transcript contract; checkpoint-capable
+        # providers additionally receive normalized direct evidence.  The
+        # returned context is fed into the summarizer so a successful provider
+        # checkpoint is not silently discarded.
+        _memory_context = ""
+        _checkpoint_required = bool(
+            getattr(self, "compression_checkpoint_required", False)
+        )
         if self._memory_manager:
             try:
-                self._memory_manager.on_pre_compress(messages)
+                _evidence_messages = direct_messages_for_pre_compress_memory(messages)
+                _pre_compress_hook = self._memory_manager.on_pre_compress
+                _pre_compress_kwargs = {}
+                _accepts_evidence = _callable_accepts_keyword(
+                    _pre_compress_hook, "evidence_messages"
+                )
+                _accepts_checkpoint = _callable_accepts_keyword(
+                    _pre_compress_hook, "require_checkpoint"
+                )
+                _accepts_checkpoint_version = _callable_accepts_keyword(
+                    _pre_compress_hook, "checkpoint_api_version"
+                )
+                if _accepts_evidence is not False:
+                    _pre_compress_kwargs["evidence_messages"] = _evidence_messages
+                if _checkpoint_required:
+                    if (
+                        _accepts_checkpoint is False
+                        or _accepts_checkpoint_version is False
+                    ):
+                        raise TypeError(
+                            "Configured memory manager does not support the required "
+                            "pre-compress checkpoint contract"
+                        )
+                    _pre_compress_kwargs.update(
+                        {
+                            "require_checkpoint": True,
+                            "checkpoint_api_version": 2,
+                        }
+                    )
+                _maybe_memory_context = _pre_compress_hook(
+                    messages,
+                    **_pre_compress_kwargs,
+                )
+                if isinstance(_maybe_memory_context, str):
+                    _memory_context = sanitize_context(_maybe_memory_context).strip()
             except Exception:
-                pass
+                if bool(getattr(self, "compression_checkpoint_required", False)):
+                    raise
 
-        try:
-            compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic)
-        except TypeError:
-            # Plugin context engine with strict signature that doesn't accept
-            # focus_topic — fall back to calling without it.
-            compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens)
+        # Inspect plugin capability before calling it.  A nested TypeError
+        # retry used to make a plugin's own body error look like an old
+        # signature and could execute a lossy compression twice.  Unknown
+        # callables retain the enriched call and fail through the normal
+        # compression boundary instead of being retried blindly.
+        _compress_kwargs = {"current_tokens": approx_tokens}
+        if _callable_accepts_keyword(
+            self.context_compressor.compress, "focus_topic"
+        ) is not False:
+            _compress_kwargs["focus_topic"] = focus_topic
+        if _callable_accepts_keyword(
+            self.context_compressor.compress, "memory_context"
+        ) is not False:
+            _compress_kwargs["memory_context"] = _memory_context
+        compressed = self.context_compressor.compress(messages, **_compress_kwargs)
 
         summary_error = getattr(self.context_compressor, "_last_summary_error", None)
         if summary_error:
@@ -11471,6 +11751,7 @@ class AIAgent:
 
         return final_response
 
+    @_attach_error_surface_to_run_result
     def run_conversation(
         self,
         user_message: str,
@@ -11479,6 +11760,7 @@ class AIAgent:
         task_id: str = None,
         stream_callback: Optional[callable] = None,
         persist_user_message: Optional[str] = None,
+        persist_user_timestamp: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Run a complete conversation with tool calling until completion.
@@ -11494,6 +11776,9 @@ class AIAgent:
             persist_user_message: Optional clean user message to store in
                 transcripts/history when user_message contains API-only
                 synthetic prefixes.
+            persist_user_timestamp: Optional platform event timestamp for the
+                current user row. When omitted, the metadata contract uses the
+                local wall clock; the value is removed from provider copies.
                     or queuing follow-up prefetch work.
 
         Returns:
@@ -11571,6 +11856,9 @@ class AIAgent:
         self._empty_content_retries = 0
         self._incomplete_scratchpad_retries = 0
         self._codex_incomplete_retries = 0
+        # Keep the last provider classification available to the decorated
+        # return boundary so early terminal branches do not lose its metadata.
+        self._last_classified_error = None
         self._thinking_prefill_retries = 0
         self._post_tool_empty_retried = False
         self._last_content_with_tools = None
@@ -11690,7 +11978,11 @@ class AIAgent:
 
         # Add user message
         user_msg = {"role": "user", "content": user_message}
-        messages.append(user_msg)
+        _append_message(
+            messages,
+            user_msg,
+            timestamp=persist_user_timestamp,
+        )
         current_turn_user_idx = len(messages) - 1
         self._persist_user_message_idx = current_turn_user_idx
         
@@ -11890,7 +12182,7 @@ class AIAgent:
         # Notify memory providers of the new turn so cadence tracking works.
         # Must happen BEFORE prefetch_all() so providers know which turn it is
         # and can gate context/dialectic refresh via contextCadence/dialecticCadence.
-        if self._memory_manager:
+        if self._memory_manager and not getattr(self, "_suppress_session_persistence", False):
             try:
                 _turn_msg = original_user_message if isinstance(original_user_message, str) else ""
                 self._memory_manager.on_turn_start(self._user_turn_count, _turn_msg)
@@ -11903,12 +12195,52 @@ class AIAgent:
         # Use original_user_message (clean input) — user_message may contain
         # injected skill content that bloats / breaks provider queries.
         _ext_prefetch_cache = ""
-        if self._memory_manager:
+        if self._memory_manager and not getattr(self, "_suppress_session_persistence", False):
             try:
                 _query = original_user_message if isinstance(original_user_message, str) else ""
-                _ext_prefetch_cache = self._memory_manager.prefetch_all(_query) or ""
+                # Acknowledgements, greetings, and slash commands do not carry
+                # semantic recall signal.  Skipping them avoids injecting stale
+                # memory into a turn whose only intent is confirmation/control.
+                if not is_trivial_prompt(_query):
+                    _prefetch_hook = self._memory_manager.prefetch_all
+                    if _callable_accepts_keyword(
+                        _prefetch_hook, "session_id"
+                    ) is False:
+                        # Keep injected/custom legacy manager facades usable
+                        # while the built-in manager carries session scope.
+                        _ext_prefetch_cache = _prefetch_hook(_query) or ""
+                    else:
+                        _ext_prefetch_cache = self._memory_manager.prefetch_all(
+                            _query,
+                            session_id=self.session_id or "",
+                        ) or ""
             except Exception:
                 pass
+            if _ext_prefetch_cache:
+                try:
+                    _recall_indicator = self._memory_manager.describe_recall()
+                    if _recall_indicator:
+                        self._emit_status(_recall_indicator)
+                except Exception:
+                    pass
+
+        # When an explicit v26 message-sidecar column is present, stamp the
+        # exact API-only composition onto the canonical user row. v11 keeps
+        # the historical in-memory injection path and never creates a sidecar.
+        if "api_content" in self._session_message_metadata_columns():
+            if 0 <= current_turn_user_idx < len(messages):
+                _sidecar_user = messages[current_turn_user_idx]
+                if _sidecar_user.get("role") == "user":
+                    _sidecar_content = _compose_user_api_content(
+                        _sidecar_user.get("content", ""),
+                        _ext_prefetch_cache,
+                        _plugin_user_context,
+                    )
+                    if (
+                        _sidecar_content is not None
+                        and _sidecar_content != _sidecar_user.get("content")
+                    ):
+                        _sidecar_user["api_content"] = _sidecar_content
 
         while (api_call_count < self.max_iterations and self.iteration_budget.remaining > 0) or self._budget_grace_call:
             # Reset per-turn checkpoint dedup so each iteration can take one snapshot
@@ -12056,7 +12388,16 @@ class AIAgent:
 
             api_messages = []
             for idx, msg in enumerate(messages):
-                api_msg = msg.copy()
+                # Build the provider-facing copy through the TurnContext
+                # contract. This structurally detaches nested containers
+                # before the existing sanitizers/canonicalizers rewrite them,
+                # and consumes any ``api_content`` sidecar only on the copy.
+                # The canonical transcript remains the owner.
+                api_msg = _clone_message_for_api(msg)
+                _has_api_sidecar = (
+                    isinstance(msg.get("api_content"), str)
+                    and bool(msg.get("api_content"))
+                )
 
                 # Inject ephemeral context into the current turn's user message.
                 # Sources: memory manager prefetch + plugin pre_llm_call hooks
@@ -12064,17 +12405,22 @@ class AIAgent:
                 # API-call-time only — the original message in `messages` is
                 # never mutated, so nothing leaks into session persistence.
                 if idx == current_turn_user_idx and msg.get("role") == "user":
-                    _injections = []
-                    if _ext_prefetch_cache:
-                        _fenced = build_memory_context_block(_ext_prefetch_cache)
-                        if _fenced:
-                            _injections.append(_fenced)
-                    if _plugin_user_context:
-                        _injections.append(_plugin_user_context)
-                    if _injections:
-                        _base = api_msg.get("content", "")
-                        if isinstance(_base, str):
-                            api_msg["content"] = _base + "\n\n" + "\n\n".join(_injections)
+                    # A stamped sidecar is already the exact API-facing
+                    # composition for this turn. Do not append the current
+                    # prefetch/plugin context a second time. Contract retry
+                    # and persistence suppression remain gateway-owned.
+                    if not _has_api_sidecar:
+                        # Keep the wire projection identical to the gated
+                        # sidecar producer above.  A single helper prevents
+                        # future changes from making persisted api_content
+                        # drift from the bytes sent to the provider.
+                        _composed_api_content = _compose_user_api_content(
+                            api_msg.get("content", ""),
+                            _ext_prefetch_cache,
+                            _plugin_user_context,
+                        )
+                        if _composed_api_content is not None:
+                            api_msg["content"] = _composed_api_content
 
                 # For ALL assistant messages, pass reasoning back to the API
                 # This ensures multi-turn reasoning context is preserved
@@ -12725,6 +13071,52 @@ class AIAgent:
                                 "error": _exhaust_error,
                             }
 
+                        # A model can spend its whole output budget echoing a
+                        # fragment. Continuing such a response would append
+                        # the pathological text to the session and may flood
+                        # platform message limits, so stop before adding the
+                        # truncated assistant message to history. Reasoning
+                        # blocks are excluded from the check because they are
+                        # not visible response content.
+                        _visible_trunc = (
+                            self._strip_think_blocks(_trunc_content)
+                            if isinstance(_trunc_content, str)
+                            else _trunc_content
+                        )
+                        _repetition_dominated = (
+                            not _trunc_has_tool_calls
+                            and bool(_visible_trunc)
+                            and is_repetition_dominated(_visible_trunc)
+                        )
+                        if _repetition_dominated:
+                            _repetition_error = (
+                                "Model output entered a repetition loop and was "
+                                "truncated mid-loop; refusing to continue a "
+                                "degenerate response."
+                            )
+                            self._vprint(
+                                f"{self.log_prefix}Response dominated by repeated "
+                                "text; stopping instead of continuing.",
+                                force=True,
+                            )
+                            _repetition_response = (
+                                "Response Stopped - Repetition Detected\n\n"
+                                "The model entered a repetition loop while "
+                                "writing this response, so the partial response "
+                                "was discarded. Try resending the message or "
+                                "switching models."
+                            )
+                            self._cleanup_task_resources(effective_task_id)
+                            self._persist_session(messages, conversation_history)
+                            return {
+                                "final_response": _repetition_response,
+                                "messages": messages,
+                                "api_calls": api_call_count,
+                                "completed": False,
+                                "partial": True,
+                                "error": _repetition_error,
+                            }
+
                         if self.api_mode in ("chat_completions", "bedrock_converse", "anthropic_messages"):
                             assistant_message = _trunc_msg
                             if assistant_message is not None and not _trunc_has_tool_calls:
@@ -13226,6 +13618,7 @@ class AIAgent:
                         context_length=_ctx_len,
                         num_messages=len(api_messages) if api_messages else 0,
                     )
+                    self._last_classified_error = classified
                     logger.debug(
                         "Error classified: reason=%s status=%s retryable=%s compress=%s rotate=%s fallback=%s",
                         classified.reason.value, classified.status_code,
@@ -14817,18 +15210,67 @@ class AIAgent:
                             _has_structured
                             and self._thinking_prefill_retries >= 2
                         )
-                        if _truly_empty and (not _has_structured or _prefill_exhausted) and self._empty_content_retries < 3:
+                        _empty_candidate = _truly_empty and (
+                            not _has_structured or _prefill_exhausted
+                        )
+                        if _empty_candidate:
+                            # Record before incrementing the retry counter so
+                            # the guard can identify the beginning of a new
+                            # streak. Missing usage and unknown pricing fail
+                            # open inside the guard and retain a 3-retry cap.
+                            _empty_guard.record_empty_attempt(
+                                self,
+                                finish_reason=finish_reason,
+                                response=response,
+                            )
+                        _empty_retry_budget = (
+                            _empty_guard.empty_retry_budget(self, response)
+                            if _empty_candidate
+                            else _empty_guard.DEFAULT_EMPTY_RETRY_BUDGET
+                        )
+                        _deterministic_empty = _empty_candidate and (
+                            _empty_guard.deterministic_empty(self)
+                        )
+                        if (
+                            _empty_candidate
+                            and self._empty_content_retries < _empty_retry_budget
+                            and not _deterministic_empty
+                        ):
                             self._empty_content_retries += 1
                             logger.warning(
                                 "Empty response (no content or reasoning) — "
-                                "retry %d/3 (model=%s)",
-                                self._empty_content_retries, self.model,
+                                "retry %d/%d (model=%s)",
+                                self._empty_content_retries,
+                                _empty_retry_budget,
+                                self.model,
+                            )
+                            _budget_note = (
+                                " — high-cost request, reduced retry budget"
+                                if _empty_retry_budget < _empty_guard.DEFAULT_EMPTY_RETRY_BUDGET
+                                else ""
                             )
                             self._emit_status(
                                 f"⚠️ Empty response from model — retrying "
-                                f"({self._empty_content_retries}/3)"
+                                f"({self._empty_content_retries}/{_empty_retry_budget})"
+                                f"{_budget_note}"
                             )
                             continue
+
+                        if _truly_empty and _deterministic_empty:
+                            logger.warning(
+                                "Deterministic empty response detected "
+                                "(consecutive zero-output completions, "
+                                "model=%s provider=%s finish_reason=%s) — "
+                                "skipping remaining retries",
+                                self.model,
+                                self.provider,
+                                finish_reason,
+                            )
+                            self._emit_status(
+                                "⚠️ Model is deterministically returning empty "
+                                "(zero output tokens) — skipping further retries "
+                                "to avoid repeat charges"
+                            )
 
                         # ── Exhausted retries — try fallback provider ──
                         # Before giving up with "(empty)", attempt to
@@ -14863,6 +15305,13 @@ class AIAgent:
                         # Exhausted retries and fallback chain (or no
                         # fallback configured).  Fall through to the
                         # "(empty)" terminal.
+                        _streak_cost = _empty_guard.streak_cost_usd(self)
+                        if _streak_cost is not None:
+                            self._emit_status(
+                                "ℹ️ Estimated cost of these empty attempts: "
+                                f"~${_streak_cost:.2f} (input tokens are billed "
+                                "per attempt even when no answer is produced)"
+                            )
                         _turn_exit_reason = "empty_response_exhausted"
                         reasoning_text = self._extract_reasoning(assistant_message)
                         self._drop_trailing_empty_response_scaffolding(messages)
@@ -15183,6 +15632,18 @@ class AIAgent:
             "cost_status": self.session_cost_status,
             "cost_source": self.session_cost_source,
         }
+        if final_response == "(empty)" and not interrupted:
+            # Keep the existing sentinel for CLI/gateway user-facing
+            # explanation, but expose the terminal outcome to structured
+            # clients and transcript retention logic.
+            result.update(
+                {
+                    "failed": True,
+                    "failure_reason": "empty_response",
+                    "failure_retryable": False,
+                    "error": "Model returned no content after all retries.",
+                }
+            )
         if self._tool_guardrail_halt_decision is not None:
             result["guardrail"] = self._tool_guardrail_halt_decision.to_metadata()
         # If a /steer landed after the final assistant turn (no more tool
@@ -15216,6 +15677,7 @@ class AIAgent:
             original_user_message=original_user_message,
             final_response=final_response,
             interrupted=interrupted,
+            messages=list(messages),
         )
 
         # Background memory/skill review — runs AFTER the response is delivered

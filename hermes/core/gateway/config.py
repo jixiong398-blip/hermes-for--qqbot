@@ -386,9 +386,10 @@ _PLATFORM_CONNECTED_CHECKERS: dict[Platform, Callable[[PlatformConfig], bool]] =
     Platform.BLUEBUBBLES: lambda cfg: bool(
         cfg.extra.get("server_url") and cfg.extra.get("password")
     ),
-    Platform.QQBOT: lambda cfg: bool(
-        cfg.extra.get("app_id") and cfg.extra.get("client_secret")
-    ),
+    # Official QQ Bot API support was removed from this distribution.  Keep
+    # the enum as a migration sentinel for old YAML files, but never report it
+    # as connected: the only supported QQ runtime is the OneBot/NapCat plugin.
+    Platform.QQBOT: lambda cfg: False,
     Platform.YUANBAO: lambda cfg: bool(
         cfg.extra.get("app_id") and cfg.extra.get("app_secret")
     ),
@@ -446,6 +447,14 @@ class GatewayConfig:
     # fresh session exactly as if the reset policy had fired.  0 = disabled.
     session_store_max_age_days: int = 90
 
+    # Optional state.db routing index.  Legacy sessions.json remains the
+    # default primary store until this is explicitly enabled.
+    durable_routing: bool = False
+
+    # Optional cross-process turn leases. The in-process registry remains the
+    # default until an integration explicitly enables this port.
+    durable_turn_leases: bool = False
+
     def get_connected_platforms(self) -> List[Platform]:
         """Return list of platforms that are enabled and configured."""
         connected = []
@@ -458,6 +467,8 @@ class GatewayConfig:
 
     def _is_platform_connected(self, platform: Platform, config: PlatformConfig) -> bool:
         """Check whether a single platform is sufficiently configured."""
+        if platform == Platform.QQBOT:
+            return False
         # Weixin requires both a token and an account_id (checked first so
         # the generic token branch doesn't let it through without account_id).
         if platform == Platform.WEIXIN:
@@ -539,6 +550,8 @@ class GatewayConfig:
             "unauthorized_dm_behavior": self.unauthorized_dm_behavior,
             "streaming": self.streaming.to_dict(),
             "session_store_max_age_days": self.session_store_max_age_days,
+            "durable_routing": self.durable_routing,
+            "durable_turn_leases": self.durable_turn_leases,
         }
     
     @classmethod
@@ -608,6 +621,8 @@ class GatewayConfig:
             unauthorized_dm_behavior=unauthorized_dm_behavior,
             streaming=StreamingConfig.from_dict(data.get("streaming", {})),
             session_store_max_age_days=session_store_max_age_days,
+            durable_routing=_coerce_bool(data.get("durable_routing"), False),
+            durable_turn_leases=_coerce_bool(data.get("durable_turn_leases"), False),
         )
 
     def get_unauthorized_dm_behavior(self, platform: Optional[Platform] = None) -> str:
@@ -694,6 +709,12 @@ def load_gateway_config() -> GatewayConfig:
 
             if "thread_sessions_per_user" in yaml_cfg:
                 gw_data["thread_sessions_per_user"] = yaml_cfg["thread_sessions_per_user"]
+
+            if "durable_routing" in yaml_cfg:
+                gw_data["durable_routing"] = yaml_cfg["durable_routing"]
+
+            if "durable_turn_leases" in yaml_cfg:
+                gw_data["durable_turn_leases"] = yaml_cfg["durable_turn_leases"]
 
             streaming_cfg = yaml_cfg.get("streaming")
             if isinstance(streaming_cfg, dict):
@@ -1622,47 +1643,22 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             thread_id=os.getenv("BLUEBUBBLES_HOME_CHANNEL_THREAD_ID") or None,
         )
 
-    # QQ (Official Bot API v2)
+    # Legacy QQ Bot API v2 migration sentinel.  The official adapter and REST
+    # transport were removed; retain old keys only long enough to emit a clear
+    # migration warning.  Never enable the phantom platform.
     qq_app_id = os.getenv("QQ_APP_ID")
     qq_client_secret = os.getenv("QQ_CLIENT_SECRET")
-    if qq_app_id or qq_client_secret:
+    if qq_app_id or qq_client_secret or Platform.QQBOT in config.platforms:
         if Platform.QQBOT not in config.platforms:
             config.platforms[Platform.QQBOT] = PlatformConfig()
-        config.platforms[Platform.QQBOT].enabled = True
+        config.platforms[Platform.QQBOT].enabled = False
         extra = config.platforms[Platform.QQBOT].extra
-        if qq_app_id:
-            extra["app_id"] = qq_app_id
-        if qq_client_secret:
-            extra["client_secret"] = qq_client_secret
-        qq_allowed_users = os.getenv("QQ_ALLOWED_USERS", "").strip()
-        if qq_allowed_users:
-            extra["allow_from"] = qq_allowed_users
-        qq_group_allowed = os.getenv("QQ_GROUP_ALLOWED_USERS", "").strip()
-        if qq_group_allowed:
-            extra["group_allow_from"] = qq_group_allowed
-        qq_home = os.getenv("QQBOT_HOME_CHANNEL", "").strip()
-        qq_home_name_env = "QQBOT_HOME_CHANNEL_NAME"
-        if not qq_home:
-            # Back-compat: accept the pre-rename name and log a one-time warning.
-            legacy_home = os.getenv("QQ_HOME_CHANNEL", "").strip()
-            if legacy_home:
-                qq_home = legacy_home
-                qq_home_name_env = "QQ_HOME_CHANNEL_NAME"
-                logging.getLogger(__name__).warning(
-                    "QQ_HOME_CHANNEL is deprecated; rename to QQBOT_HOME_CHANNEL "
-                    "in your .env for consistency with the platform key."
-                )
-        if qq_home:
-            config.platforms[Platform.QQBOT].home_channel = HomeChannel(
-                platform=Platform.QQBOT,
-                chat_id=qq_home,
-                name=os.getenv("QQBOT_HOME_CHANNEL_NAME") or os.getenv(qq_home_name_env, "Home"),
-                thread_id=(
-                    os.getenv("QQBOT_HOME_CHANNEL_THREAD_ID")
-                    or os.getenv("QQ_HOME_CHANNEL_THREAD_ID")
-                    or None
-                ),
-            )
+        extra["legacy_configured"] = bool(qq_app_id or qq_client_secret)
+        logging.getLogger(__name__).warning(
+            "Legacy QQBot configuration detected but the official QQBot adapter "
+            "is no longer included. Configure the OneBot/NapCat plugin instead "
+            "(ONEBOT_WS_URL, ONEBOT_HTTP_URL, and ONEBOT_HOME_CHANNEL)."
+        )
 
     # Yuanbao — YUANBAO_APP_ID preferred
     yuanbao_app_id = os.getenv("YUANBAO_APP_ID") or os.getenv("YUANBAO_APP_KEY")

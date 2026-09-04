@@ -209,10 +209,11 @@ def _find_bash() -> str:
             if os.path.isfile(candidate):
                 return candidate
 
-    found = shutil.which("bash")
-    if found:
-        return found
-
+    # ``C:\\Windows\\System32\\bash.exe`` is the WSL launcher on modern
+    # Windows, not Git Bash. It can report success while commands such as
+    # ``sleep`` are unavailable to the native process environment, which
+    # breaks timeout/cleanup semantics. Prefer an installed Git Bash path;
+    # only accept PATH's bash after excluding that shim.
     for candidate in (
         os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
         os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Git", "bin", "bash.exe"),
@@ -220,6 +221,18 @@ def _find_bash() -> str:
     ):
         if candidate and os.path.isfile(candidate):
             return candidate
+
+    found = shutil.which("bash")
+    if found:
+        try:
+            system_root = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
+            found_path = Path(found).resolve()
+            if found_path.parent == (system_root / "System32") and found_path.name.lower() == "bash.exe":
+                found = None
+        except OSError:
+            pass
+        if found:
+            return found
 
     raise RuntimeError(
         "Git Bash not found. Hermes Agent requires Git for Windows on Windows.\n"
@@ -367,6 +380,9 @@ class LocalEnvironment(BaseEnvironment):
     Session snapshot preserves env vars across calls.
     CWD persists via file-based read after each command.
     """
+
+    is_local = True
+    _profile_scoped_passthrough = True
 
     def __init__(self, cwd: str = "", timeout: int = 60, env: dict = None):
         if cwd:

@@ -224,3 +224,69 @@ def test_docker_env_is_bridged_everywhere():
     assert "docker_env" in _gateway_env_map_keys()
     assert "docker_env" in _save_config_env_sync_keys()
     assert "TERMINAL_DOCKER_ENV" in _terminal_tool_env_var_names()
+
+
+def test_docker_runtime_controls_are_bridged_everywhere():
+    """Docker reuse/network/extra-args controls must reach every entry point."""
+    required = {
+        "docker_network": "TERMINAL_DOCKER_NETWORK",
+        "docker_extra_args": "TERMINAL_DOCKER_EXTRA_ARGS",
+        "docker_persist_across_processes": "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES",
+        "docker_shared_container_key": "TERMINAL_DOCKER_SHARED_CONTAINER_KEY",
+    }
+    cli = _cli_env_map_keys()
+    gateway = _gateway_env_map_keys()
+    saved = _save_config_env_sync_keys()
+    consumed = _terminal_tool_env_var_names()
+    for key, env_var in required.items():
+        assert key in cli
+        assert key in gateway
+        assert key in saved
+        assert env_var in consumed
+
+
+def test_docker_runtime_controls_are_parsed_and_passed_to_constructor(monkeypatch):
+    """The terminal path must consume the bridged values, not just expose them."""
+    import tools.terminal_tool as terminal_module
+
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_DOCKER_NETWORK", "false")
+    monkeypatch.setenv("TERMINAL_DOCKER_EXTRA_ARGS", '["--cpus=2"]')
+    monkeypatch.setenv("TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES", "true")
+    monkeypatch.setenv("TERMINAL_DOCKER_SHARED_CONTAINER_KEY", "team/workspace")
+
+    config = terminal_module._get_env_config()
+    assert config["docker_network"] is False
+    assert config["docker_extra_args"] == ["--cpus=2"]
+    assert config["docker_persist_across_processes"] is True
+    assert config["docker_shared_container_key"] == "team/workspace"
+
+    captured = {}
+
+    class FakeDockerEnvironment:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(terminal_module, "_DockerEnvironment", FakeDockerEnvironment)
+    terminal_module._create_environment(
+        env_type="docker",
+        image="python:3.11",
+        cwd="/workspace",
+        timeout=60,
+        container_config={
+            "container_cpu": 1,
+            "container_memory": 512,
+            "container_disk": 1024,
+            "container_persistent": True,
+            "docker_network": False,
+            "docker_extra_args": ["--network=none"],
+            "docker_persist_across_processes": True,
+            "docker_shared_container_key": "team/workspace",
+        },
+        task_id="session-1",
+    )
+
+    assert captured["network"] is False
+    assert captured["extra_args"] == ["--network=none"]
+    assert captured["persist_across_processes"] is True
+    assert captured["shared_container_key"] == "team/workspace"

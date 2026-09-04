@@ -83,12 +83,16 @@ class MemoryRetriever:
 
     def recall(self, query: str, session_id: Optional[str] = None,
                include_sources: Optional[List[str]] = None,
-               limit_per_source: int = 5) -> List[RetrievalResult]:
+               limit_per_source: int = 5,
+               chat_type: Optional[str] = None) -> List[RetrievalResult]:
         """Unified recall across all memory sources.
 
         Args:
             query: The search query (user message or topic)
             session_id: Current session ID for STM context
+            chat_type: Optional explicit chat scope. ``None`` preserves
+                legacy session-only retrieval; when provided it is passed to
+                STM and EPI so a shared/legacy session cannot cross scopes.
             include_sources: Which sources to query (None = all)
             limit_per_source: Max results per source
 
@@ -99,11 +103,17 @@ class MemoryRetriever:
         all_results: List[RetrievalResult] = []
 
         if "short_term" in sources and session_id:
-            stm_results = self._retrieve_stm(query, session_id, limit_per_source)
+            stm_results = self._retrieve_stm(
+                query, session_id, limit_per_source, chat_type=chat_type
+            )
             all_results.extend(stm_results)
 
         if "episode" in sources and self.epi is not None:
-            all_results.extend(self._retrieve_episodes(query, session_id))
+            all_results.extend(
+                self._retrieve_episodes(
+                    query, session_id, chat_type=chat_type
+                )
+            )
 
         if "long_term" in sources:
             ltm_results = self._retrieve_ltm(query, limit_per_source)
@@ -121,9 +131,20 @@ class MemoryRetriever:
         all_results.sort(key=lambda r: -r.relevance * self.source_weights.get(r.source, 0.5))
         return all_results
 
-    def _retrieve_stm(self, query: str, session_id: str, limit: int) -> List[RetrievalResult]:
+    def _retrieve_stm(
+        self,
+        query: str,
+        session_id: str,
+        limit: int,
+        *,
+        chat_type: Optional[str] = None,
+    ) -> List[RetrievalResult]:
         """Retrieve from short-term memory."""
-        entries = self.stm.get_recent(session_id, n=limit * 2)
+        entries = self.stm.get_recent(
+            session_id,
+            n=limit * 2,
+            chat_type=chat_type,
+        )
         results = []
 
         query_words = set(tokenize_for_match(query))
@@ -156,10 +177,19 @@ class MemoryRetriever:
         results.sort(key=lambda r: -r.relevance)
         return results[:limit]
 
-    def _retrieve_episodes(self, query: str,
-                           session_id: Optional[str]) -> List[RetrievalResult]:
+    def _retrieve_episodes(
+        self,
+        query: str,
+        session_id: Optional[str],
+        *,
+        chat_type: Optional[str] = None,
+    ) -> List[RetrievalResult]:
         try:
-            frags = self.epi.search(query, exclude_session=session_id)
+            frags = self.epi.search(
+                query,
+                exclude_session=session_id,
+                target_chat_type=chat_type,
+            )
         except Exception:
             logger.debug("episode search failed", exc_info=True)
             return []

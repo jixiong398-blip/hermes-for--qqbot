@@ -236,15 +236,26 @@ class ShortTermMemory:
         return self._store.add_short_term(entry)
 
     def get_recent(self, session_id: str, n: int = 10,
-                   chat_type: str = "dm",
+                   chat_type: Optional[str] = None,
                    bot_replied_only: bool = False) -> List[ShortTermEntry]:
         """获取最近 N 条未摘要的对话.
 
         Args:
+            chat_type: Optional explicit scope guard. ``None`` preserves the
+                historical session-only lookup used by consolidation and
+                legacy callers; a value filters rows to that exact normalized
+                chat type before rendering context.
             bot_replied_only: 群聊场景下, True=只看bot参与过的对话, False=全部
         """
         entries = self._store.get_session_entries(session_id, last_n=n * 2)
-        if chat_type == "group" and bot_replied_only:
+        expected_type = str(chat_type).strip().lower() if chat_type else ""
+        if expected_type:
+            entries = [
+                entry
+                for entry in entries
+                if str(entry.chat_type or "dm").strip().lower() == expected_type
+            ]
+        if expected_type == "group" and bot_replied_only:
             entries = [e for e in entries if e.bot_replied]
         return entries[-n:]
 

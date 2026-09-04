@@ -1,4 +1,4 @@
-"""
+r"""
          ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
          │      清   尘   璃   落      │
          └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
@@ -183,13 +183,20 @@ class UnifiedMemoryGateway:
     # ── Recall / Context Retrieval ────────────────────────────
 
     def recall(self, query: str, session_id: Optional[str] = None,
-               max_chars: int = 4000) -> str:
+               max_chars: int = 4000,
+               *, chat_type: Optional[str] = None) -> str:
         """Unified recall — returns formatted context for the LLM."""
-        structured = self.recall_structured(query, session_id, max_chars)
+        structured = self.recall_structured(
+            query,
+            session_id,
+            max_chars,
+            chat_type=chat_type,
+        )
         return structured["prompt"]
 
     def recall_structured(self, query: str, session_id: Optional[str] = None,
-                           max_chars: int = 4000) -> dict:
+                           max_chars: int = 4000,
+                           *, chat_type: Optional[str] = None) -> dict:
         """Recall with structured output — returns prompt + recalled memory IDs.
 
         Runs L1 reconsolidation on every LTM hit (bumps recall_strength,
@@ -198,7 +205,12 @@ class UnifiedMemoryGateway:
           - recalled_ids: list of LTM entry IDs that were hit
           - results: list of RetrievalResult objects
         """
-        results = self._retriever.recall(query, session_id, limit_per_source=10)
+        results = self._retriever.recall(
+            query,
+            session_id,
+            limit_per_source=10,
+            chat_type=chat_type,
+        )
 
         ltm_seed_ids = [r.metadata["id"] for r in results
                         if r.source == "long_term" and r.metadata.get("id")]
@@ -285,7 +297,11 @@ class UnifiedMemoryGateway:
                                session_id: Optional[str] = None,
                                chat_type: str = "dm") -> str:
         """Get the complete memory context to inject into the agent's prompt."""
-        context = self.recall(user_message, session_id)
+        context = self.recall(
+            user_message,
+            session_id,
+            chat_type=chat_type,
+        )
         # Prepend STM context with chat_type awareness
         if session_id:
             stm_context = self._stm.get_session_summary_context(session_id, chat_type)
@@ -352,10 +368,16 @@ class UnifiedMemoryGateway:
         return "group" if ":group:" in (session_id or "") else "dm"
 
     def recall_episodes(self, query: str, session_id: Optional[str] = None,
-                        limit: int = 2) -> List[Dict[str, Any]]:
+                        limit: int = 2,
+                        *, chat_type: Optional[str] = None) -> List[Dict[str, Any]]:
         if not self._epi:
             return []
-        frags = self._epi.search(query, exclude_session=session_id, limit=limit)
+        frags = self._epi.search(
+            query,
+            exclude_session=session_id,
+            limit=limit,
+            target_chat_type=chat_type,
+        )
         return [
             {"id": f.id, "scope": f.scope, "share_level": f.share_level,
              "score": round(f.score, 3), "age_days": round(f.age_days(), 1),

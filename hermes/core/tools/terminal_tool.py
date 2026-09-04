@@ -67,6 +67,7 @@ from tools.interrupt import is_interrupted, _interrupt_event  # noqa: F401 — r
 
 # Singularity helpers (scratch dir, SIF cache) now live in tools/environments/singularity.py
 from tools.environments.singularity import _get_scratch_dir
+from tools.environments.base import BaseEnvironment, EnvironmentConnectionError
 from tools.tool_backend_helpers import (
     coerce_modal_mode,
     has_direct_modal_credentials,
@@ -1008,6 +1009,10 @@ def _get_env_config() -> Dict[str, Any]:
     # Default image with Python and Node.js for maximum compatibility
     default_image = "nikolaik/python-nodejs:python3.11-nodejs20"
     env_type = os.getenv("TERMINAL_ENV", "local")
+    container_backend = env_type in {
+        "docker", "singularity", "modal", "daytona", "vercel_sandbox",
+    }
+    docker_backend = env_type == "docker"
     
     mount_docker_cwd = os.getenv("TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE", "false").lower() in ("true", "1", "yes")
 
@@ -1051,11 +1056,45 @@ def _get_env_config() -> Dict[str, Any]:
                         cwd, env_type, default_cwd)
             cwd = default_cwd
 
+    # Docker-only JSON values are intentionally parsed only for the Docker
+    # backend.  A stale or malformed Docker setting must not make local/SSH
+    # terminal execution unusable; this mirrors the upstream backend-scoped
+    # configuration boundary.
+    if docker_backend:
+        docker_forward_env = _parse_env_var(
+            "TERMINAL_DOCKER_FORWARD_ENV", "[]", json.loads, "valid JSON"
+        )
+        docker_volumes = _parse_env_var(
+            "TERMINAL_DOCKER_VOLUMES", "[]", json.loads, "valid JSON"
+        )
+        docker_env = _parse_env_var(
+            "TERMINAL_DOCKER_ENV", "{}", json.loads, "valid JSON"
+        )
+        docker_extra_args = _parse_env_var(
+            "TERMINAL_DOCKER_EXTRA_ARGS", "[]", json.loads, "valid JSON"
+        )
+    else:
+        docker_forward_env = []
+        docker_volumes = []
+        docker_env = {}
+        docker_extra_args = []
+
+    if container_backend:
+        container_cpu = _parse_env_var(
+            "TERMINAL_CONTAINER_CPU", "1", float, "number"
+        )
+        container_memory = _parse_env_var("TERMINAL_CONTAINER_MEMORY", "5120")
+        container_disk = _parse_env_var("TERMINAL_CONTAINER_DISK", "51200")
+    else:
+        container_cpu = 1.0
+        container_memory = 5120
+        container_disk = 51200
+
     return {
         "env_type": env_type,
         "modal_mode": coerce_modal_mode(os.getenv("TERMINAL_MODAL_MODE", "auto")),
         "docker_image": os.getenv("TERMINAL_DOCKER_IMAGE", default_image),
-        "docker_forward_env": _parse_env_var("TERMINAL_DOCKER_FORWARD_ENV", "[]", json.loads, "valid JSON"),
+        "docker_forward_env": docker_forward_env,
         "singularity_image": os.getenv("TERMINAL_SINGULARITY_IMAGE", f"docker://{default_image}"),
         "modal_image": os.getenv("TERMINAL_MODAL_IMAGE", default_image),
         "daytona_image": os.getenv("TERMINAL_DAYTONA_IMAGE", default_image),
@@ -1080,13 +1119,24 @@ def _get_env_config() -> Dict[str, Any]:
         "local_persistent": os.getenv("TERMINAL_LOCAL_PERSISTENT", "false").lower() in ("true", "1", "yes"),
         # Container resource config (applies to docker, singularity, modal,
         # daytona, and vercel_sandbox -- ignored for local/ssh)
-        "container_cpu": _parse_env_var("TERMINAL_CONTAINER_CPU", "1", float, "number"),
-        "container_memory": _parse_env_var("TERMINAL_CONTAINER_MEMORY", "5120"),     # MB (default 5GB)
-        "container_disk": _parse_env_var("TERMINAL_CONTAINER_DISK", "51200"),        # MB (default 50GB)
+        "container_cpu": container_cpu,              # MB/CPU defaults are backend-scoped
+        "container_memory": container_memory,        # MB (default 5GB)
+        "container_disk": container_disk,            # MB (default 50GB)
         "container_persistent": os.getenv("TERMINAL_CONTAINER_PERSISTENT", "true").lower() in ("true", "1", "yes"),
-        "docker_volumes": _parse_env_var("TERMINAL_DOCKER_VOLUMES", "[]", json.loads, "valid JSON"),
-        "docker_env": _parse_env_var("TERMINAL_DOCKER_ENV", "{}", json.loads, "valid JSON"),
+        "docker_volumes": docker_volumes,
+        "docker_env": docker_env,
         "docker_run_as_host_user": os.getenv("TERMINAL_DOCKER_RUN_AS_HOST_USER", "false").lower() in ("true", "1", "yes"),
+        # Filesystem persistence and cross-process container persistence are
+        # separate controls.  Keep the latter opt-in until live daemon and
+        # profile-race evidence is available.
+        "docker_network": os.getenv("TERMINAL_DOCKER_NETWORK", "true").lower() in ("true", "1", "yes"),
+        "docker_extra_args": docker_extra_args,
+        "docker_persist_across_processes": os.getenv(
+            "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES", "false"
+        ).lower() in ("true", "1", "yes"),
+        "docker_shared_container_key": os.getenv(
+            "TERMINAL_DOCKER_SHARED_CONTAINER_KEY", ""
+        ).strip(),
     }
 
 
@@ -1129,11 +1179,19 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
     volumes = cc.get("docker_volumes", [])
     docker_forward_env = cc.get("docker_forward_env", [])
     docker_env = cc.get("docker_env", {})
+    docker_extra_args = cc.get("docker_extra_args", [])
+    docker_network = cc.get("docker_network", True)
 
     if env_type == "local":
         return _LocalEnvironment(cwd=cwd, timeout=timeout)
     
     elif env_type == "docker":
+        # Per-task overrides (RL/benchmark/custom image runs) are isolated
+        # sandboxes by contract. Never let a cross-process reuse toggle make
+        # one override task attach to a prior process's container.
+        persist_across_processes = bool(
+            cc.get("docker_persist_across_processes", False)
+        ) and bool(persistent) and task_id not in _task_env_overrides
         return _DockerEnvironment(
             image=image, cwd=cwd, timeout=timeout,
             cpu=cpu, memory=memory, disk=disk,
@@ -1144,6 +1202,10 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
             forward_env=docker_forward_env,
             env=docker_env,
             run_as_host_user=cc.get("docker_run_as_host_user", False),
+            network=docker_network,
+            extra_args=docker_extra_args,
+            persist_across_processes=persist_across_processes,
+            shared_container_key=cc.get("docker_shared_container_key", ""),
         )
     
     elif env_type == "singularity":
@@ -1811,6 +1873,17 @@ def terminal_tool(
                             task_id=effective_task_id,
                             host_cwd=config.get("host_cwd"),
                         )
+                    except EnvironmentConnectionError as e:
+                        reason = str(getattr(e, "reason", "") or e).strip()
+                        retry_hint = str(getattr(e, "retry_hint", "") or "").strip()
+                        return json.dumps({
+                            "output": "",
+                            "exit_code": -1,
+                            "error": reason[:500] or "Environment backend is unavailable.",
+                            "status": "degraded",
+                            "retryable": True,
+                            "retry_hint": retry_hint[:500] or "Verify the environment backend and retry.",
+                        }, ensure_ascii=False)
                     except ImportError as e:
                         return json.dumps({
                             "output": "",
@@ -2006,6 +2079,12 @@ def terminal_tool(
                         "timeout": effective_timeout,
                         "cwd": workdir or cwd,
                     }
+                    # Bound only the model-facing terminal path. Internal
+                    # consumers (file operations, code execution, log reads)
+                    # call BaseEnvironment.execute() without this opt-in so
+                    # their read/modify/write payloads remain lossless.
+                    if isinstance(env, BaseEnvironment):
+                        execute_kwargs["bounded_capture"] = True
                     result = env.execute(command, **execute_kwargs)
                 except Exception as e:
                     error_str = str(e).lower()
@@ -2039,6 +2118,50 @@ def terminal_tool(
             # Extract output
             output = result.get("output", "")
             returncode = result.get("returncode", 0)
+            spill_total_chars = result.get("output_total_chars")
+            spill_file_path = result.get("full_output_path")
+
+            # The collector writes raw output so it can remain backend-agnostic.
+            # Redact that copy before exposing its path to the model; if the
+            # safety rewrite fails, drop the handle rather than leak secrets.
+            if spill_file_path:
+                safe_spill_path = None
+                try:
+                    spill_path = Path(spill_file_path)
+                    from hermes_constants import get_hermes_home
+
+                    spill_root = (get_hermes_home() / "cache" / "terminal-output").resolve(
+                        strict=True
+                    )
+                    resolved_spill = spill_path.resolve(strict=True)
+                    if spill_path.is_symlink() or resolved_spill.parent != spill_root:
+                        raise ValueError("spill path is outside the terminal output directory")
+                    safe_spill_path = resolved_spill
+                    raw_spill = spill_path.read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    from tools.ansi_strip import strip_ansi
+                    from agent.redact import redact_sensitive_text
+                    from tools.spill_safety import write_text_exclusive
+
+                    write_text_exclusive(
+                        spill_path,
+                        redact_sensitive_text(
+                            strip_ansi(raw_spill),
+                            force=True,
+                        ),
+                        private=True,
+                        overwrite=True,
+                    )
+                except Exception:
+                    if safe_spill_path is not None:
+                        try:
+                            safe_spill_path.unlink()
+                        except OSError:
+                            pass
+                    spill_total_chars = None
+                    spill_file_path = None
 
             # Add helpful message for sudo failures in messaging context
             output = _handle_sudo_failure(output, env_type)
@@ -2095,6 +2218,13 @@ def terminal_tool(
                 "exit_code": returncode,
                 "error": None,
             }
+            if spill_file_path:
+                result_dict["output_total_chars"] = spill_total_chars
+                result_dict["full_output_path"] = str(spill_file_path)
+                result_dict["truncation_note"] = (
+                    "Output exceeded the visible limit. Full output was saved to "
+                    "the referenced file; use read_file/search_files to inspect it."
+                )
             if approval_note:
                 result_dict["approval"] = approval_note
             if exit_note:

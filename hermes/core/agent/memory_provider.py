@@ -28,19 +28,65 @@ Optional hooks (override to opt in):
   on_pre_compress(messages) -> str       — extract before context compression
   on_memory_write(action, target, content, metadata=None) — mirror built-in memory writes
   on_delegation(task, result, **kwargs)  — parent-side observation of subagent work
+  backup_paths() -> list[str]             — extra paths for a future backup port
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
+# Version 1 is the historical best-effort pre-compression hook. Version 2 is
+# reserved for providers that can prove a durable, recoverable checkpoint.
+# Merely exposing this constant does not upgrade existing providers.
+PRE_COMPRESS_CHECKPOINT_API_VERSION = 2
+
+# Default glyph used by optional deterministic recall indicators.
+INDICATOR_GLYPH = "\U0001f9e0"
+
+
+@dataclass(frozen=True)
+class RecallStatus:
+    """Describe what the most recent provider prefetch injected."""
+
+    provider_label: str
+    count: int
+    glyph: str = INDICATOR_GLYPH
+
+
+# This helper is independent from platform routing. It is only a recall
+# throttle for acknowledgements, greetings, and other non-semantic prompts.
+TRIVIAL_PROMPT_RE = re.compile(
+    r"^(yes|no|ok|okay|sure|thanks|thank you|y|n|yep|nope|yeah|nah|"
+    r"hi|hey|hello|yo|sup|continue|go ahead|do it|proceed|got it|cool|"
+    r"nice|great|done|next|lgtm|k)"
+    r"[\s!?.:;,\"'~\u2018\u2019\u201c\u201d\u2014\u2013\u2026()\[\]{}<>*&^%$#@!+=`\u00a0]*$",
+    re.IGNORECASE,
+)
+
+
+def is_trivial_prompt(text: Optional[str]) -> bool:
+    """Return whether *text* carries no useful semantic recall signal."""
+    if not text:
+        return True
+    stripped = text.strip()
+    if not stripped or stripped.startswith("/"):
+        return True
+    return bool(TRIVIAL_PROMPT_RE.match(stripped))
+
+
 class MemoryProvider(ABC):
     """Abstract base class for memory providers."""
+
+    # Existing providers remain on the historical best-effort contract until
+    # they explicitly opt into the durable checkpoint API.
+    pre_compress_checkpoint_api_version = 1
 
     @property
     @abstractmethod
@@ -56,6 +102,10 @@ class MemoryProvider(ABC):
         Called during agent init to decide whether to activate the provider.
         Should not make network calls — just check config and installed deps.
         """
+
+    def unavailable_reason(self) -> str:
+        """Return a short actionable reason when the provider is unavailable."""
+        return ""
 
     @abstractmethod
     def initialize(self, session_id: str, **kwargs) -> None:
@@ -78,6 +128,7 @@ class MemoryProvider(ABC):
           - agent_workspace (str): Shared workspace name (e.g. "hermes").
           - parent_session_id (str): For subagents, the parent's session_id.
           - user_id (str): Platform user identifier (gateway sessions).
+          - user_id_alt (str): Optional alternate stable platform identifier.
         """
 
     def system_prompt_block(self) -> str:
@@ -111,11 +162,21 @@ class MemoryProvider(ABC):
         that do background prefetching should override this.
         """
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """Persist a completed turn to the backend.
 
         Called after each turn. Should be non-blocking — queue for
         background processing if the backend has latency.
+
+        ``messages`` is an optional OpenAI-style message list for providers
+        that need tool-call context. Legacy providers may ignore it.
         """
 
     @abstractmethod
@@ -138,6 +199,10 @@ class MemoryProvider(ABC):
 
     def shutdown(self) -> None:
         """Clean shutdown — flush queues, close connections."""
+
+    def recall_status(self) -> Optional[RecallStatus]:
+        """Return an optional observation of the most recent prefetch."""
+        return None
 
     # -- Optional hooks (override to opt in) ---------------------------------
 
@@ -166,6 +231,7 @@ class MemoryProvider(ABC):
         *,
         parent_session_id: str = "",
         reset: bool = False,
+        rewound: bool = False,
         **kwargs,
     ) -> None:
         """Called when the agent switches session_id mid-process.
@@ -195,6 +261,10 @@ class MemoryProvider(ABC):
             (``_session_turns``, ``_turn_counter``, etc.) when this is
             set. ``False`` for ``/resume`` / ``/branch`` / compression
             where the logical conversation continues under the new id.
+
+        ``rewound=True`` means the session id is unchanged but its transcript
+        was truncated; providers may invalidate per-turn caches. It is kept
+        separate from ``reset=True`` because the logical session continues.
 
         Default is no-op for backward compatibility.
         """
@@ -235,6 +305,10 @@ class MemoryProvider(ABC):
           required:    True if required (default: False)
           default:     default value (optional)
           choices:     list of valid values (optional)
+          type:        text, integer, number, or boolean (optional)
+          minimum:     numeric lower bound (optional)
+          maximum:     numeric upper bound (optional)
+          step:        numeric input step for UI rendering (optional)
           url:         URL where user can get this credential (optional)
           env_var:     explicit env var name for secrets (default: auto-generated)
 
@@ -277,3 +351,11 @@ class MemoryProvider(ABC):
 
         Use to mirror built-in memory writes to your backend.
         """
+
+    def backup_paths(self) -> List[str]:
+        """Return extra provider paths outside HERMES_HOME for backups.
+
+        The archive integration is intentionally separate. Defining this
+        default port does not scan the filesystem or change backup behavior.
+        """
+        return []

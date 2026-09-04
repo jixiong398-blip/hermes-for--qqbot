@@ -9,6 +9,12 @@ The terminal_tool.py factory (_create_environment) selects the backend
 based on the TERMINAL_ENV configuration.
 """
 
-from tools.environments.base import BaseEnvironment
+from tools.environments.base import BaseEnvironment, EnvironmentConnectionError
+from tools.environments.contract import EnvironmentCapabilitySnapshot, capability_snapshot
 
-__all__ = ["BaseEnvironment"]
+__all__ = [
+    "BaseEnvironment",
+    "EnvironmentConnectionError",
+    "EnvironmentCapabilitySnapshot",
+    "capability_snapshot",
+]

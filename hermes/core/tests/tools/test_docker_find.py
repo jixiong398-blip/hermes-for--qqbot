@@ -60,6 +60,12 @@ class TestFindDocker:
 
     def test_env_var_override_ignored_if_not_executable(self, tmp_path):
         """Non-executable HERMES_DOCKER_BINARY falls through to normal discovery."""
+        if os.name == "nt":
+            # NTFS does not expose POSIX execute bits: chmod(0o644) leaves a
+            # regular file executable to the Windows process API. Keep this
+            # assertion on POSIX, where the contract is observable, instead
+            # of treating a Windows filesystem limitation as a product bug.
+            pytest.skip("Windows has no POSIX execute-bit semantics")
         fake_binary = tmp_path / "podman"
         fake_binary.write_text("#!/bin/sh\n")
         fake_binary.chmod(0o644)  # not executable

@@ -510,17 +510,20 @@ def _handle_obsidian_search(gw, query: str, limit: int) -> str:
     # Add file modification times for time-based context
     import os, time
     from datetime import datetime
-    knowledge_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge")
-    if not os.path.isdir(knowledge_root):
-        knowledge_root = r"E:\ai\knowledge"
+    vault = getattr(gw, "obsidian", None)
+    knowledge_root = str(getattr(vault, "vault_path", "") or "").strip()
 
     enhanced = []
+    has_knowledge_root = os.path.isdir(knowledge_root)
     for r in results:
         item = dict(r)
         item["snippet"] = item.get("snippet", "")[:800]
         # Find the actual file to get modification time
         title = item.get("title", "")
         if title:
+            if not has_knowledge_root:
+                enhanced.append(item)
+                continue
             for root, dirs, files in os.walk(knowledge_root):
                 for f in files:
                     if f.endswith(".md") and title in f:

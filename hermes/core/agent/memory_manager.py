@@ -30,10 +30,15 @@ import re
 import inspect
 from typing import Any, Dict, List, Optional
 
-from agent.memory_provider import MemoryProvider
+from agent.memory_provider import (
+    MemoryProvider,
+    PRE_COMPRESS_CHECKPOINT_API_VERSION,
+)
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_PRE_COMPRESS_API_VERSION = 1
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +192,43 @@ def build_memory_context_block(raw_context: str) -> str:
     )
 
 
+def direct_messages_for_pre_compress_memory(messages: Any) -> List[Dict[str, Any]]:
+    """Return direct user/assistant evidence for checkpoint-capable providers.
+
+    Context summaries are derivative material, while tool rows and system
+    messages are execution scaffolding.  Provider v2 receives this normalized
+    view so every backend does not need to understand Hermes transcript
+    internals.  The historical raw-message contract remains available through
+    :meth:`MemoryManager.on_pre_compress` for v1 providers.
+    """
+
+    direct: List[Dict[str, Any]] = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        content = message.get("content")
+        # Both metadata-bearing summaries (newer persistence) and the local
+        # text prefixes are derivative and must not become new source facts.
+        if message.get("_compressed_summary"):
+            continue
+        if isinstance(content, str):
+            normalized = content.lstrip()
+            if normalized.startswith("[CONTEXT COMPACTION") or normalized.startswith(
+                "[CONTEXT SUMMARY]"
+            ):
+                continue
+        if role == "assistant" and message.get("tool_calls"):
+            has_prose = bool(content.strip() if isinstance(content, str) else content)
+            if not has_prose:
+                continue
+            message = {key: value for key, value in message.items() if key != "tool_calls"}
+        direct.append(dict(message))
+    return direct
+
+
 class MemoryManager:
     """Orchestrates the built-in provider plus at most one external provider.
 
@@ -301,6 +343,37 @@ class MemoryManager:
                 )
         return "\n\n".join(parts)
 
+    def describe_recall(self) -> str:
+        """Return a deterministic indicator for providers that recalled data."""
+
+        segments: List[str] = []
+        for provider in self._providers:
+            try:
+                status = provider.recall_status()
+            except Exception as error:
+                logger.debug(
+                    "Memory provider '%s' recall_status failed (non-fatal): %s",
+                    provider.name,
+                    error,
+                )
+                continue
+            if status is None:
+                continue
+            try:
+                count = int(status.count)
+            except (TypeError, ValueError):
+                count = 0
+            if count == 1:
+                detail = "recalled 1 memory"
+            elif count > 1:
+                detail = f"recalled {count} memories"
+            else:
+                detail = "recalled relevant memory"
+            glyph = str(getattr(status, "glyph", "") or "").strip()
+            label = str(getattr(status, "provider_label", provider.name) or provider.name)
+            segments.append(f"{glyph + ' ' if glyph else ''}{label} — {detail}")
+        return "  ".join(segments)
+
     def queue_prefetch_all(self, query: str, *, session_id: str = "") -> None:
         """Queue background prefetch on all providers for the next turn."""
         for provider in self._providers:
@@ -314,11 +387,48 @@ class MemoryManager:
 
     # -- Sync ----------------------------------------------------------------
 
-    def sync_all(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
-        """Sync a completed turn to all providers."""
+    @staticmethod
+    def _provider_sync_accepts_messages(provider: MemoryProvider) -> bool:
+        """Return whether a provider explicitly accepts ``messages=``."""
+
+        try:
+            signature = inspect.signature(provider.sync_turn)
+        except (TypeError, ValueError):
+            # Builtins/extension callables cannot be introspected; trying the
+            # enriched keyword is the only honest capability probe.
+            return True
+        if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        ):
+            return True
+        parameter = signature.parameters.get("messages")
+        return parameter is not None and parameter.kind != inspect.Parameter.POSITIONAL_ONLY
+
+    def sync_all(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Sync a completed turn while preserving legacy provider signatures."""
         for provider in self._providers:
             try:
-                provider.sync_turn(user_content, assistant_content, session_id=session_id)
+                if messages is not None and self._provider_sync_accepts_messages(provider):
+                    provider.sync_turn(
+                        user_content,
+                        assistant_content,
+                        session_id=session_id,
+                        messages=messages,
+                    )
+                else:
+                    provider.sync_turn(
+                        user_content,
+                        assistant_content,
+                        session_id=session_id,
+                    )
             except Exception as e:
                 logger.warning(
                     "Memory provider '%s' sync_turn failed: %s",
@@ -406,6 +516,7 @@ class MemoryManager:
         *,
         parent_session_id: str = "",
         reset: bool = False,
+        rewound: bool = False,
         **kwargs,
     ) -> None:
         """Notify all providers that the agent's session_id has rotated.
@@ -421,13 +532,22 @@ class MemoryManager:
         """
         if not new_session_id:
             return
+        if rewound:
+            kwargs["rewound"] = True
         for provider in self._providers:
             try:
+                call_kwargs = {
+                    "parent_session_id": parent_session_id,
+                    "reset": reset,
+                    **kwargs,
+                }
+                if rewound and not self._provider_accepts_keyword(
+                    provider.on_session_switch, "rewound"
+                ):
+                    call_kwargs.pop("rewound", None)
                 provider.on_session_switch(
                     new_session_id,
-                    parent_session_id=parent_session_id,
-                    reset=reset,
-                    **kwargs,
+                    **call_kwargs,
                 )
             except Exception as e:
                 logger.debug(
@@ -435,16 +555,77 @@ class MemoryManager:
                     provider.name, e,
                 )
 
-    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+    @staticmethod
+    def _provider_accepts_keyword(method: Any, keyword: str) -> bool:
+        """Check a bound method without invoking it or masking body errors."""
+
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return True
+        if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        ):
+            return True
+        parameter = signature.parameters.get(keyword)
+        return parameter is not None and parameter.kind != inspect.Parameter.POSITIONAL_ONLY
+
+    def supports_pre_compress_checkpoint(
+        self,
+        api_version: int = PRE_COMPRESS_CHECKPOINT_API_VERSION,
+    ) -> bool:
+        """Return whether a registered provider advertises checkpoint support."""
+
+        for provider in self._providers:
+            try:
+                version = int(
+                    getattr(
+                        provider,
+                        "pre_compress_checkpoint_api_version",
+                        _LEGACY_PRE_COMPRESS_API_VERSION,
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+            if version >= api_version:
+                return True
+        return False
+
+    def on_pre_compress(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        evidence_messages: Optional[List[Dict[str, Any]]] = None,
+        require_checkpoint: bool = False,
+        checkpoint_api_version: int = PRE_COMPRESS_CHECKPOINT_API_VERSION,
+    ) -> str:
         """Notify all providers before context compression.
 
         Returns combined text from providers to include in the compression
         summary prompt. Empty string if no provider contributes.
         """
         parts = []
+        checkpoint_succeeded = False
         for provider in self._providers:
             try:
-                result = provider.on_pre_compress(messages)
+                provider_version = int(
+                    getattr(
+                        provider,
+                        "pre_compress_checkpoint_api_version",
+                        _LEGACY_PRE_COMPRESS_API_VERSION,
+                    )
+                )
+            except (TypeError, ValueError):
+                provider_version = _LEGACY_PRE_COMPRESS_API_VERSION
+            checkpoint_provider = provider_version >= checkpoint_api_version
+            provider_messages = (
+                evidence_messages
+                if checkpoint_provider and evidence_messages is not None
+                else messages
+            )
+            try:
+                result = provider.on_pre_compress(provider_messages)
                 if result and result.strip():
                     parts.append(result)
             except Exception as e:
@@ -452,6 +633,16 @@ class MemoryManager:
                     "Memory provider '%s' on_pre_compress failed: %s",
                     provider.name, e,
                 )
+                if require_checkpoint and checkpoint_provider:
+                    raise
+            else:
+                if checkpoint_provider:
+                    checkpoint_succeeded = True
+        if require_checkpoint and not checkpoint_succeeded:
+            raise RuntimeError(
+                "No active memory provider completed pre-compress checkpoint "
+                f"API v{checkpoint_api_version}"
+            )
         return "\n\n".join(parts)
 
     @staticmethod

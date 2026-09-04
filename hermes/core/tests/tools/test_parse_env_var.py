@@ -39,6 +39,33 @@ class TestParseEnvVar:
             config = _tt_mod._get_env_config()
             assert config["docker_forward_env"] == ["GITHUB_TOKEN", "NPM_TOKEN"]
 
+    def test_local_backend_ignores_invalid_docker_json_settings(self):
+        """Stale Docker-only config must not break local terminal startup."""
+        with patch.dict("os.environ", {
+            "TERMINAL_ENV": "local",
+            "TERMINAL_DOCKER_FORWARD_ENV": "not-json",
+            "TERMINAL_DOCKER_VOLUMES": "not-json",
+            "TERMINAL_DOCKER_ENV": "not-json",
+            "TERMINAL_DOCKER_EXTRA_ARGS": "not-json",
+            "TERMINAL_CONTAINER_CPU": "not-a-number",
+        }, clear=False):
+            config = _tt_mod._get_env_config()
+
+        assert config["docker_forward_env"] == []
+        assert config["docker_volumes"] == []
+        assert config["docker_env"] == {}
+        assert config["docker_extra_args"] == []
+        assert config["container_cpu"] == 1.0
+
+    def test_docker_backend_still_rejects_invalid_docker_json(self):
+        """Selected Docker backend keeps strict JSON validation."""
+        with patch.dict("os.environ", {
+            "TERMINAL_ENV": "docker",
+            "TERMINAL_DOCKER_EXTRA_ARGS": "not-json",
+        }, clear=False):
+            with pytest.raises(ValueError, match="TERMINAL_DOCKER_EXTRA_ARGS"):
+                _tt_mod._get_env_config()
+
     def test_create_environment_passes_docker_forward_env(self):
         fake_env = object()
         with patch.object(_tt_mod, "_DockerEnvironment", return_value=fake_env) as mock_docker:

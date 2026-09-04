@@ -28,6 +28,16 @@ _GW_LOCK = None
 _last_sleep_date = None
 
 
+def _context_chat_type(context: dict) -> str:
+    """Prefer Gateway's explicit source type over chat-id heuristics."""
+
+    declared = str(context.get("chat_type") or "").strip().lower()
+    if declared in {"dm", "group", "channel", "thread"}:
+        return declared
+    chat_id = str(context.get("chat_id") or "").lower()
+    return "group" if "group" in chat_id else "dm"
+
+
 def _get_gateway():
     """Lazy-init the UnifiedMemoryGateway singleton."""
     global _MEMORY_GW, _GW_LOCK
@@ -67,11 +77,7 @@ async def handle(event_type: str, context: dict) -> None:
 # ── Turn recording ─────────────────────────────────────────
 
 async def _on_agent_start(context: dict) -> None:
-    """Record user message in STM and Layer 0 event stream."""
-    gw = _get_gateway()
-    if gw is None:
-        return
-
+    """Record the raw user event and optionally stage it for STM."""
     session_id = context.get("session_id", "")
     message = context.get("message", "")
     if not session_id or not message:
@@ -79,19 +85,26 @@ async def _on_agent_start(context: dict) -> None:
 
     platform = context.get("platform", "")
     user_id = context.get("user_id", "")
-    chat_type = "group" if context.get("chat_id") and "group" in str(context.get("chat_id", "")) else "dm"
+    chat_type = _context_chat_type(context)
+    speaker_name = str(context.get("user_name") or user_id or "")
 
-    try:
-        gw.process_turn(
-            session_id=session_id,
-            role="user",
-            content=message,
-            speaker_name=str(user_id),
-            chat_type=chat_type,
-            bot_replied=True,
-        )
-    except Exception:
-        pass
+    # A real Gateway turn is marked for deferred memory recording so an
+    # interrupted/failed request cannot leave a user row in STM. Legacy direct
+    # hook callers without this marker retain the historical best-effort write.
+    if not context.get("_defer_memory_until_end"):
+        gw = _get_gateway()
+        if gw is not None:
+            try:
+                gw.process_turn(
+                    session_id=session_id,
+                    role="user",
+                    content=message,
+                    speaker_name=speaker_name,
+                    chat_type=chat_type,
+                    bot_replied=True,
+                )
+            except Exception:
+                pass
 
     # Layer 0 event stream
     try:
@@ -100,34 +113,61 @@ async def _on_agent_start(context: dict) -> None:
             session_id=session_id,
             role="user",
             content=message,
-            speaker_name=str(user_id),
+            speaker_name=speaker_name,
             platform=platform,
             chat_type=chat_type,
+            chat_id=context.get("chat_id", ""),
+            thread_id=context.get("thread_id", ""),
         )
     except Exception:
         pass
 
 
 async def _on_agent_end(context: dict) -> None:
-    """Record assistant response in STM and Layer 0 event stream."""
-    gw = _get_gateway()
-    if gw is None:
-        return
-
+    """Commit a completed turn to STM and Layer 0."""
     session_id = context.get("session_id", "")
     response = context.get("response", "")
     if not session_id or not response or response == "(empty)":
         return
 
+    deferred = bool(context.get("_defer_memory_until_end"))
+    if deferred and (
+        not context.get("completed", False)
+        or context.get("interrupted", False)
+        or context.get("failed", False)
+        or context.get("contract_retry", False)
+    ):
+        # Layer 0 has already captured the raw user event at agent:start, but
+        # interrupted/failed turns are not durable STM conversational truth.
+        return
+
+    gw = _get_gateway()
+    if gw is None:
+        return
+
     platform = context.get("platform", "")
-    chat_type = "group" if context.get("chat_id") and "group" in str(context.get("chat_id", "")) else "dm"
+    chat_type = _context_chat_type(context)
+    bot_name = str(context.get("bot_name") or "soyo")
 
     try:
+        if deferred and context.get("message"):
+            gw.process_turn(
+                session_id=session_id,
+                role="user",
+                content=context.get("message", ""),
+                speaker_name=str(
+                    context.get("user_name")
+                    or context.get("user_id")
+                    or ""
+                ),
+                chat_type=chat_type,
+                bot_replied=True,
+            )
         gw.process_turn(
             session_id=session_id,
             role="assistant",
             content=response,
-            speaker_name="soyo",
+            speaker_name=bot_name,
             chat_type=chat_type,
             bot_replied=True,
         )
@@ -141,9 +181,11 @@ async def _on_agent_end(context: dict) -> None:
             session_id=session_id,
             role="assistant",
             content=response,
-            speaker_name="soyo",
+            speaker_name=bot_name,
             platform=platform,
             chat_type=chat_type,
+            chat_id=context.get("chat_id", ""),
+            thread_id=context.get("thread_id", ""),
         )
     except Exception:
         pass

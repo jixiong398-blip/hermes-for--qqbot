@@ -7,9 +7,11 @@ or a temp file (local).
 """
 
 import codecs
+import hashlib
 import json
 import logging
 import os
+import re
 import select
 import shlex
 import subprocess
@@ -17,13 +19,184 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
-from typing import IO, Callable, Protocol
+from typing import IO, Callable, Iterable, Protocol
 
 from hermes_constants import get_hermes_home
 from tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
+
+
+# Internal consumers keep full-fidelity output. Foreground terminal calls opt
+# into the bounded collector below so a verbose process cannot grow memory
+# without limit before terminal_tool's final result shaping runs.
+_UNBOUNDED_CAPTURE_CHARS = 2**63 - 1
+
+
+class EnvironmentConnectionError(RuntimeError):
+    """Infrastructure failure while creating or reaching an environment.
+
+    Command non-zero exits remain ordinary terminal results.  This exception
+    is reserved for a backend that cannot be reached or initialized, allowing
+    callers to present a retryable degraded result without conflating it with
+    user-command failure.
+    """
+
+    def __init__(self, reason: str, *, retry_hint: str = "") -> None:
+        super().__init__(reason)
+        self.reason = str(reason)
+        self.retry_hint = retry_hint or (
+            "This is an environment connectivity failure, not a command "
+            "failure. Verify the backend is reachable and retry."
+        )
+
+
+class _BoundedOutputCollector:
+    """Retain a bounded 40/60 head-tail window and optional spill copy."""
+
+    _SPILL_CAP_CHARS = 5_000_000
+
+    def __init__(self, max_chars: int, spill_path: Path | None = None):
+        self.max_chars = max(1, int(max_chars))
+        self._head_limit = int(self.max_chars * 0.4)
+        self._tail_limit = self.max_chars - self._head_limit
+        self._head: list[str] = []
+        self._tail: deque[str] = deque()
+        self._head_chars = 0
+        self._tail_chars = 0
+        self._total_chars = 0
+        self._lock = threading.Lock()
+        self._spill_path = spill_path
+        self._spill_fh: IO[str] | None = None
+        self._spill_chars = 0
+        self._spill_capped = False
+
+    def _maybe_spill(self, text: str) -> None:
+        if self._spill_path is None or self._spill_capped:
+            return
+        try:
+            if self._spill_fh is None:
+                from tools.spill_safety import ensure_spill_dir, open_exclusive
+
+                ensure_spill_dir(self._spill_path.parent, private=True)
+                self._spill_fh = open_exclusive(
+                    self._spill_path,
+                    private=True,
+                    errors="replace",
+                )
+                backlog = "".join(self._head) + "".join(self._tail)
+                self._spill_fh.write(backlog)
+                self._spill_chars = len(backlog)
+            budget = self._SPILL_CAP_CHARS - self._spill_chars
+            if budget <= 0 or len(text) > budget:
+                self._spill_fh.write(text[:max(0, budget)])
+                self._spill_fh.write(
+                    "\n... [spill capped at 5,000,000 chars] ...\n"
+                )
+                self._spill_capped = True
+            else:
+                self._spill_fh.write(text)
+            self._spill_chars += min(len(text), max(0, budget))
+        except OSError:
+            # A spill failure must never make the command itself fail.
+            self._spill_capped = True
+
+    def close_spill(self) -> str | None:
+        with self._lock:
+            if self._spill_fh is None:
+                return None
+            try:
+                self._spill_fh.close()
+            except OSError:
+                pass
+            self._spill_fh = None
+            return str(self._spill_path)
+
+    @property
+    def buffered_chars(self) -> int:
+        with self._lock:
+            return self._head_chars + self._tail_chars
+
+    @property
+    def total_chars(self) -> int:
+        with self._lock:
+            return self._total_chars
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        with self._lock:
+            text_len = len(text)
+            if self._spill_path is not None and (
+                self._spill_fh is not None
+                or self._total_chars + text_len > self.max_chars
+            ):
+                self._maybe_spill(text)
+            self._total_chars += text_len
+            start = 0
+
+            if self._head_chars < self._head_limit:
+                take = min(self._head_limit - self._head_chars, text_len)
+                if take:
+                    self._head.append(text[:take])
+                    self._head_chars += take
+                    start = take
+
+            remaining = text_len - start
+            if remaining <= 0 or self._tail_limit <= 0:
+                return
+            if remaining >= self._tail_limit:
+                self._tail.clear()
+                self._tail.append(text[-self._tail_limit:])
+                self._tail_chars = self._tail_limit
+                return
+
+            chunk = text[start:]
+            self._tail.append(chunk)
+            self._tail_chars += len(chunk)
+            while self._tail_chars > self._tail_limit:
+                excess = self._tail_chars - self._tail_limit
+                first = self._tail[0]
+                if len(first) <= excess:
+                    self._tail.popleft()
+                    self._tail_chars -= len(first)
+                else:
+                    self._tail[0] = first[excess:]
+                    self._tail_chars -= excess
+
+    def render(self, *, suffix: str = "") -> str:
+        """Render within the cap while preserving a required status suffix."""
+        with self._lock:
+            if len(suffix) >= self.max_chars:
+                return suffix[-self.max_chars:]
+
+            head = "".join(self._head)
+            tail = "".join(self._tail)
+            available = self.max_chars - len(suffix)
+            if self._total_chars <= available:
+                return head + tail + suffix
+
+            notice = ""
+            for _ in range(4):
+                content_budget = max(0, available - len(notice))
+                head_chars = int(content_budget * 0.4)
+                tail_chars = content_budget - head_chars
+                omitted = max(0, self._total_chars - head_chars - tail_chars)
+                updated = (
+                    f"\n\n... [OUTPUT TRUNCATED - {omitted:,} chars omitted "
+                    f"out of {self._total_chars:,} total] ...\n\n"
+                )
+                if updated == notice:
+                    break
+                notice = updated
+
+            content_budget = max(0, available - len(notice))
+            head_chars = int(content_budget * 0.4)
+            tail_chars = content_budget - head_chars
+            rendered_tail = tail[-tail_chars:] if tail_chars else ""
+            return head[:head_chars] + notice[:available] + rendered_tail
 
 # Opt-in debug tracing for the interrupt/activity/poll machinery.  Set
 # HERMES_DEBUG_INTERRUPT=1 to log loop entry/exit, periodic heartbeats, and
@@ -91,6 +264,61 @@ def get_sandbox_dir() -> Path:
         p = get_hermes_home() / "sandboxes"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+# Persistent backend directories become the source side of Docker ``-v``
+# mounts or Singularity overlay paths.  Raw session keys can contain path
+# separators, colons, trailing dots/spaces, or collide after replacement.
+# Keep the mapping deterministic across processes while preserving already
+# safe historical names.
+_SANDBOX_DIR_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+_SANDBOX_DIR_MAX_LEN = 128
+_SANDBOX_DIR_HASH_LEN = 12
+_WINDOWS_RESERVED_DEVICE_NAMES = frozenset({
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+})
+
+
+def _is_windows_reserved_component(value: str) -> bool:
+    """Return whether *value* aliases a Windows device name.
+
+    Windows reserves names such as ``CON`` even when an extension is present
+    (``CON.txt``).  Persistent sandbox paths are shared by Windows and POSIX
+    deployments, so avoid preserving those names as historical-safe values.
+    """
+    component = value.rstrip(" .")
+    stem = component.split(".", 1)[0].upper()
+    return stem in _WINDOWS_RESERVED_DEVICE_NAMES
+
+
+def sanitize_task_id_for_path(task_id: str) -> str:
+    """Return a safe, collision-resistant directory component for *task_id*."""
+    value = task_id if isinstance(task_id, str) else ""
+    if not value:
+        return "default"
+
+    cleaned = _SANDBOX_DIR_UNSAFE_RE.sub("_", value)
+    if (
+        cleaned == value
+        and len(value) <= _SANDBOX_DIR_MAX_LEN
+        and value not in {".", ".."}
+        and not value.endswith((".", " "))
+        and not _is_windows_reserved_component(value)
+    ):
+        return value
+
+    # ``surrogatepass`` keeps malformed-but-representable Python strings
+    # deterministic instead of allowing a task label to crash path setup.
+    digest = hashlib.sha256(
+        value.encode("utf-8", errors="surrogatepass")
+    ).hexdigest()[:_SANDBOX_DIR_HASH_LEN]
+    stem = cleaned[: _SANDBOX_DIR_MAX_LEN - _SANDBOX_DIR_HASH_LEN - 1].strip("._")
+    return f"{stem or 'task'}-{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +508,68 @@ def _cwd_marker(session_id: str) -> str:
     return f"__HERMES_CWD_{session_id}__"
 
 
+# Session and attribution variables are per-command state.  Persisting them
+# in a shared shell snapshot lets one profile/session overwrite another when
+# the next command sources that snapshot.  Exclusion is done by unsetting
+# before ``export -p`` instead of filtering its text: Bash may serialize a
+# newline-containing value over multiple lines, which makes line filtering
+# unsafe and can leave executable fragments in a later ``source``.
+_SNAPSHOT_EXCLUDED_ENV_REGEX = (
+    "^declare -x (HERMES_SESSION_|HERMES_UI_SESSION_ID|HERMES_CRON_AUTO_DELIVER_|"
+    "HERMES_CRON_SESSION|HERMES_BROWSER_CONTROL_)"
+)
+_SHELL_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _snapshot_exclusion_names(excluded_names: Iterable[str] = ()) -> tuple[str, ...]:
+    """Return valid, deterministic extra names for snapshot exclusion."""
+    return tuple(sorted({
+        name
+        for name in excluded_names
+        if isinstance(name, str) and _SHELL_ENV_NAME_RE.fullmatch(name)
+    }))
+
+
+def _snapshot_unset_command(excluded_names: Iterable[str] = ()) -> str:
+    """Build the safe pre-export unset command used by the local snapshot path."""
+    extra = _snapshot_exclusion_names(excluded_names)
+    extra_unset = " ".join(shlex.quote(name) for name in extra)
+    if extra_unset:
+        extra_unset = f" {extra_unset}"
+    return (
+        "unset ${!HERMES_SESSION_*} ${!HERMES_CRON_AUTO_DELIVER_*} "
+        "${!HERMES_BROWSER_CONTROL_*} AI_AGENT HERMES_AGENT "
+        f"HERMES_UI_SESSION_ID HERMES_CRON_SESSION{extra_unset} "
+        "2>/dev/null || true"
+    )
+
+
+def _export_dump_excluding_session_vars(
+    tmp_path: str,
+    excluded_names: Iterable[str] = (),
+) -> str:
+    """Return an upstream-compatible safe ``export -p`` snapshot snippet.
+
+    ``tmp_path`` is expected to be a trusted shell path or a quoted shell
+    variable created by the caller.  The current fork keeps its historical
+    direct ``export -p >`` write in the Windows-sensitive execution path, but
+    exposes this helper for backends that use grouped/atomic snapshot writes.
+    """
+    extra = _snapshot_exclusion_names(excluded_names)
+    extra_unset = " ".join(shlex.quote(name) for name in extra)
+    if extra_unset:
+        extra_unset = f" {extra_unset}"
+    return (
+        "{ ( "
+        "unset ${!HERMES_SESSION_*} ${!HERMES_CRON_AUTO_DELIVER_*} "
+        "${!HERMES_BROWSER_CONTROL_*} AI_AGENT HERMES_AGENT "
+        f"HERMES_UI_SESSION_ID HERMES_CRON_SESSION{extra_unset} "
+        "2>/dev/null; export -p; "
+        ") || true; } "
+        f"> {tmp_path}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # BaseEnvironment
 # ---------------------------------------------------------------------------
@@ -296,8 +586,17 @@ class BaseEnvironment(ABC):
     # Subclasses that embed stdin as a heredoc (Modal, Daytona) set this.
     _stdin_mode: str = "pipe"  # "pipe" or "heredoc"
 
+    # Only LocalEnvironment executes on the controller host. Remote/container
+    # backends override nothing here and therefore report is_local=False.
+    is_local: bool = False
+
     # Snapshot creation timeout (override for slow cold-starts).
     _snapshot_timeout: int = 30
+
+    # Local and Docker override this because they may resolve allowlisted
+    # values through an active profile scope.  Other backends keep their
+    # existing snapshot behavior until they implement that resolver contract.
+    _profile_scoped_passthrough: bool = False
 
     def get_temp_dir(self) -> str:
         """Return the backend temp directory used for session artifacts.
@@ -319,6 +618,16 @@ class BaseEnvironment(ABC):
         self._cwd_file = f"{temp_dir}/hermes-cwd-{self._session_id}.txt"
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
+        # Keep exclusions monotonic for this environment.  If a passthrough
+        # allowlist is cleared after a value was captured, the old name must
+        # remain excluded or a later profile could source that stale value.
+        self._snapshot_passthrough_names: set[str] = set()
+
+    def capability_snapshot(self):
+        """Return a read-only capability view without executing a command."""
+        from tools.environments.contract import capability_snapshot
+
+        return capability_snapshot(self)
 
     # ------------------------------------------------------------------
     # Abstract methods
@@ -348,6 +657,52 @@ class BaseEnvironment(ABC):
     # Session snapshot (init_session)
     # ------------------------------------------------------------------
 
+    def _additional_profile_scoped_passthrough_names(self) -> Iterable[str]:
+        """Return backend-specific names that must not persist in snapshots."""
+        return ()
+
+    def _snapshot_excluded_passthrough_names(self) -> tuple[str, ...]:
+        """Return profile-scoped names to exclude from the next snapshot dump.
+
+        The optional ``agent.secret_scope`` import is intentionally fail-open
+        for this compatibility slice: older single-profile deployments do not
+        ship that module and must retain their existing environment behavior.
+        Invalid names are ignored before they can reach shell syntax.
+        """
+        if not getattr(self, "_profile_scoped_passthrough", False):
+            return ()
+
+        names_seen = getattr(self, "_snapshot_passthrough_names", None)
+        if names_seen is None:
+            names_seen = set()
+            self._snapshot_passthrough_names = names_seen
+
+        try:
+            from agent.secret_scope import is_multiplex_active
+        except ImportError:
+            # The fork has not enabled profile multiplexing yet.  Avoid a
+            # traceback-level debug record on every terminal command while
+            # retaining the old single-profile behavior.
+            return tuple(sorted(names_seen))
+
+        try:
+            if is_multiplex_active():
+                from tools.env_passthrough import get_all_passthrough
+
+                names = (
+                    *get_all_passthrough(),
+                    *self._additional_profile_scoped_passthrough_names(),
+                )
+                names_seen.update(_snapshot_exclusion_names(names))
+        except Exception:
+            # A missing/partially installed profile resolver must not break
+            # terminal startup or make ordinary commands fail.
+            logger.debug(
+                "Could not refresh profile-scoped snapshot exclusions",
+                exc_info=True,
+            )
+        return tuple(sorted(names_seen))
+
     def init_session(self):
         """Capture login shell environment into a snapshot file.
 
@@ -369,7 +724,9 @@ class BaseEnvironment(ABC):
         # backends) into every terminal-tool response.
         _quoted_snap = shlex.quote(self._snapshot_path)
         _quoted_cwd_file = shlex.quote(self._cwd_file)
+        snapshot_excluded = self._snapshot_excluded_passthrough_names()
         bootstrap = (
+            f"{_snapshot_unset_command(snapshot_excluded)}\n"
             f"export -p > {_quoted_snap}\n"
             f"declare -f | grep -vE '^_[^_]' >> {_quoted_snap}\n"
             f"alias -p >> {_quoted_snap}\n"
@@ -425,8 +782,22 @@ class BaseEnvironment(ABC):
         # :meth:`init_session` for the same fix on the bootstrap block.
         _quoted_snap = shlex.quote(self._snapshot_path)
         _quoted_cwd_file = shlex.quote(self._cwd_file)
+        snapshot_excluded = self._snapshot_excluded_passthrough_names()
 
         parts = []
+
+        # A shared snapshot may contain a previous profile's passthrough
+        # value. Save the current child-environment value before sourcing and
+        # restore it immediately afterwards. Values remain shell variables and
+        # never enter the command string or process arguments.
+        saved_names: list[tuple[str, str, str]] = []
+        for name in snapshot_excluded:
+            marker = f"_HERMES_RUNTIME_PASSTHROUGH_{name}"
+            present = f"{marker}_PRESENT"
+            value = f"{marker}_VALUE"
+            saved_names.append((name, present, value))
+            parts.append(f"{present}=${{{name}+x}}")
+            parts.append(f"{value}=${{{name}-}}")
 
         # Source snapshot (env vars from previous commands).
         # Redirect stdout to /dev/null: on macOS (bash 3.2 and certain
@@ -438,6 +809,13 @@ class BaseEnvironment(ABC):
             parts.append(
                 f"source {_quoted_snap} >/dev/null 2>&1 || true"
             )
+
+        for name, present, value in saved_names:
+            parts.append(
+                f'if [ "${present}" = x ]; then export {name}="${value}"; '
+                f"else unset {name}; fi"
+            )
+            parts.append(f"unset {present} {value}")
 
         # Preserve bare ``~`` expansion, but rewrite ``~/...`` through
         # ``$HOME`` so suffixes with spaces remain a single shell word.
@@ -451,6 +829,7 @@ class BaseEnvironment(ABC):
 
         # Re-dump env vars to snapshot (last-writer-wins for concurrent calls)
         if self._snapshot_ready:
+            parts.append(_snapshot_unset_command(snapshot_excluded))
             parts.append(f"export -p > {_quoted_snap} 2>/dev/null || true")
 
         # Write CWD to file (local reads this) and stdout marker (remote parses this)
@@ -480,7 +859,13 @@ class BaseEnvironment(ABC):
     # Process lifecycle
     # ------------------------------------------------------------------
 
-    def _wait_for_process(self, proc: ProcessHandle, timeout: int = 120) -> dict:
+    def _wait_for_process(
+        self,
+        proc: ProcessHandle,
+        timeout: int = 120,
+        *,
+        bounded_capture: bool = False,
+    ) -> dict:
         """Poll-based wait with interrupt checking and stdout draining.
 
         Shared across all backends — not overridden.
@@ -496,7 +881,37 @@ class BaseEnvironment(ABC):
         an orphan with ``PPID=1`` when python is shut down mid-tool — the
         ``sleep 300``-survives-30-min bug Physikal and I both hit.
         """
-        output_chunks: list[str] = []
+        if bounded_capture:
+            try:
+                from tools.tool_output_limits import get_max_bytes
+
+                capture_limit = get_max_bytes()
+            except Exception:
+                capture_limit = 50_000
+        else:
+            # File operations and other internal callers need complete output;
+            # only the model-facing terminal path opts into truncation.
+            capture_limit = _UNBOUNDED_CAPTURE_CHARS
+
+        spill_path = None
+        if bounded_capture:
+            try:
+                spill_dir = get_hermes_home() / "cache" / "terminal-output"
+                spill_path = spill_dir / (
+                    f"out-{int(time.time())}-{os.getpid()}-"
+                    f"{id(proc) & 0xffff:x}.log"
+                )
+                if spill_dir.is_dir() and not spill_dir.is_symlink():
+                    cutoff = time.time() - 7 * 86_400
+                    for old in spill_dir.glob("out-*.log"):
+                        try:
+                            if old.stat().st_mtime < cutoff:
+                                old.unlink()
+                        except OSError:
+                            pass
+            except Exception:
+                spill_path = None
+        output = _BoundedOutputCollector(capture_limit, spill_path=spill_path)
 
         # Non-blocking drain via select().
         #
@@ -525,7 +940,30 @@ class BaseEnvironment(ABC):
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
         def _drain():
-            fd = proc.stdout.fileno()
+            if proc.stdout is None:
+                return
+            try:
+                fd = proc.stdout.fileno()
+            except (AttributeError, OSError, ValueError):
+                # Lightweight/plugin process handles sometimes expose only an
+                # iterable stdout (no OS fd). Keep the test/dummy contract
+                # useful without weakening the real pipe-based path above.
+                try:
+                    for line in proc.stdout:
+                        if isinstance(line, bytes):
+                            output.append(decoder.decode(line))
+                        else:
+                            output.append(str(line))
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        tail = decoder.decode(b"", final=True)
+                        if tail:
+                            output.append(tail)
+                    except Exception:
+                        pass
+                return
             # select.select does NOT work on pipe fds on Windows (only sockets).
             # Use blocking os.read in a daemon thread instead — safe because
             # EOF arrives promptly when bash exits.
@@ -535,14 +973,14 @@ class BaseEnvironment(ABC):
                         chunk = os.read(fd, 4096)
                         if not chunk:
                             break
-                        output_chunks.append(decoder.decode(chunk))
+                        output.append(decoder.decode(chunk))
                 except (ValueError, OSError):
                     pass
                 finally:
                     try:
                         tail = decoder.decode(b"", final=True)
                         if tail:
-                            output_chunks.append(tail)
+                            output.append(tail)
                     except Exception:
                         pass
                 return
@@ -560,7 +998,7 @@ class BaseEnvironment(ABC):
                             break
                         if not chunk:
                             break  # true EOF — all writers closed
-                        output_chunks.append(decoder.decode(chunk))
+                        output.append(decoder.decode(chunk))
                         idle_after_exit = 0
                     elif proc.poll() is not None:
                         # bash is gone and the pipe was idle for ~100ms.  Give
@@ -576,7 +1014,7 @@ class BaseEnvironment(ABC):
                 try:
                     tail = decoder.decode(b"", final=True)
                     if tail:
-                        output_chunks.append(tail)
+                        output.append(tail)
                 except Exception:
                     pass
 
@@ -620,10 +1058,11 @@ class BaseEnvironment(ABC):
                         )
                     self._kill_process(proc)
                     drain_thread.join(timeout=2)
-                    return {
-                        "output": "".join(output_chunks) + "\n[Command interrupted]",
-                        "returncode": 130,
-                    }
+                    return self._finalize_wait_result(
+                        output,
+                        output.render(suffix="\n[Command interrupted]"),
+                        130,
+                    )
                 if time.monotonic() > deadline:
                     if _DEBUG_INTERRUPT:
                         logger.info(
@@ -633,14 +1072,11 @@ class BaseEnvironment(ABC):
                         )
                     self._kill_process(proc)
                     drain_thread.join(timeout=2)
-                    partial = "".join(output_chunks)
                     timeout_msg = f"\n[Command timed out after {timeout}s]"
-                    return {
-                        "output": partial + timeout_msg
-                        if partial
-                        else timeout_msg.lstrip(),
-                        "returncode": 124,
-                    }
+                    rendered = output.render(suffix=timeout_msg)
+                    if output.total_chars == 0:
+                        rendered = rendered.lstrip()
+                    return self._finalize_wait_result(output, rendered, 124)
                 # Periodic activity touch so the gateway knows we're alive
                 touch_activity_if_due(_activity_state, "terminal command running")
 
@@ -704,7 +1140,25 @@ class BaseEnvironment(ABC):
                 proc.returncode,
             )
 
-        return {"output": "".join(output_chunks), "returncode": proc.returncode}
+        return self._finalize_wait_result(
+            output,
+            output.render(),
+            proc.returncode,
+        )
+
+    @staticmethod
+    def _finalize_wait_result(
+        collector: _BoundedOutputCollector,
+        rendered: str,
+        returncode: int | None,
+    ) -> dict:
+        """Close an optional spill and attach bounded-capture metadata."""
+        result = {"output": rendered, "returncode": returncode}
+        spill = collector.close_spill()
+        if spill:
+            result["output_total_chars"] = collector.total_chars
+            result["full_output_path"] = spill
+        return result
 
     def _kill_process(self, proc: ProcessHandle):
         """Terminate a process. Subclasses may override for process-group kill."""
@@ -780,8 +1234,9 @@ class BaseEnvironment(ABC):
         *,
         timeout: int | None = None,
         stdin_data: str | None = None,
+        bounded_capture: bool = False,
     ) -> dict:
-        """Execute a command, return {"output": str, "returncode": int}."""
+        """Execute a command, optionally bounding model-facing output capture."""
         self._before_execute()
 
         exec_command, sudo_stdin = self._prepare_command(command)
@@ -816,7 +1271,11 @@ class BaseEnvironment(ABC):
         proc = self._run_bash(
             wrapped, login=login, timeout=effective_timeout, stdin_data=effective_stdin
         )
-        result = self._wait_for_process(proc, timeout=effective_timeout)
+        result = self._wait_for_process(
+            proc,
+            timeout=effective_timeout,
+            bounded_capture=bounded_capture,
+        )
         self._update_cwd(result)
 
         return result

@@ -190,7 +190,8 @@ class TestChatCompletionsBuildKwargs:
         profile = get_provider_profile("custom")
         msgs = [{"role": "user", "content": "Hi"}]
         kw = transport.build_kwargs(
-            model="qwen3", messages=msgs,
+            model="llama3", messages=msgs,
+            base_url="http://localhost:11434/v1",
             provider_profile=profile,
             reasoning_config={"effort": "none"},
         )

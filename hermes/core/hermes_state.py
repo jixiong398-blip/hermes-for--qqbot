@@ -16,6 +16,7 @@ Key design decisions:
 
 import json
 import logging
+import math
 import random
 import re
 import sqlite3
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from agent.memory_manager import sanitize_context
 from hermes_constants import get_hermes_home
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Mapping, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,58 @@ T = TypeVar("T")
 DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
 SCHEMA_VERSION = 11
+
+# Upstream v26 message metadata is optional in the local v11 facade. These
+# bounds apply only when an explicitly gated copy already contains the columns;
+# the default v11 schema never creates or writes them.
+MAX_API_CONTENT_CHARS = 500_000
+MAX_DISPLAY_KIND_CHARS = 120
+MAX_DISPLAY_METADATA_BYTES = 64 * 1024
+_OPTIONAL_MESSAGE_METADATA_COLUMNS = frozenset(
+    {"api_content", "display_kind", "display_metadata"}
+)
+
+# Bound user-controlled FTS input before regex/token processing.  Search
+# queries do not need to be arbitrarily large; the cap keeps sanitizer and
+# fallback runtime predictable for gateway callers.
+MAX_FTS5_QUERY_CHARS = 4096
+
+# Gateway routing is an opt-in compatibility index.  Keep the values small
+# enough that a malformed row cannot turn a startup/load into an unbounded
+# JSON parse or result set.
+MAX_GATEWAY_ROUTING_SCOPE_CHARS = 128
+MAX_GATEWAY_ROUTING_KEY_CHARS = 512
+MAX_GATEWAY_ROUTING_SESSION_ID_CHARS = 240
+MAX_GATEWAY_ROUTING_ENTRY_BYTES = 256 * 1024
+MAX_GATEWAY_ROUTING_ENTRIES = 4096
+MAX_SESSION_TURN_LEASE_ID_CHARS = 240
+MAX_SESSION_TURN_LEASE_HOLDER_CHARS = 240
+MIN_SESSION_TURN_LEASE_TTL_SECONDS = 0.1
+MAX_SESSION_TURN_LEASE_TTL_SECONDS = 24 * 60 * 60.0
+_GATEWAY_ROUTING_REQUIRED_COLUMNS = frozenset(
+    {"scope", "session_key", "entry_json", "updated_at"}
+)
+_GATEWAY_ROUTING_COLUMN_CONTRACT = {
+    "scope": ("TEXT", True, "''"),
+    "session_key": ("TEXT", True, None),
+    "entry_json": ("TEXT", True, None),
+    "updated_at": ("REAL", True, None),
+}
+_SESSION_TURN_LEASE_REQUIRED_COLUMNS = frozenset(
+    {"conversation_id", "holder", "acquired_at", "expires_at"}
+)
+_SESSION_TURN_LEASE_COLUMN_CONTRACT = {
+    "conversation_id": ("TEXT", False, None),
+    "holder": ("TEXT", True, None),
+    "acquired_at": ("REAL", True, None),
+    "expires_at": ("REAL", True, None),
+}
+
+# Characters with grammar meaning in an FTS5 MATCH expression.  Percent is
+# intentionally excluded: CJK queries can use the canonical LIKE fallback,
+# where it must remain a literal and be escaped separately.
+_FTS5_SPECIAL_CHARS = '+{}():"^@/#&|~[]<>,;!?$=\\\''
+_FTS5_SPECIAL_RE = re.compile(f"[{re.escape(_FTS5_SPECIAL_CHARS)}]")
 
 # ---------------------------------------------------------------------------
 # WAL-compatibility fallback
@@ -366,6 +419,19 @@ class SessionDB:
             # ``hermes_state._set_last_init_error(None)`` explicitly.
             _set_last_init_error(f"{type(exc).__name__}: {exc}")
             raise
+
+    @staticmethod
+    def escape_like(text: str) -> str:
+        """Escape SQL LIKE syntax through the Gate 1 common helper.
+
+        Import lazily so the canonical compatibility module never becomes a
+        startup dependency for the v11 facade and cannot create an import
+        cycle.  The helper is pure; SQL statements remain owned by this
+        facade and continue to use parameter binding plus ``ESCAPE '\\'``.
+        """
+        from hermes_state_common import escape_like as _escape_like
+
+        return _escape_like(text)
 
     # ── Core write helper ──
 
@@ -946,12 +1012,7 @@ class SessionDB:
         if exact:
             return exact["id"]
 
-        escaped = (
-            session_id_or_prefix
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        escaped = self.escape_like(session_id_or_prefix)
         with self._lock:
             cursor = self._conn.execute(
                 "SELECT id FROM sessions WHERE id LIKE ? ESCAPE '\\' ORDER BY started_at DESC LIMIT 2",
@@ -1069,7 +1130,7 @@ class SessionDB:
 
         # Also search for numbered variants: "title #2", "title #3", etc.
         # Escape SQL LIKE wildcards (%, _) in the title to prevent false matches
-        escaped = title.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = self.escape_like(title)
         with self._lock:
             cursor = self._conn.execute(
                 "SELECT id, title, started_at FROM sessions "
@@ -1100,7 +1161,7 @@ class SessionDB:
 
         # Find all existing numbered variants
         # Escape SQL LIKE wildcards (%, _) in the base to prevent false matches
-        escaped = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = self.escape_like(base)
         with self._lock:
             cursor = self._conn.execute(
                 "SELECT title FROM sessions WHERE title = ? OR title LIKE ? ESCAPE '\\'",
@@ -1427,6 +1488,77 @@ class SessionDB:
                 return content
         return content
 
+    @staticmethod
+    def _sanitize_message_metadata_text(value: Any, maximum: int) -> Optional[str]:
+        """Bound optional message metadata and scrub invalid UTF-8 surrogates."""
+
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            value = value.encode("utf-8", errors="replace").decode("utf-8")
+        except Exception:
+            return None
+        value = value[:maximum]
+        return value or None
+
+    @classmethod
+    def _encode_display_metadata(cls, value: Any) -> Optional[str]:
+        """Encode only bounded JSON objects for the optional display column."""
+
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+        if not isinstance(value, dict):
+            return None
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            encoded = encoded.encode("utf-8", errors="replace").decode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            return None
+        if len(encoded.encode("utf-8")) > MAX_DISPLAY_METADATA_BYTES:
+            return None
+        return encoded
+
+    @staticmethod
+    def _decode_display_metadata(value: Any) -> Optional[Dict[str, Any]]:
+        """Decode an optional display metadata object without raising on rows."""
+
+        if value is None:
+            return None
+        try:
+            parsed = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _message_metadata_columns(conn: sqlite3.Connection) -> set[str]:
+        """Return optional message columns present on this explicit database."""
+
+        try:
+            rows = conn.execute('PRAGMA table_info("messages")').fetchall()
+        except sqlite3.DatabaseError:
+            return set()
+        names = set()
+        for row in rows:
+            name = row[1] if isinstance(row, (tuple, list)) else row["name"]
+            if name in _OPTIONAL_MESSAGE_METADATA_COLUMNS:
+                names.add(name)
+        return names
+
+    def message_metadata_columns(self) -> frozenset[str]:
+        """Return optional sidecar columns present without triggering DDL."""
+
+        try:
+            with self._lock:
+                return frozenset(self._message_metadata_columns(self._conn))
+        except Exception:
+            return frozenset()
+
     def append_message(
         self,
         session_id: str,
@@ -1442,6 +1574,10 @@ class SessionDB:
         reasoning_details: Any = None,
         codex_reasoning_items: Any = None,
         codex_message_items: Any = None,
+        timestamp: Any = None,
+        api_content: Optional[str] = None,
+        display_kind: Optional[str] = None,
+        display_metadata: Any = None,
     ) -> int:
         """
         Append a message to a session. Returns the message row ID.
@@ -1463,6 +1599,14 @@ class SessionDB:
             if codex_message_items else None
         )
         tool_calls_json = json.dumps(tool_calls) if tool_calls else None
+        message_timestamp = self._normalize_message_timestamp(timestamp)
+        api_content_value = self._sanitize_message_metadata_text(
+            api_content, MAX_API_CONTENT_CHARS
+        ) if role in ("user", "assistant") else None
+        display_kind_value = self._sanitize_message_metadata_text(
+            display_kind, MAX_DISPLAY_KIND_CHARS
+        )
+        display_metadata_value = self._encode_display_metadata(display_metadata)
         # Multimodal content (list of parts) must be JSON-encoded: sqlite3
         # cannot bind list/dict parameters directly.
         stored_content = self._encode_content(content)
@@ -1473,28 +1617,32 @@ class SessionDB:
             num_tool_calls = len(tool_calls) if isinstance(tool_calls, list) else 1
 
         def _do(conn):
+            columns = [
+                "session_id", "role", "content", "tool_call_id", "tool_calls",
+                "tool_name", "timestamp", "token_count", "finish_reason",
+                "reasoning", "reasoning_content", "reasoning_details",
+                "codex_reasoning_items", "codex_message_items",
+            ]
+            values = [
+                session_id, role, stored_content, tool_call_id, tool_calls_json,
+                tool_name, message_timestamp, token_count, finish_reason,
+                reasoning, reasoning_content, reasoning_details_json,
+                codex_items_json, codex_message_items_json,
+            ]
+            optional_columns = self._message_metadata_columns(conn)
+            if "api_content" in optional_columns:
+                columns.append("api_content")
+                values.append(api_content_value)
+            if "display_kind" in optional_columns:
+                columns.append("display_kind")
+                values.append(display_kind_value)
+            if "display_metadata" in optional_columns:
+                columns.append("display_metadata")
+                values.append(display_metadata_value)
+            placeholders = ", ".join("?" for _ in values)
             cursor = conn.execute(
-                """INSERT INTO messages (session_id, role, content, tool_call_id,
-                   tool_calls, tool_name, timestamp, token_count, finish_reason,
-                   reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
-                   codex_message_items)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    session_id,
-                    role,
-                    stored_content,
-                    tool_call_id,
-                    tool_calls_json,
-                    tool_name,
-                    time.time(),
-                    token_count,
-                    finish_reason,
-                    reasoning,
-                    reasoning_content,
-                    reasoning_details_json,
-                    codex_items_json,
-                    codex_message_items_json,
-                ),
+                f"INSERT INTO messages ({', '.join(columns)}) VALUES ({placeholders})",
+                tuple(values),
             )
             msg_id = cursor.lastrowid
 
@@ -1513,6 +1661,23 @@ class SessionDB:
             return msg_id
 
         return self._execute_write(_do)
+
+    @staticmethod
+    def _normalize_message_timestamp(value: Any) -> float:
+        """Accept an event timestamp without allowing invalid DB sort keys."""
+
+        if value is not None and hasattr(value, "timestamp"):
+            try:
+                value = value.timestamp()
+            except Exception:
+                value = None
+        try:
+            timestamp = float(time.time() if value is None else value)
+        except (TypeError, ValueError, OverflowError):
+            timestamp = time.time()
+        if not math.isfinite(timestamp) or abs(timestamp) > 1_000_000_000_000:
+            timestamp = time.time()
+        return timestamp
 
     def replace_messages(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         """Atomically replace every message for a session.
@@ -1534,6 +1699,20 @@ class SessionDB:
             now_ts = time.time()
             total_messages = 0
             total_tool_calls = 0
+            optional_columns = self._message_metadata_columns(conn)
+            insert_columns = [
+                "session_id", "role", "content", "tool_call_id", "tool_calls",
+                "tool_name", "timestamp", "token_count", "finish_reason",
+                "reasoning", "reasoning_content", "reasoning_details",
+                "codex_reasoning_items", "codex_message_items",
+            ]
+            for _column in ("api_content", "display_kind", "display_metadata"):
+                if _column in optional_columns:
+                    insert_columns.append(_column)
+            insert_sql = (
+                f"INSERT INTO messages ({', '.join(insert_columns)}) "
+                f"VALUES ({', '.join('?' for _ in insert_columns)})"
+            )
             for msg in messages:
                 role = msg.get("role", "unknown")
                 tool_calls = msg.get("tool_calls")
@@ -1556,35 +1735,47 @@ class SessionDB:
                 )
                 tool_calls_json = json.dumps(tool_calls) if tool_calls else None
 
-                conn.execute(
-                    """INSERT INTO messages (session_id, role, content, tool_call_id,
-                       tool_calls, tool_name, timestamp, token_count, finish_reason,
-                       reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
-                       codex_message_items)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                values = [
+                    session_id,
+                    role,
+                    self._encode_content(msg.get("content")),
+                    msg.get("tool_call_id"),
+                    tool_calls_json,
+                    msg.get("tool_name"),
                     (
-                        session_id,
-                        role,
-                        self._encode_content(msg.get("content")),
-                        msg.get("tool_call_id"),
-                        tool_calls_json,
-                        msg.get("tool_name"),
-                        now_ts,
-                        msg.get("token_count"),
-                        msg.get("finish_reason"),
-                        msg.get("reasoning") if role == "assistant" else None,
-                        msg.get("reasoning_content") if role == "assistant" else None,
-                        reasoning_details_json,
-                        codex_items_json,
-                        codex_message_items_json,
+                        self._normalize_message_timestamp(msg.get("timestamp"))
+                        if optional_columns and "timestamp" in msg
+                        else now_ts
                     ),
-                )
+                    msg.get("token_count"),
+                    msg.get("finish_reason"),
+                    msg.get("reasoning") if role == "assistant" else None,
+                    msg.get("reasoning_content") if role == "assistant" else None,
+                    reasoning_details_json,
+                    codex_items_json,
+                    codex_message_items_json,
+                ]
+                if "api_content" in optional_columns:
+                    values.append(
+                        self._sanitize_message_metadata_text(
+                            msg.get("api_content"), MAX_API_CONTENT_CHARS
+                        ) if role in ("user", "assistant") else None
+                    )
+                if "display_kind" in optional_columns:
+                    values.append(
+                        self._sanitize_message_metadata_text(
+                            msg.get("display_kind"), MAX_DISPLAY_KIND_CHARS
+                        )
+                    )
+                if "display_metadata" in optional_columns:
+                    values.append(self._encode_display_metadata(msg.get("display_metadata")))
+                conn.execute(insert_sql, tuple(values))
                 total_messages += 1
                 if tool_calls is not None:
                     total_tool_calls += (
                         len(tool_calls) if isinstance(tool_calls, list) else 1
                     )
-                now_ts += 1e-6
+                now_ts = max(now_ts + 1e-6, float(values[6]) + 1e-6)
 
             conn.execute(
                 "UPDATE sessions SET message_count = ?, tool_call_count = ? WHERE id = ?",
@@ -1693,10 +1884,21 @@ class SessionDB:
 
         with self._lock:
             placeholders = ",".join("?" for _ in session_ids)
+            optional_columns = self._message_metadata_columns(self._conn)
+            optional_select_columns = ["timestamp"] if optional_columns else []
+            optional_select_columns.extend(
+                column for column in ("api_content", "display_kind", "display_metadata")
+                if column in optional_columns
+            )
+            optional_select = (
+                ", " + ", ".join(optional_select_columns)
+                if optional_select_columns else ""
+            )
             rows = self._conn.execute(
                 "SELECT role, content, tool_call_id, tool_calls, tool_name, "
                 "finish_reason, reasoning, reasoning_content, reasoning_details, "
-                "codex_reasoning_items, codex_message_items "
+                "codex_reasoning_items, codex_message_items"
+                f"{optional_select} "
                 f"FROM messages WHERE session_id IN ({placeholders}) ORDER BY timestamp, id",
                 tuple(session_ids),
             ).fetchall()
@@ -1711,6 +1913,22 @@ class SessionDB:
                 msg["tool_call_id"] = row["tool_call_id"]
             if row["tool_name"]:
                 msg["tool_name"] = row["tool_name"]
+            if optional_columns and "timestamp" in row.keys():
+                msg["timestamp"] = row["timestamp"]
+            if "api_content" in optional_columns and row["api_content"]:
+                msg["api_content"] = self._sanitize_message_metadata_text(
+                    row["api_content"], MAX_API_CONTENT_CHARS
+                )
+            if "display_kind" in optional_columns and row["display_kind"]:
+                msg["display_kind"] = self._sanitize_message_metadata_text(
+                    row["display_kind"], MAX_DISPLAY_KIND_CHARS
+                )
+            if "display_metadata" in optional_columns and row["display_metadata"]:
+                decoded_display_metadata = self._decode_display_metadata(
+                    row["display_metadata"]
+                )
+                if decoded_display_metadata is not None:
+                    msg["display_metadata"] = decoded_display_metadata
             if row["tool_calls"]:
                 try:
                     msg["tool_calls"] = json.loads(row["tool_calls"])
@@ -1806,6 +2024,12 @@ class SessionDB:
           matches them as exact phrases instead of splitting on the
           hyphen/dot (e.g. ``chat-send``, ``P2.2``, ``my-app.config.ts``)
         """
+        if not isinstance(query, str):
+            return ""
+        # Cap user-controlled FTS input before regex processing. This keeps
+        # pathological quote/special-character runs bounded under gateway use.
+        query = query[:MAX_FTS5_QUERY_CHARS]
+
         # Step 1: Extract balanced double-quoted phrases and protect them
         # from further processing via numbered placeholders.
         _quoted_parts: list = []
@@ -1816,8 +2040,15 @@ class SessionDB:
 
         sanitized = re.sub(r'"[^"]*"', _preserve_quoted, query)
 
-        # Step 2: Strip remaining (unmatched) FTS5-special characters
-        sanitized = re.sub(r'[+{}()\"^]', " ", sanitized)
+        # Step 2: Strip remaining (unmatched) FTS5-special characters.  The
+        # column-filter operator (:) and boolean punctuation are included;
+        # quoted phrases restored below retain their literal characters.
+        sanitized = _FTS5_SPECIAL_RE.sub(" ", sanitized)
+
+        # Percent has meaning to the CJK LIKE fallback, so preserve it there
+        # and strip it for the unicode61 MATCH path where it is invalid syntax.
+        if "%" in sanitized and not SessionDB._contains_cjk(sanitized):
+            sanitized = sanitized.replace("%", " ")
 
         # Step 3: Collapse repeated * (e.g. "***") into a single one,
         # and remove leading * (prefix-only needs at least one char before *)
@@ -1874,6 +2105,95 @@ class SessionDB:
         """Count CJK characters in text."""
         return sum(1 for ch in text if cls._is_cjk_codepoint(ord(ch)))
 
+    @staticmethod
+    def _compile_like_boolean_query(query: str) -> tuple[str, list, Optional[str]]:
+        """Compile the supported FTS boolean subset into safe LIKE clauses.
+
+        This is a degradation path only.  It searches canonical ``messages``
+        columns when a derived FTS table is missing/corrupt, preserving the
+        same parameterized filters and result shape without attempting DDL.
+        """
+        groups: list[list[tuple[str, bool]]] = [[]]
+        negate_next = False
+        for raw_token in re.findall(r'"[^"]+"|\S+', query or ""):
+            operator = raw_token.upper()
+            if operator == "OR":
+                if groups[-1]:
+                    groups.append([])
+                negate_next = False
+                continue
+            if operator in {"AND", "NEAR"}:
+                continue
+            if operator == "NOT":
+                negate_next = True
+                continue
+            term = raw_token.strip('"').strip("*").strip()
+            if term:
+                groups[-1].append((term, negate_next))
+                negate_next = False
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        snippet_term: Optional[str] = None
+        for group in groups:
+            if not group or not any(not negated for _, negated in group):
+                continue
+            terms: list[str] = []
+            for term, negated in group:
+                escaped = SessionDB.escape_like(term)
+                clause = (
+                    "(COALESCE(m.content, '') LIKE ? ESCAPE '\\' OR "
+                    "COALESCE(m.tool_name, '') LIKE ? ESCAPE '\\' OR "
+                    "COALESCE(m.tool_calls, '') LIKE ? ESCAPE '\\')"
+                )
+                terms.append(f"NOT {clause}" if negated else clause)
+                params.extend([f"%{escaped}%"] * 3)
+                if snippet_term is None and not negated:
+                    snippet_term = term
+            clauses.append(f"({' AND '.join(terms)})")
+        return " OR ".join(clauses), params, snippet_term
+
+    def _search_messages_like_fallback(
+        self,
+        query: str,
+        *,
+        source_filter: Optional[List[str]],
+        exclude_sources: Optional[List[str]],
+        role_filter: Optional[List[str]],
+        limit: int,
+        offset: int,
+    ) -> List[Dict[str, Any]]:
+        """Search canonical messages when MATCH cannot be executed."""
+        predicate, params, snippet_term = self._compile_like_boolean_query(query)
+        if not predicate or snippet_term is None:
+            return []
+        where = [f"({predicate})"]
+        if source_filter is not None:
+            where.append(f"s.source IN ({','.join('?' for _ in source_filter)})")
+            params.extend(source_filter)
+        if exclude_sources is not None:
+            where.append(f"s.source NOT IN ({','.join('?' for _ in exclude_sources)})")
+            params.extend(exclude_sources)
+        if role_filter:
+            where.append(f"m.role IN ({','.join('?' for _ in role_filter)})")
+            params.extend(role_filter)
+        sql = f"""
+            SELECT m.id, m.session_id, m.role,
+                   substr(m.content, max(1, instr(m.content, ?) - 40), 120) AS snippet,
+                   m.content, m.timestamp, m.tool_name,
+                   s.source, s.model, s.started_at AS session_started
+            FROM messages m
+            JOIN sessions s ON s.id = m.session_id
+            WHERE {' AND '.join(where)}
+            ORDER BY m.timestamp DESC, m.id DESC
+            LIMIT ? OFFSET ?
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                sql, [snippet_term, *params, limit, offset]
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def search_messages(
         self,
         query: str,
@@ -1895,7 +2215,7 @@ class SessionDB:
         Returns matching messages with session metadata, content snippet,
         and surrounding context (1 message before and after the match).
         """
-        if not query or not query.strip():
+        if not isinstance(query, str) or not query.strip():
             return []
 
         query = self._sanitize_fts5_query(query)
@@ -2013,13 +2333,27 @@ class SessionDB:
                     LIMIT ? OFFSET ?
                 """
                 tri_params.extend([limit, offset])
+                _trigram_failed = False
                 with self._lock:
                     try:
                         tri_cursor = self._conn.execute(tri_sql, tri_params)
                     except sqlite3.OperationalError:
+                        _trigram_failed = True
                         matches = []
                     else:
                         matches = [dict(row) for row in tri_cursor.fetchall()]
+                if _trigram_failed:
+                    logger.warning(
+                        "messages_fts_trigram unavailable; using canonical LIKE fallback"
+                    )
+                    matches = self._search_messages_like_fallback(
+                        raw_query,
+                        source_filter=source_filter,
+                        exclude_sources=exclude_sources,
+                        role_filter=role_filter,
+                        limit=limit,
+                        offset=offset,
+                    )
             else:
                 # Short / mixed CJK query: trigram cannot match tokens with
                 # <3 CJK chars. Fall back to LIKE substring search.
@@ -2033,7 +2367,7 @@ class SessionDB:
                 token_clauses = []
                 like_params: list = []
                 for tok in non_op_tokens:
-                    esc = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    esc = SessionDB.escape_like(tok)
                     token_clauses.append(
                         "(m.content LIKE ? ESCAPE '\\' OR m.tool_name LIKE ? ESCAPE '\\' OR m.tool_calls LIKE ? ESCAPE '\\')"
                     )
@@ -2068,14 +2402,29 @@ class SessionDB:
                     like_cursor = self._conn.execute(like_sql, like_params)
                     matches = [dict(row) for row in like_cursor.fetchall()]
         else:
+            _fts_failed = False
             with self._lock:
                 try:
                     cursor = self._conn.execute(sql, params)
                 except sqlite3.OperationalError:
-                    # FTS5 query syntax error despite sanitization — return empty
-                    return []
+                    # FTS5 query syntax error or derived-index corruption:
+                    # search canonical messages instead of hiding durable data.
+                    _fts_failed = True
+                    matches = []
                 else:
                     matches = [dict(row) for row in cursor.fetchall()]
+            if _fts_failed:
+                logger.warning(
+                    "messages_fts unavailable; using canonical LIKE fallback"
+                )
+                matches = self._search_messages_like_fallback(
+                    query,
+                    source_filter=source_filter,
+                    exclude_sources=exclude_sources,
+                    role_filter=role_filter,
+                    limit=limit,
+                    offset=offset,
+                )
 
         # Add surrounding context (1 message before + after each match).
         # Done outside the lock so we don't hold it across N sequential queries.
@@ -2230,6 +2579,826 @@ class SessionDB:
             messages = self.get_messages(session["id"])
             results.append({**session, "messages": messages})
         return results
+
+    @staticmethod
+    def audit_export_payload(payload: Any, **limits: Any):
+        """Run the read-only portability audit without changing export shape.
+
+        The implementation lives in an isolated compatibility module so the
+        facade does not acquire import/write behavior prematurely.  Keeping a
+        facade entry point lets backup and dashboard callers validate a
+        payload before a future import path is enabled.
+        """
+        from hermes_state_portability import audit_export_payload
+
+        return audit_export_payload(payload, **limits)
+
+    def probe_v26_compatibility(self):
+        """Inspect this database against the upstream v26 core contract.
+
+        The probe is read-only and intentionally does not run migrations or
+        change this v11 connection. Operators must use a copied database before
+        any future v26 write gate is considered.
+        """
+        from hermes_state_v26_compat import probe_v26_schema
+
+        return probe_v26_schema(self.db_path)
+
+    def plan_v26_migration(self):
+        """Return read-only v11-to-v26 migration evidence for this DB file.
+
+        This method intentionally delegates to the standalone compatibility
+        module and never uses this live connection's write helper.  A future
+        migration must run against an operator-selected copy after the plan's
+        deferred FTS/lineage/PK gates have been independently verified.
+        """
+        from hermes_state_v26_compat import probe_v26_migration_plan
+
+        return probe_v26_migration_plan(self.db_path)
+
+    def _session_activity_columns_available(self) -> bool:
+        """Return whether this connection already has the v26 activity columns."""
+        try:
+            with self._lock:
+                if self._conn is None:
+                    return False
+                rows = self._conn.execute('PRAGMA table_info("sessions")').fetchall()
+            names = {
+                row[1] if isinstance(row, (tuple, list)) else row["name"]
+                for row in rows
+            }
+            return {
+                "last_activity_at",
+                "last_activity_description",
+                "last_activity_provenance",
+            } <= names
+        except Exception:
+            return False
+
+    def touch_session_activity(
+        self,
+        session_id: str,
+        description: Optional[str] = None,
+        provenance=None,
+        now: Optional[float] = None,
+        force_persist: bool = False,
+    ) -> None:
+        """Best-effort monotonic activity stamp for a v26-shaped copy.
+
+        The local v11 schema deliberately returns without DDL.  Activity is an
+        observation-only projection, so lock/SQLite failures are swallowed
+        after bounded diagnostics and never break the response path.
+        """
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not self._session_activity_columns_available():
+            return None
+        try:
+            from agent.session_activity import (
+                bound_activity_description,
+                normalize_activity_provenance,
+            )
+
+            when = float(now if now is not None else time.time())
+            if not math.isfinite(when):
+                return None
+            desc = bound_activity_description(description)
+            prov = normalize_activity_provenance(provenance).value
+
+            def _do(conn):
+                conn.execute(
+                    "UPDATE sessions SET "
+                    "last_activity_at = ?, "
+                    "last_activity_description = ?, "
+                    "last_activity_provenance = ? "
+                    "WHERE id = ? AND ("
+                    "last_activity_at IS NULL OR last_activity_at < ? "
+                    "OR (? AND last_activity_at = ?)"
+                    ")",
+                    (when, desc, prov, session_id, when, bool(force_persist), when),
+                )
+
+            self._execute_write(_do)
+        except Exception as error:
+            logger.debug(
+                "Session activity stamp skipped (%s)",
+                type(error).__name__,
+            )
+        return None
+
+    def clear_session_activity_labels(self, session_id: str) -> None:
+        """Clear activity labels while retaining the durable timestamp."""
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not self._session_activity_columns_available():
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT last_activity_description, last_activity_provenance "
+                    "FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            description = row[0] if isinstance(row, (tuple, list)) else row["last_activity_description"]
+            provenance = row[1] if isinstance(row, (tuple, list)) else row["last_activity_provenance"]
+            if not description and (not provenance or provenance == "unknown"):
+                return None
+
+            def _do(conn):
+                conn.execute(
+                    "UPDATE sessions SET "
+                    "last_activity_description = ?, "
+                    "last_activity_provenance = ? WHERE id = ?",
+                    ("", "unknown", session_id),
+                )
+
+            self._execute_write(_do)
+        except Exception as error:
+            logger.debug(
+                "Session activity label clear skipped (%s)",
+                type(error).__name__,
+            )
+        return None
+
+    def get_session_activity(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return a bounded activity snapshot, or ``None`` on v11/no row."""
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not self._session_activity_columns_available():
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT last_activity_at, last_activity_description, "
+                    "last_activity_provenance FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            values = (
+                dict(row)
+                if isinstance(row, sqlite3.Row)
+                else {
+                    "last_activity_at": row[0],
+                    "last_activity_description": row[1],
+                    "last_activity_provenance": row[2],
+                }
+            )
+            from agent.session_activity import build_activity_snapshot
+
+            return build_activity_snapshot(**values)
+        except Exception as error:
+            logger.debug(
+                "Session activity read skipped (%s)",
+                type(error).__name__,
+            )
+            return None
+
+    @staticmethod
+    def _normalize_gateway_routing_scope(scope: Any) -> Optional[str]:
+        if scope is None:
+            return ""
+        if not isinstance(scope, str):
+            return None
+        value = scope.strip()
+        if len(value) > MAX_GATEWAY_ROUTING_SCOPE_CHARS:
+            return None
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            return None
+        return value
+
+    @staticmethod
+    def _normalize_gateway_routing_key(session_key: Any) -> Optional[str]:
+        if not isinstance(session_key, str):
+            return None
+        value = session_key.strip()
+        if not value or len(value) > MAX_GATEWAY_ROUTING_KEY_CHARS:
+            return None
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            return None
+        return value
+
+    @staticmethod
+    def _normalize_gateway_routing_json(entry_json: Any) -> Optional[str]:
+        if not isinstance(entry_json, str):
+            return None
+        try:
+            if len(entry_json.encode("utf-8")) > MAX_GATEWAY_ROUTING_ENTRY_BYTES:
+                return None
+            value = json.loads(entry_json)
+        except (UnicodeError, TypeError, ValueError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        try:
+            normalized = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            if len(normalized.encode("utf-8")) > MAX_GATEWAY_ROUTING_ENTRY_BYTES:
+                return None
+            return normalized
+        except (TypeError, ValueError, UnicodeError):
+            return None
+
+    def gateway_routing_available(self) -> bool:
+        """Return whether this connection already has the v26 routing table."""
+        try:
+            with self._lock:
+                if self._conn is None:
+                    return False
+                rows = self._conn.execute(
+                    'PRAGMA table_info("gateway_routing")'
+                ).fetchall()
+            metadata = {
+                row[1] if isinstance(row, (tuple, list)) else row["name"]: (
+                    str(row[2] or "").upper(),
+                    bool(row[3]),
+                    None if row[4] is None else str(row[4]).strip(),
+                    int(row[5] or 0),
+                )
+                for row in rows
+            }
+            if not _GATEWAY_ROUTING_REQUIRED_COLUMNS <= set(metadata):
+                return False
+            for name, (column_type, notnull, default) in _GATEWAY_ROUTING_COLUMN_CONTRACT.items():
+                actual_type, actual_notnull, actual_default, _pk = metadata[name]
+                if (actual_type, actual_notnull, actual_default) != (
+                    column_type,
+                    notnull,
+                    default,
+                ):
+                    return False
+            primary_key = tuple(
+                name for name, metadata_row in sorted(
+                    metadata.items(), key=lambda item: item[1][3]
+                )
+                if metadata_row[3] > 0
+            )
+            return primary_key == ("scope", "session_key")
+        except Exception:
+            return False
+
+    def save_gateway_routing_entry(
+        self,
+        session_key: str,
+        entry_json: str,
+        *,
+        scope: str = "",
+        updated_at: Optional[float] = None,
+    ) -> bool:
+        """Upsert one bounded routing entry when the v26 table exists."""
+        scope_value = self._normalize_gateway_routing_scope(scope)
+        key = self._normalize_gateway_routing_key(session_key)
+        value = self._normalize_gateway_routing_json(entry_json)
+        if scope_value is None or key is None or value is None:
+            return False
+        if not self.gateway_routing_available():
+            return False
+        try:
+            when = float(updated_at if updated_at is not None else time.time())
+            if not math.isfinite(when):
+                return False
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+        def _do(conn):
+            conn.execute(
+                "INSERT INTO gateway_routing "
+                "(scope, session_key, entry_json, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(scope, session_key) DO UPDATE SET "
+                "entry_json = excluded.entry_json, "
+                "updated_at = excluded.updated_at",
+                (scope_value, key, value, when),
+            )
+            return True
+
+        try:
+            return bool(self._execute_write(_do))
+        except sqlite3.Error:
+            return False
+
+    def replace_gateway_routing_entries(
+        self,
+        entries: Mapping[str, str],
+        *,
+        scope: str = "",
+        updated_at: Optional[float] = None,
+    ) -> bool:
+        """Atomically replace one scope after validating the whole payload."""
+        scope_value = self._normalize_gateway_routing_scope(scope)
+        if scope_value is None or not isinstance(entries, Mapping):
+            return False
+        if len(entries) > MAX_GATEWAY_ROUTING_ENTRIES:
+            return False
+        normalized: list[tuple[str, str]] = []
+        for key, value in entries.items():
+            normalized_key = self._normalize_gateway_routing_key(key)
+            normalized_value = self._normalize_gateway_routing_json(value)
+            if normalized_key is None or normalized_value is None:
+                return False
+            normalized.append((normalized_key, normalized_value))
+        if not self.gateway_routing_available():
+            return False
+        try:
+            when = float(updated_at if updated_at is not None else time.time())
+            if not math.isfinite(when):
+                return False
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+        def _do(conn):
+            conn.execute(
+                "DELETE FROM gateway_routing WHERE scope = ?",
+                (scope_value,),
+            )
+            conn.executemany(
+                "INSERT INTO gateway_routing "
+                "(scope, session_key, entry_json, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                [
+                    (scope_value, key, value, when)
+                    for key, value in normalized
+                ],
+            )
+            return True
+
+        try:
+            return bool(self._execute_write(_do))
+        except sqlite3.Error:
+            return False
+
+    def load_gateway_routing_entries(
+        self,
+        *,
+        scope: str = "",
+    ) -> Dict[str, str]:
+        """Load bounded, valid routing JSON for one isolated scope."""
+        scope_value = self._normalize_gateway_routing_scope(scope)
+        if scope_value is None or not self.gateway_routing_available():
+            return {}
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT session_key, entry_json FROM gateway_routing "
+                    "WHERE scope = ? AND length(entry_json) <= ? "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (
+                        scope_value,
+                        MAX_GATEWAY_ROUTING_ENTRY_BYTES,
+                        MAX_GATEWAY_ROUTING_ENTRIES,
+                    ),
+                ).fetchall()
+            result: Dict[str, str] = {}
+            for row in rows:
+                key = row[0] if not isinstance(row, sqlite3.Row) else row["session_key"]
+                value = row[1] if not isinstance(row, sqlite3.Row) else row["entry_json"]
+                normalized_key = self._normalize_gateway_routing_key(key)
+                normalized_value = self._normalize_gateway_routing_json(value)
+                if normalized_key is not None and normalized_value is not None:
+                    result[normalized_key] = normalized_value
+            return result
+        except Exception:
+            return {}
+
+    def delete_gateway_routing_entries(
+        self,
+        session_keys: List[str],
+        *,
+        scope: str = "",
+    ) -> int:
+        """Delete bounded keys from one scope; return affected-row count."""
+        scope_value = self._normalize_gateway_routing_scope(scope)
+        if scope_value is None or not self.gateway_routing_available():
+            return 0
+        if isinstance(session_keys, str) or not isinstance(session_keys, (list, tuple, set)):
+            return 0
+        normalized: list[str] = []
+        for key in session_keys:
+            value = self._normalize_gateway_routing_key(key)
+            if value is None:
+                return 0
+            if value not in normalized:
+                normalized.append(value)
+            if len(normalized) > MAX_GATEWAY_ROUTING_ENTRIES:
+                return 0
+        if not normalized:
+            return 0
+
+        def _do(conn):
+            cursor = conn.executemany(
+                "DELETE FROM gateway_routing "
+                "WHERE scope = ? AND session_key = ?",
+                [(scope_value, key) for key in normalized],
+            )
+            return int(cursor.rowcount if cursor.rowcount >= 0 else 0)
+
+        try:
+            return int(self._execute_write(_do) or 0)
+        except sqlite3.Error:
+            return 0
+
+    def delete_gateway_routing_entries_for_sessions(
+        self,
+        session_ids: List[str] | set[str] | tuple[str, ...],
+        *,
+        scope: Optional[str] = None,
+    ) -> int:
+        """Delete routing rows whose bounded JSON names one of session IDs."""
+        if isinstance(session_ids, str) or not isinstance(session_ids, (list, tuple, set)):
+            return 0
+        ids: set[str] = set()
+        for value in session_ids:
+            if not isinstance(value, str) or not value or len(value) > MAX_GATEWAY_ROUTING_SESSION_ID_CHARS:
+                return 0
+            ids.add(value)
+        if not ids or len(ids) > MAX_GATEWAY_ROUTING_ENTRIES:
+            return 0
+        scope_value = None if scope is None else self._normalize_gateway_routing_scope(scope)
+        if scope is not None and scope_value is None:
+            return 0
+        if not self.gateway_routing_available():
+            return 0
+        try:
+            with self._lock:
+                if scope_value is None:
+                    rows = self._conn.execute(
+                        "SELECT scope, session_key, entry_json "
+                        "FROM gateway_routing WHERE length(entry_json) <= ? "
+                        "LIMIT ?",
+                        (MAX_GATEWAY_ROUTING_ENTRY_BYTES, MAX_GATEWAY_ROUTING_ENTRIES),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        "SELECT scope, session_key, entry_json "
+                        "FROM gateway_routing WHERE scope = ? "
+                        "AND length(entry_json) <= ? LIMIT ?",
+                        (
+                            scope_value,
+                            MAX_GATEWAY_ROUTING_ENTRY_BYTES,
+                            MAX_GATEWAY_ROUTING_ENTRIES,
+                        ),
+                    ).fetchall()
+            doomed: list[tuple[str, str]] = []
+            for row in rows:
+                raw_scope = row[0] if not isinstance(row, sqlite3.Row) else row["scope"]
+                raw_key = row[1] if not isinstance(row, sqlite3.Row) else row["session_key"]
+                raw_json = row[2] if not isinstance(row, sqlite3.Row) else row["entry_json"]
+                normalized_scope = self._normalize_gateway_routing_scope(raw_scope)
+                normalized_key = self._normalize_gateway_routing_key(raw_key)
+                normalized_json = self._normalize_gateway_routing_json(raw_json)
+                if normalized_scope is None or normalized_key is None or normalized_json is None:
+                    continue
+                try:
+                    entry = json.loads(normalized_json)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(entry, dict) and str(entry.get("session_id", "")) in ids:
+                    doomed.append((normalized_scope, normalized_key))
+            if not doomed:
+                return 0
+
+            def _do(conn):
+                cursor = conn.executemany(
+                    "DELETE FROM gateway_routing "
+                    "WHERE scope = ? AND session_key = ?",
+                    doomed,
+                )
+                return int(cursor.rowcount if cursor.rowcount >= 0 else 0)
+
+            return int(self._execute_write(_do) or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _normalize_session_turn_lease_value(
+        value: Any,
+        maximum: int,
+    ) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not normalized or len(normalized) > maximum:
+            return None
+        if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+            return None
+        return normalized
+
+    @staticmethod
+    def _normalize_session_turn_lease_time(value: Any) -> Optional[float]:
+        try:
+            timestamp = float(time.time() if value is None else value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(timestamp) or abs(timestamp) > 1_000_000_000_000:
+            return None
+        return timestamp
+
+    @staticmethod
+    def _normalize_session_turn_lease_ttl(value: Any) -> Optional[float]:
+        if value is None:
+            value = 300.0
+        if isinstance(value, bool):
+            return None
+        try:
+            ttl = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(ttl) or ttl <= 0:
+            return None
+        if ttl > MAX_SESSION_TURN_LEASE_TTL_SECONDS:
+            return None
+        return max(MIN_SESSION_TURN_LEASE_TTL_SECONDS, ttl)
+
+    def session_turn_leases_available(self) -> bool:
+        """Return whether this connection has the exact v26 lease table shape."""
+        try:
+            with self._lock:
+                if self._conn is None:
+                    return False
+                rows = self._conn.execute(
+                    'PRAGMA table_info("session_turn_leases")'
+                ).fetchall()
+            metadata = {
+                row[1] if isinstance(row, (tuple, list)) else row["name"]: (
+                    str(row[2] or "").upper(),
+                    bool(row[3]),
+                    None if row[4] is None else str(row[4]).strip(),
+                    int(row[5] or 0),
+                )
+                for row in rows
+            }
+            if not _SESSION_TURN_LEASE_REQUIRED_COLUMNS <= set(metadata):
+                return False
+            for name, (column_type, notnull, default) in _SESSION_TURN_LEASE_COLUMN_CONTRACT.items():
+                actual_type, actual_notnull, actual_default, _pk = metadata[name]
+                if (actual_type, actual_notnull, actual_default) != (
+                    column_type,
+                    notnull,
+                    default,
+                ):
+                    return False
+            primary_key = tuple(
+                name for name, metadata_row in sorted(
+                    metadata.items(), key=lambda item: item[1][3]
+                )
+                if metadata_row[3] > 0
+            )
+            return primary_key == ("conversation_id",)
+        except Exception:
+            return False
+
+    def try_acquire_session_turn_lease(
+        self,
+        conversation_id: str,
+        holder: str,
+        *,
+        ttl_seconds: float = 300.0,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Atomically acquire a v26 lease without overwriting a live owner."""
+        conversation = self._normalize_session_turn_lease_value(
+            conversation_id,
+            MAX_SESSION_TURN_LEASE_ID_CHARS,
+        )
+        owner = self._normalize_session_turn_lease_value(
+            holder,
+            MAX_SESSION_TURN_LEASE_HOLDER_CHARS,
+        )
+        when = self._normalize_session_turn_lease_time(now)
+        ttl = self._normalize_session_turn_lease_ttl(ttl_seconds)
+        if (
+            conversation is None
+            or owner is None
+            or when is None
+            or ttl is None
+            or not self.session_turn_leases_available()
+        ):
+            return False
+        expires = when + ttl
+        if not math.isfinite(expires) or abs(expires) > 1_000_000_000_000:
+            return False
+
+        def _do(conn):
+            row = conn.execute(
+                "SELECT holder, expires_at FROM session_turn_leases "
+                "WHERE conversation_id = ?",
+                (conversation,),
+            ).fetchone()
+            if row is not None:
+                try:
+                    current_expires = float(row[1] if not isinstance(row, sqlite3.Row) else row["expires_at"])
+                except (TypeError, ValueError, OverflowError):
+                    return False
+                if current_expires <= when:
+                    current_holder = row[0] if not isinstance(row, sqlite3.Row) else row["holder"]
+                    conn.execute(
+                        "DELETE FROM session_turn_leases "
+                        "WHERE conversation_id = ? AND holder = ?",
+                        (conversation, current_holder),
+                    )
+            conn.execute(
+                "INSERT OR IGNORE INTO session_turn_leases "
+                "(conversation_id, holder, acquired_at, expires_at) "
+                "VALUES (?, ?, ?, ?)",
+                (conversation, owner, when, expires),
+            )
+            current = conn.execute(
+                "SELECT holder FROM session_turn_leases WHERE conversation_id = ?",
+                (conversation,),
+            ).fetchone()
+            current_holder = current[0] if current is not None and not isinstance(current, sqlite3.Row) else (
+                current["holder"] if current is not None else None
+            )
+            return current_holder == owner
+
+        try:
+            return bool(self._execute_write(_do))
+        except sqlite3.Error:
+            return False
+
+    def refresh_session_turn_lease(
+        self,
+        conversation_id: str,
+        holder: str,
+        *,
+        ttl_seconds: float = 300.0,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Refresh a live lease only when the supplied holder still owns it."""
+        conversation = self._normalize_session_turn_lease_value(
+            conversation_id,
+            MAX_SESSION_TURN_LEASE_ID_CHARS,
+        )
+        owner = self._normalize_session_turn_lease_value(
+            holder,
+            MAX_SESSION_TURN_LEASE_HOLDER_CHARS,
+        )
+        when = self._normalize_session_turn_lease_time(now)
+        ttl = self._normalize_session_turn_lease_ttl(ttl_seconds)
+        if (
+            conversation is None
+            or owner is None
+            or when is None
+            or ttl is None
+            or not self.session_turn_leases_available()
+        ):
+            return False
+        expires = when + ttl
+        if not math.isfinite(expires) or abs(expires) > 1_000_000_000_000:
+            return False
+
+        def _do(conn):
+            cursor = conn.execute(
+                "UPDATE session_turn_leases SET expires_at = ? "
+                "WHERE conversation_id = ? AND holder = ? AND expires_at > ?",
+                (expires, conversation, owner, when),
+            )
+            return cursor.rowcount > 0
+
+        try:
+            return bool(self._execute_write(_do))
+        except sqlite3.Error:
+            return False
+
+    def release_session_turn_lease(
+        self,
+        conversation_id: str,
+        holder: str,
+    ) -> bool:
+        """Release a lease only when the supplied holder owns it."""
+        conversation = self._normalize_session_turn_lease_value(
+            conversation_id,
+            MAX_SESSION_TURN_LEASE_ID_CHARS,
+        )
+        owner = self._normalize_session_turn_lease_value(
+            holder,
+            MAX_SESSION_TURN_LEASE_HOLDER_CHARS,
+        )
+        if (
+            conversation is None
+            or owner is None
+            or not self.session_turn_leases_available()
+        ):
+            return False
+
+        def _do(conn):
+            cursor = conn.execute(
+                "DELETE FROM session_turn_leases "
+                "WHERE conversation_id = ? AND holder = ?",
+                (conversation, owner),
+            )
+            return cursor.rowcount > 0
+
+        try:
+            return bool(self._execute_write(_do))
+        except sqlite3.Error:
+            return False
+
+    def get_session_turn_lease(
+        self,
+        conversation_id: str,
+        *,
+        now: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Read a non-expired lease without reclaiming or mutating the table."""
+        conversation = self._normalize_session_turn_lease_value(
+            conversation_id,
+            MAX_SESSION_TURN_LEASE_ID_CHARS,
+        )
+        when = self._normalize_session_turn_lease_time(now)
+        if (
+            conversation is None
+            or when is None
+            or not self.session_turn_leases_available()
+        ):
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT conversation_id, holder, acquired_at, expires_at "
+                    "FROM session_turn_leases WHERE conversation_id = ?",
+                    (conversation,),
+                ).fetchone()
+            if row is None:
+                return None
+            values = (
+                dict(row)
+                if isinstance(row, sqlite3.Row)
+                else {
+                    "conversation_id": row[0],
+                    "holder": row[1],
+                    "acquired_at": row[2],
+                    "expires_at": row[3],
+                }
+            )
+            expires = float(values["expires_at"])
+            if not math.isfinite(expires) or expires <= when:
+                return None
+            values["remaining_seconds"] = round(max(0.0, expires - when), 3)
+            values["holder"] = str(values["holder"])[:MAX_SESSION_TURN_LEASE_HOLDER_CHARS]
+            return values
+        except Exception:
+            return None
+
+    @staticmethod
+    def apply_v26_copy_gate(
+        target_path,
+        *,
+        enable: bool = False,
+        dry_run: bool = True,
+        backup_path=None,
+        expected_sha256=None,
+        tables=None,
+        columns=None,
+        busy_timeout_ms: int = 1000,
+    ):
+        """Apply a narrow v26 additive step to an explicit copied database.
+
+        This facade deliberately requires the target path.  It does not use
+        the live ``SessionDB`` connection, does not change ``SCHEMA_VERSION``,
+        and keeps the v11 default startup path untouched.
+        """
+        from hermes_state_v26_compat import apply_v26_copy_gate
+
+        return apply_v26_copy_gate(
+            target_path,
+            enable=enable,
+            dry_run=dry_run,
+            backup_path=backup_path,
+            expected_sha256=expected_sha256,
+            tables=tables,
+            columns=columns,
+            busy_timeout_ms=busy_timeout_ms,
+        )
+
+    def import_sessions(
+        self,
+        payload: Any,
+        *,
+        enable: bool = False,
+        dry_run: bool = True,
+    ):
+        """Run the gated portability importer against this local v11 store.
+
+        The compatibility importer is deliberately opt-in.  Callers that only
+        want to inspect a backup should use the default (disabled) path or
+        ``dry_run=True``; a write requires ``enable=True`` and
+        ``dry_run=False`` on an explicitly selected database copy.
+        """
+        from hermes_state_portability import import_sessions_into_db
+
+        return import_sessions_into_db(
+            self,
+            payload,
+            enable=enable,
+            dry_run=dry_run,
+        )
 
     def clear_messages(self, session_id: str) -> None:
         """Delete all messages for a session and reset its counters."""

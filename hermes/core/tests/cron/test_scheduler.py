@@ -99,7 +99,6 @@ class TestResolveDeliveryTarget:
             ("feishu", "FEISHU_HOME_CHANNEL", "oc_home"),
             ("wecom", "WECOM_HOME_CHANNEL", "wecom-home"),
             ("weixin", "WEIXIN_HOME_CHANNEL", "wxid_home"),
-            ("qqbot", "QQ_HOME_CHANNEL", "group-openid-home"),
         ],
     )
     def test_origin_delivery_without_origin_falls_back_to_supported_home_channels(

@@ -108,11 +108,18 @@ class TestSSHBulkUpload:
                 staging_dir = cmd[c_idx + 1]
                 # Check the symlink exists
                 expected = os.path.join(
-                    staging_dir, "home/testuser/.hermes/skills/my_skill.md"
+                    staging_dir,
+                    *"home/testuser/.hermes/skills/my_skill.md".split("/"),
                 )
                 staging_paths.append(expected)
                 assert os.path.islink(expected), f"Expected symlink at {expected}"
-                assert os.readlink(expected) == os.path.abspath(str(f1))
+                linked = os.path.normcase(os.path.abspath(os.readlink(expected)))
+                source = os.path.normcase(os.path.abspath(str(f1)))
+                if linked.startswith("\\\\?\\"):
+                    linked = linked[4:]
+                if source.startswith("\\\\?\\"):
+                    source = source[4:]
+                assert linked == source
 
             mock = MagicMock()
             mock.stdout = MagicMock()

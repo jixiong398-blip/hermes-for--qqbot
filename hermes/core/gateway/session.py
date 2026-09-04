@@ -21,6 +21,10 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
+_DURABLE_ROUTING_MAX_KEY_CHARS = 512
+_DURABLE_ROUTING_MAX_ENTRY_BYTES = 256 * 1024
+_DURABLE_ROUTING_MAX_ENTRIES = 4096
+
 
 def _now() -> datetime:
     """Return the current local time."""
@@ -678,6 +682,9 @@ class SessionStore:
         
         # Initialize SQLite session database
         self._db = None
+        self._durable_routing = bool(
+            getattr(config, "durable_routing", False)
+        )
         try:
             from hermes_state import SessionDB
             self._db = SessionDB()
@@ -689,6 +696,16 @@ class SessionStore:
         with self._lock:
             self._ensure_loaded_locked()
 
+    def _routing_scope(self) -> str:
+        """Return a stable, path-free namespace for durable routing rows."""
+        try:
+            identity = str(Path(self.sessions_dir).resolve(strict=False))
+        except Exception:
+            identity = type(self.sessions_dir).__name__
+        return "sessions-" + hashlib.sha256(
+            identity.encode("utf-8", errors="replace")
+        ).hexdigest()[:24]
+
     def _ensure_loaded_locked(self) -> None:
         """Load sessions index from disk. Must be called with self._lock held."""
         if self._loaded:
@@ -697,14 +714,49 @@ class SessionStore:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         sessions_file = self.sessions_dir / "sessions.json"
 
+        # Durable routing is opt-in.  Invalid/missing DB rows are ignored so
+        # the legacy JSON index remains a usable recovery source.
+        if getattr(self, "_durable_routing", False) and self._db:
+            loader = getattr(self._db, "load_gateway_routing_entries", None)
+            available = getattr(self._db, "gateway_routing_available", None)
+            try:
+                if callable(loader) and (
+                    not callable(available) or available()
+                ):
+                    loaded = loader(scope=self._routing_scope()) or {}
+                    if isinstance(loaded, dict):
+                        for key, entry_json in list(loaded.items())[:_DURABLE_ROUTING_MAX_ENTRIES]:
+                            if (
+                                not isinstance(key, str)
+                                or not key.strip()
+                                or len(key) > _DURABLE_ROUTING_MAX_KEY_CHARS
+                                or not isinstance(entry_json, str)
+                                or len(entry_json.encode("utf-8", errors="replace"))
+                                > _DURABLE_ROUTING_MAX_ENTRY_BYTES
+                            ):
+                                continue
+                            try:
+                                entry_data = json.loads(entry_json)
+                                if isinstance(entry_data, dict):
+                                    self._entries[key] = SessionEntry.from_dict(entry_data)
+                            except Exception:
+                                continue
+            except Exception as error:
+                logger.warning(
+                    "gateway routing DB load unavailable (%s); using sessions.json",
+                    type(error).__name__,
+                )
+
         if sessions_file.exists():
             try:
                 with open(sessions_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     for key, entry_data in data.items():
+                        if key in self._entries:
+                            continue
                         try:
                             self._entries[key] = SessionEntry.from_dict(entry_data)
-                        except (ValueError, KeyError):
+                        except Exception:
                             # Skip entries with unknown/removed platform values
                             continue
             except Exception as e:
@@ -714,11 +766,53 @@ class SessionStore:
     
     def _save(self) -> None:
         """Save sessions index to disk (kept for session key -> ID mapping)."""
-        import tempfile
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        sessions_file = self.sessions_dir / "sessions.json"
-
         data = {key: entry.to_dict() for key, entry in self._entries.items()}
+
+        if getattr(self, "_durable_routing", False):
+            db_saved = False
+            writer = getattr(self._db, "replace_gateway_routing_entries", None) if self._db else None
+            available = getattr(self._db, "gateway_routing_available", None) if self._db else None
+            try:
+                if callable(writer) and (
+                    not callable(available) or available()
+                ):
+                    result = writer(
+                        {
+                            key: json.dumps(
+                                value,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            )
+                            for key, value in data.items()
+                        },
+                        scope=self._routing_scope(),
+                    )
+                    db_saved = result is not False
+            except Exception as error:
+                logger.warning(
+                    "gateway routing DB save unavailable (%s); using sessions.json",
+                    type(error).__name__,
+                )
+            try:
+                self._save_sessions_json(data)
+            except Exception as error:
+                if db_saved:
+                    logger.warning(
+                        "gateway routing JSON mirror save failed (%s)",
+                        type(error).__name__,
+                    )
+                else:
+                    raise
+            return
+
+        self._save_sessions_json(data)
+
+    def _save_sessions_json(self, data: Dict[str, Any]) -> None:
+        """Write the legacy sessions.json routing index atomically."""
+        import tempfile
+        sessions_file = self.sessions_dir / "sessions.json"
         fd, tmp_path = tempfile.mkstemp(
             dir=str(self.sessions_dir), suffix=".tmp", prefix=".sessions_"
         )

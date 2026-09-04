@@ -61,6 +61,8 @@ def test_checker_handles_minimal_config(platform, checker):
 @pytest.mark.parametrize("platform, checker", list(_PLATFORM_CONNECTED_CHECKERS.items()))
 def test_checker_returns_true_when_configured(platform, checker, monkeypatch):
     """Each bespoke checker must return True when the config looks valid."""
+    if platform == Platform.QQBOT:
+        pytest.skip("QQBot is a legacy migration sentinel, never a connected platform")
     mock_config = MagicMock()
     mock_config.token = None
     mock_config.api_key = None

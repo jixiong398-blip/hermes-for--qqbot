@@ -203,6 +203,12 @@ terminal:
 #   docker_forward_env:
 #     - "GITHUB_TOKEN"
 #     - "NPM_TOKEN"
+#   # Network lockdown and cross-process reuse are explicit opt-ins. Reuse only
+#   # after the image/volume/profile contract has been validated on the host.
+#   docker_network: true
+#   docker_extra_args: []
+#   docker_persist_across_processes: false
+#   docker_shared_container_key: ""
 
 # -----------------------------------------------------------------------------
 # OPTION 4: Singularity/Apptainer container
@@ -358,6 +364,10 @@ compression:
   # compression of older turns.
   protect_last_n: 20
 
+  # Fail closed before a lossy rewrite when an active memory provider supports
+  # checkpoint API v2. Keep false for legacy/best-effort providers.
+  checkpoint_required: false
+
   # To pin a specific model/provider for compression summaries, use the
   # auxiliary section below (auxiliary.compression.provider / model).
 
@@ -494,6 +504,11 @@ session_reset:
 # explicitly want one shared "room brain" per group/channel.
 group_sessions_per_user: true
 
+# Optional state.db routing index. Legacy sessions.json remains primary.
+durable_routing: false
+# Optional cross-process turn lease port; the in-process registry remains default.
+durable_turn_leases: false
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Gateway Streaming
 # ─────────────────────────────────────────────────────────────────────────────
@@ -507,6 +522,16 @@ streaming:
   # edit_interval: 0.3        # seconds between message edits
   # buffer_threshold: 40      # chars before forcing an edit flush
   # cursor: " ▉"              # cursor shown during streaming
+
+# =============================================================================
+# Gateway Configuration
+# =============================================================================
+# Record final responses before platform sends so a restart can recover an
+# unconfirmed message. The ledger is best-effort and defaults to enabled.
+gateway:
+  delivery_ledger: true
+  # Optional state.db routing index. Legacy sessions.json remains primary.
+  durable_routing: false
 
 # =============================================================================
 # Skills Configuration

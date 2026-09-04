@@ -1,4 +1,4 @@
-"""
+r"""
                    _                                   _
                   | |                                 | |
    _____  ___  ___| |_   _____  ___  ___  ___  ___  ___| |_
@@ -51,6 +51,7 @@ Tables:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -60,6 +61,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hermes_constants import get_hermes_home, get_memory_db_path
+
+logger = logging.getLogger(__name__)
 
 
 def _memory_db_path() -> Path:
@@ -96,9 +99,22 @@ CREATE TABLE IF NOT EXISTS long_term_entries (
     source_session_ids TEXT DEFAULT '[]',
     retrieval_count INTEGER DEFAULT 0,
     last_retrieved REAL DEFAULT 0.0,
+    ttl_days INTEGER DEFAULT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    UNIQUE(category, key)
+    memory_type TEXT NOT NULL DEFAULT 'semantic',
+    type_data TEXT DEFAULT '{}',
+    salience REAL DEFAULT 0.5,
+    recall_strength REAL DEFAULT 1.0,
+    reconsolidation_count INTEGER DEFAULT 0,
+    last_recalled_at TEXT,
+    source_user_id TEXT DEFAULT '',
+    source_message_ts TEXT DEFAULT '',
+    source_context TEXT DEFAULT '',
+    derivation TEXT DEFAULT 'direct',
+    supersedes_id INTEGER,
+    active INTEGER DEFAULT 1,
+    deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workflow_entries (
@@ -159,6 +175,38 @@ CREATE TABLE IF NOT EXISTS chat_message_buffer (
     is_bot INTEGER DEFAULT 0,
     created_at REAL NOT NULL,
     message_id TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS memory_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    src_id INTEGER NOT NULL,
+    dst_id INTEGER NOT NULL,
+    relation TEXT NOT NULL,
+    weight REAL DEFAULT 0.5,
+    created_at REAL NOT NULL,
+    UNIQUE(src_id, dst_id, relation),
+    FOREIGN KEY (src_id) REFERENCES long_term_entries(id),
+    FOREIGN KEY (dst_id) REFERENCES long_term_entries(id)
+);
+
+CREATE TABLE IF NOT EXISTS _sleep_watermark (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS _memory_type_registry (
+    type_name TEXT PRIMARY KEY,
+    type_data_schema TEXT,
+    description TEXT,
+    created_at TEXT,
+    created_by TEXT DEFAULT 'system'
+);
+
+CREATE TABLE IF NOT EXISTS _relation_registry (
+    relation TEXT PRIMARY KEY,
+    description TEXT,
+    is_traversable INTEGER DEFAULT 1,
+    created_by TEXT DEFAULT 'system'
 );
 
 CREATE INDEX IF NOT EXISTS idx_ste_session ON short_term_entries(session_id, turn_index);
@@ -244,6 +292,29 @@ CREATE INDEX IF NOT EXISTS idx_cm_active_time ON core_memories(active, occurred_
 """
 
 
+# These columns were introduced by the local memory v2 work after the original
+# v1 store was shipped.  Keep the list fixed and code-owned: existing memory
+# databases receive only these additive columns during normal initialization.
+# Table rewrites (notably removing the legacy table-level UNIQUE constraint)
+# remain an explicit migration step and are never performed implicitly here.
+_LTM_COMPAT_COLUMNS = (
+    ("ttl_days", "INTEGER DEFAULT NULL"),
+    ("memory_type", "TEXT NOT NULL DEFAULT 'semantic'"),
+    ("type_data", "TEXT DEFAULT '{}'"),
+    ("salience", "REAL DEFAULT 0.5"),
+    ("recall_strength", "REAL DEFAULT 1.0"),
+    ("reconsolidation_count", "INTEGER DEFAULT 0"),
+    ("last_recalled_at", "TEXT"),
+    ("source_user_id", "TEXT DEFAULT ''"),
+    ("source_message_ts", "TEXT DEFAULT ''"),
+    ("source_context", "TEXT DEFAULT ''"),
+    ("derivation", "TEXT DEFAULT 'direct'"),
+    ("supersedes_id", "INTEGER"),
+    ("active", "INTEGER DEFAULT 1"),
+    ("deleted_at", "TEXT"),
+)
+
+
 @dataclass
 class ShortTermEntry:
     id: int = 0
@@ -274,6 +345,21 @@ class LongTermEntry:
     last_retrieved: float = 0.0
     created_at: float = 0.0
     updated_at: float = 0.0
+    # v2 closed-loop fields follow the original v1 positional contract.
+    ttl_days: Optional[int] = None
+    memory_type: str = "semantic"
+    type_data: Dict[str, Any] = field(default_factory=dict)
+    salience: float = 0.5
+    recall_strength: float = 1.0
+    reconsolidation_count: int = 0
+    last_recalled_at: Optional[str] = None
+    source_user_id: str = ""
+    source_message_ts: str = ""
+    source_context: str = ""
+    derivation: str = "direct"
+    supersedes_id: Optional[int] = None
+    active: bool = True
+    deleted_at: Optional[str] = None
 
 
 @dataclass
@@ -320,6 +406,7 @@ class MemoryStore:
         self._db_path = db_path or _memory_db_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        self._legacy_ltm_unique = False
         self._init_db()
 
     _all_conns = set()
@@ -352,11 +439,118 @@ class MemoryStore:
     def _init_db(self):
         conn = self._get_conn()
         conn.executescript(SCHEMA_SQL)
+
+        # The shipped v1 database predates the closed-loop memory fields used
+        # by LTM/EPI/L6 code.  Bring old files up to the additive contract
+        # without rebuilding tables, dropping indexes, or rewriting rows.
+        ltm_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(long_term_entries)")
+        }
+        ltm_schema_changed = False
+        for column_name, column_definition in _LTM_COMPAT_COLUMNS:
+            if column_name in ltm_columns:
+                continue
+            conn.execute(
+                f"ALTER TABLE long_term_entries ADD COLUMN {column_name} "
+                f"{column_definition}"
+            )
+            ltm_columns.add(column_name)
+            ltm_schema_changed = True
+
+        # These indexes are safe additive structures.  A legacy database may
+        # still have the table-level UNIQUE(category, key); do not rewrite it
+        # here because removing that constraint requires its own backup-gated
+        # migration.  The partial index is therefore best-effort when legacy
+        # rows already violate the active-key invariant.
+        for index_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_ltm_type "
+            "ON long_term_entries(memory_type) WHERE active=1",
+            "CREATE INDEX IF NOT EXISTS idx_ltm_source_user "
+            "ON long_term_entries(source_user_id) WHERE active=1",
+            "CREATE INDEX IF NOT EXISTS idx_ltm_salience "
+            "ON long_term_entries(salience)",
+            "CREATE INDEX IF NOT EXISTS idx_ltm_recall "
+            "ON long_term_entries(last_recalled_at)",
+            "CREATE INDEX IF NOT EXISTS idx_ltm_active "
+            "ON long_term_entries(active)",
+            "CREATE INDEX IF NOT EXISTS idx_edges_src ON memory_edges(src_id)",
+            "CREATE INDEX IF NOT EXISTS idx_edges_dst ON memory_edges(dst_id)",
+        ):
+            try:
+                conn.execute(index_sql)
+            except sqlite3.DatabaseError as error:
+                # Keep initialization usable for a partially migrated legacy
+                # file; the missing index is reported but never hides the
+                # additive column/table migration result.
+                logger.warning("Memory schema index skipped: %s", error)
+
+        for type_name, description in (
+            ("semantic", "Persistent facts/knowledge about users, world, self"),
+            ("episodic", "Conversation segments used for abstraction"),
+            ("procedural", "Learned behavior patterns and action templates"),
+        ):
+            conn.execute(
+                "INSERT OR IGNORE INTO _memory_type_registry "
+                "(type_name, description, created_at) VALUES (?, ?, ?)",
+                (type_name, description, datetime.now(timezone.utc).isoformat()),
+            )
+        for relation, description, traversable in (
+            ("related_to", "General association", 1),
+            ("supports", "One memory supports another", 1),
+            ("contradicts", "Conflicting memories", 1),
+            ("abstracts_from", "Semantic fact abstracted from episodic cluster", 0),
+            ("corrected_by", "New memory supersedes old via correction", 0),
+        ):
+            conn.execute(
+                "INSERT OR IGNORE INTO _relation_registry "
+                "(relation, description, is_traversable, created_by) "
+                "VALUES (?, ?, ?, 'system')",
+                (relation, description, traversable),
+            )
+
+        # Fresh schemas use a partial unique index so inactive correction
+        # history can retain the original logical key.  An existing v1 table
+        # may still carry a table-level UNIQUE(category, key); detect it and
+        # use the compatibility rename in supersede_memory instead of doing a
+        # destructive table rewrite during normal startup.
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ltm_unique_active "
+                "ON long_term_entries(category, key) WHERE active=1"
+            )
+        except sqlite3.IntegrityError as error:
+            logger.warning(
+                "Memory active-key index deferred for legacy duplicate rows: %s",
+                error,
+            )
+        self._legacy_ltm_unique = self._detect_legacy_ltm_unique(conn)
+
         # Migration: add message_id column for replied-message lookup
         cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_message_buffer)")}
         if "message_id" not in cols:
             conn.execute("ALTER TABLE chat_message_buffer ADD COLUMN message_id TEXT DEFAULT ''")
+        chat_schema_changed = "message_id" not in cols
         conn.commit()
+        if ltm_schema_changed or chat_schema_changed:
+            # FTS5 external-content indexes are not automatically populated
+            # when an old database gains columns/tables.  Rebuild only after a
+            # real compatibility migration so update triggers cannot operate
+            # on a stale index and report a misleading malformed-database
+            # error on the first memory correction.
+            self._rebuild_fts()
+
+    @staticmethod
+    def _detect_legacy_ltm_unique(conn: sqlite3.Connection) -> bool:
+        """Detect the old table-level UNIQUE(category, key) constraint."""
+
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'long_term_entries'"
+        ).fetchone()
+        if not row or not row[0]:
+            return False
+        normalized = "".join(str(row[0]).upper().split())
+        return "UNIQUE(CATEGORY,KEY)" in normalized
 
     def close(self):
         if hasattr(self._local, "conn") and self._local.conn:
@@ -383,24 +577,31 @@ class MemoryStore:
         return row.lastrowid
 
     def get_chat_buffer(self, chat_id: str, limit: int = 20,
-                        before_ts: float = None) -> list:
+                        before_ts: float = None,
+                        *, chat_type: Optional[str] = None) -> list:
         conn = self._get_conn()
+        conditions = ["chat_id = ?"]
+        params: List[Any] = [chat_id]
+        if chat_type:
+            conditions.append("chat_type = ?")
+            params.append(str(chat_type).strip().lower())
+        where = " AND ".join(conditions)
         if before_ts:
-            rows = conn.execute(
-                """SELECT sender_name, content, is_bot, created_at
-                   FROM chat_message_buffer
-                   WHERE chat_id = ? AND created_at < ?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (chat_id, before_ts, limit),
-            ).fetchall()
+            query = (
+                "SELECT sender_name, content, is_bot, created_at "
+                "FROM chat_message_buffer WHERE "
+                + where
+                + " AND created_at < ? ORDER BY created_at DESC LIMIT ?"
+            )
+            rows = conn.execute(query, (*params, before_ts, limit)).fetchall()
         else:
-            rows = conn.execute(
-                """SELECT sender_name, content, is_bot, created_at
-                   FROM chat_message_buffer
-                   WHERE chat_id = ?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (chat_id, limit),
-            ).fetchall()
+            query = (
+                "SELECT sender_name, content, is_bot, created_at "
+                "FROM chat_message_buffer WHERE "
+                + where
+                + " ORDER BY created_at DESC LIMIT ?"
+            )
+            rows = conn.execute(query, (*params, limit)).fetchall()
         return [
             {"sender": r[0], "text": r[1], "is_bot": bool(r[2]),
              "ts": r[3]}
@@ -418,16 +619,24 @@ class MemoryStore:
             return {"sender": row[0], "text": row[1], "message_id": row[2], "ts": row[3]}
         return {}
 
-    def trim_chat_buffer(self, chat_id: str, keep: int = 200) -> int:
+    def trim_chat_buffer(self, chat_id: str, keep: int = 200,
+                         *, chat_type: Optional[str] = None) -> int:
         conn = self._get_conn()
+        conditions = ["chat_id = ?"]
+        params: List[Any] = [chat_id]
+        if chat_type:
+            conditions.append("chat_type = ?")
+            params.append(str(chat_type).strip().lower())
+        where = " AND ".join(conditions)
         row = conn.execute(
-            "SELECT id FROM chat_message_buffer WHERE chat_id = ? ORDER BY created_at DESC LIMIT 1 OFFSET ?",
-            (chat_id, keep),
+            "SELECT id FROM chat_message_buffer WHERE " + where
+            + " ORDER BY created_at DESC LIMIT 1 OFFSET ?",
+            (*params, keep),
         ).fetchone()
         if row:
             conn.execute(
-                "DELETE FROM chat_message_buffer WHERE chat_id = ? AND id <= ?",
-                (chat_id, row[0]),
+                "DELETE FROM chat_message_buffer WHERE " + where + " AND id <= ?",
+                (*params, row[0]),
             )
             conn.commit()
             return conn.total_changes
@@ -554,18 +763,28 @@ class MemoryStore:
         conn.commit()
         return row.lastrowid
 
-    def get_long_term(self, category: Optional[str] = None, limit: int = 50) -> List[LongTermEntry]:
+    def get_long_term(
+        self,
+        category: Optional[str] = None,
+        limit: int = 50,
+        *,
+        include_inactive: bool = False,
+    ) -> List[LongTermEntry]:
         conn = self._get_conn()
+        conditions = []
+        params: List[Any] = []
         if category:
-            rows = conn.execute(
-                "SELECT * FROM long_term_entries WHERE category = ? ORDER BY confidence DESC, retrieval_count DESC LIMIT ?",
-                (category, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM long_term_entries ORDER BY confidence DESC, retrieval_count DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            conditions.append("category = ?")
+            params.append(category)
+        if not include_inactive:
+            conditions.append("active = 1")
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        params.append(limit)
+        rows = conn.execute(
+            "SELECT * FROM long_term_entries" + where
+            + " ORDER BY confidence DESC, retrieval_count DESC LIMIT ?",
+            params,
+        ).fetchall()
         return [_row_to_long_term(r) for r in rows]
 
     def get_long_term_by_id(self, entry_id: int) -> Optional[LongTermEntry]:
@@ -604,10 +823,22 @@ class MemoryStore:
             return 0
 
         now = self._now()
+        old_key = str(old["key"])
         conn.execute(
             "UPDATE long_term_entries SET active = 0, deleted_at = ? WHERE id = ?",
             (str(now), old_id),
         )
+
+        # v1 databases still enforce uniqueness across inactive rows.  Keep
+        # the old row for audit/history but move its key to an internal,
+        # collision-free tombstone so the corrected active row can retain the
+        # logical key callers use for lookup.  New schemas use the partial
+        # active-only index and never enter this branch.
+        if getattr(self, "_legacy_ltm_unique", False):
+            conn.execute(
+                "UPDATE long_term_entries SET key = ? WHERE id = ?",
+                (f"{old_key}__superseded_{old_id}", old_id),
+            )
 
         import json as _json
         old_type_data = old["type_data"] if "type_data" in old.keys() else "{}"
@@ -617,6 +848,8 @@ class MemoryStore:
             td = {}
         td["previous"] = old["value"]
         td["correction_reason"] = reason
+        if getattr(self, "_legacy_ltm_unique", False):
+            td["original_key"] = old_key
 
         cursor = conn.execute(
             """INSERT INTO long_term_entries
@@ -627,7 +860,7 @@ class MemoryStore:
                 source_user_id, source_message_ts, source_context,
                 derivation, supersedes_id, active)
                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 1.0, 0, NULL, ?, ?, ?, 'corrected', ?, 1)""",
-            (old["category"], old["key"], new_value, old["tags"],
+            (old["category"], old_key, new_value, old["tags"],
              new_confidence, old["source_session_ids"],
              now, now,
              old["memory_type"] if "memory_type" in old.keys() else "semantic",
@@ -695,7 +928,7 @@ class MemoryStore:
             fts_rows = conn.execute(
                 """SELECT le.* FROM long_term_entries le
                    JOIN lte_fts fts ON le.id = fts.rowid
-                   WHERE lte_fts MATCH ?
+                   WHERE le.active = 1 AND lte_fts MATCH ?
                    ORDER BY rank
                    LIMIT ?""",
                 (fts_query, limit * 2),
@@ -716,7 +949,11 @@ class MemoryStore:
             like_params.extend([f"%{t}%", f"%{t}%", f"%{t}%"])
         if like_clauses:
             try:
-                like_sql = f"SELECT * FROM long_term_entries WHERE {' OR '.join(like_clauses)} LIMIT ?"
+                like_sql = (
+                    "SELECT * FROM long_term_entries WHERE active = 1 AND ("
+                    + " OR ".join(like_clauses)
+                    + ") LIMIT ?"
+                )
                 like_rows = conn.execute(like_sql, like_params + [limit * 3]).fetchall()
                 for r in like_rows:
                     rid = r["id"] if hasattr(r, "keys") else r[0]
@@ -815,7 +1052,8 @@ class MemoryStore:
     def get_ltm_by_confidence(self, min_confidence: float = 0.3) -> List[LongTermEntry]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM long_term_entries WHERE confidence >= ? ORDER BY confidence DESC",
+            "SELECT * FROM long_term_entries WHERE active = 1 AND confidence >= ? "
+            "ORDER BY confidence DESC",
             (min_confidence,),
         ).fetchall()
         return [_row_to_long_term(r) for r in rows]
@@ -1093,7 +1331,7 @@ class MemoryStore:
         for fts_table in ("lte_fts", "wfe_fts", "we_fts"):
             try:
                 conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
-            except sqlite3.OperationalError:
+            except sqlite3.DatabaseError:
                 try:
                     conn.rollback()
                 except Exception:
@@ -1160,6 +1398,7 @@ def _row_to_short_term(row: sqlite3.Row) -> ShortTermEntry:
 
 
 def _row_to_long_term(row: sqlite3.Row) -> LongTermEntry:
+    keys = set(row.keys())
     return LongTermEntry(
         id=row["id"],
         category=row["category"],
@@ -1170,8 +1409,22 @@ def _row_to_long_term(row: sqlite3.Row) -> LongTermEntry:
         source_session_ids=_parse_json(row["source_session_ids"]),
         retrieval_count=row["retrieval_count"] or 0,
         last_retrieved=row["last_retrieved"] or 0.0,
+        ttl_days=row["ttl_days"] if "ttl_days" in keys else None,
         created_at=row["created_at"] or 0.0,
         updated_at=row["updated_at"] or 0.0,
+        memory_type=(row["memory_type"] or "semantic") if "memory_type" in keys else "semantic",
+        type_data=_parse_json(row["type_data"], {}) if "type_data" in keys else {},
+        salience=(row["salience"] if row["salience"] is not None else 0.5) if "salience" in keys else 0.5,
+        recall_strength=(row["recall_strength"] if row["recall_strength"] is not None else 1.0) if "recall_strength" in keys else 1.0,
+        reconsolidation_count=(row["reconsolidation_count"] or 0) if "reconsolidation_count" in keys else 0,
+        last_recalled_at=row["last_recalled_at"] if "last_recalled_at" in keys else None,
+        source_user_id=(row["source_user_id"] or "") if "source_user_id" in keys else "",
+        source_message_ts=(row["source_message_ts"] or "") if "source_message_ts" in keys else "",
+        source_context=(row["source_context"] or "") if "source_context" in keys else "",
+        derivation=(row["derivation"] or "direct") if "derivation" in keys else "direct",
+        supersedes_id=row["supersedes_id"] if "supersedes_id" in keys else None,
+        active=bool(row["active"]) if "active" in keys else True,
+        deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
     )
 
 

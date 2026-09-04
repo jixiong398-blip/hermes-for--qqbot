@@ -91,6 +91,47 @@ class TestSyncExternalMemoryForTurn:
             session_id="test_session_001",
         )
 
+    def test_multimodal_turn_is_flattened_and_message_list_is_snapshotted(self):
+        agent = _bare_agent()
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "inspect this"}]},
+            {"role": "assistant", "content": "done"},
+        ]
+        user_content = [{"type": "text", "text": "inspect this"}]
+
+        agent._sync_external_memory_for_turn(
+            original_user_message=user_content,
+            final_response=[{"type": "text", "text": "done"}],
+            interrupted=False,
+            messages=messages,
+        )
+
+        sync_call = agent._memory_manager.sync_all.call_args
+        assert sync_call.args == ("inspect this", "done")
+        assert sync_call.kwargs["session_id"] == "test_session_001"
+        assert sync_call.kwargs["messages"] == messages
+        assert sync_call.kwargs["messages"] is not messages
+        agent._memory_manager.queue_prefetch_all.assert_called_once_with(
+            "inspect this",
+            session_id="test_session_001",
+        )
+
+    def test_trivial_completed_turn_syncs_without_prefetch_warmup(self):
+        agent = _bare_agent()
+
+        agent._sync_external_memory_for_turn(
+            original_user_message="hi",
+            final_response="hello",
+            interrupted=False,
+        )
+
+        agent._memory_manager.sync_all.assert_called_once_with(
+            "hi",
+            "hello",
+            session_id="test_session_001",
+        )
+        agent._memory_manager.queue_prefetch_all.assert_not_called()
+
     # --- Edge cases (pre-existing behaviour preserved) ------------------
 
     def test_no_final_response_skips(self):

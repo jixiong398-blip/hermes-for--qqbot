@@ -39,6 +39,7 @@ _DEFAULT_STREAM_PATH = _HERMES_HOME / "data" / "layer0.jsonl"
 _STREAM_LOCK = threading.Lock()
 _EVENT_COUNTER: int = 0
 _STREAM_PATH: Optional[Path] = None
+_MAX_SOURCE_METADATA_CHARS = 256
 
 
 def set_stream_path(path: Path) -> None:
@@ -110,20 +111,26 @@ def write_message(
     platform: str = "",
     chat_type: str = "dm",
     message_id: str = "",
+    chat_id: str = "",
+    thread_id: str = "",
 ) -> str:
     """Record a raw conversation turn in the event stream."""
-    return write_event(
-        event_type="message",
-        data={
-            "session_id": session_id,
-            "role": role,
-            "content": content[:2000],  # truncate to avoid huge lines
-            "speaker_name": speaker_name,
-            "platform": platform,
-            "chat_type": chat_type,
-            "message_id": message_id,
-        },
-    )
+    data = {
+        "session_id": session_id,
+        "role": role,
+        "content": content[:2000],  # truncate to avoid huge lines
+        "speaker_name": speaker_name,
+        "platform": platform,
+        "chat_type": chat_type,
+        "message_id": message_id,
+    }
+    # Keep source metadata bounded and optional so legacy callers retain the
+    # historical event shape while Gateway hooks can audit opaque chats.
+    if chat_id:
+        data["chat_id"] = str(chat_id)[:_MAX_SOURCE_METADATA_CHARS]
+    if thread_id:
+        data["thread_id"] = str(thread_id)[:_MAX_SOURCE_METADATA_CHARS]
+    return write_event(event_type="message", data=data)
 
 
 def write_fact(

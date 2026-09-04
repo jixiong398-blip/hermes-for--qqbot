@@ -23,6 +23,12 @@ def _mock_subprocess_run(monkeypatch):
                 return subprocess.CompletedProcess(cmd, 0, stdout="Docker version", stderr="")
             if cmd[1] == "run":
                 return subprocess.CompletedProcess(cmd, 0, stdout="fake-container-id\n", stderr="")
+            if (
+                cmd[1] == "inspect"
+                and "--format" in cmd
+                and "{{.State.Running}}" in cmd
+            ):
+                return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(docker_env.subprocess, "run", _run)
@@ -46,6 +52,9 @@ def _make_dummy_env(**kwargs):
         auto_mount_cwd=kwargs.get("auto_mount_cwd", False),
         env=kwargs.get("env"),
         run_as_host_user=kwargs.get("run_as_host_user", False),
+        extra_args=kwargs.get("extra_args"),
+        persist_across_processes=kwargs.get("persist_across_processes", False),
+        shared_container_key=kwargs.get("shared_container_key", ""),
     )
 
 
@@ -512,3 +521,76 @@ def test_run_as_host_user_warns_and_skips_when_no_posix_ids(monkeypatch, caplog)
         "does not expose POSIX uid/gid" in rec.getMessage()
         for rec in caplog.records
     ), "expected a warning when POSIX ids are unavailable"
+
+
+def test_persist_across_processes_reuses_running_labeled_container(monkeypatch):
+    """Explicit reuse mode attaches without issuing a second docker run."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    monkeypatch.setattr(
+        docker_env,
+        "find_reusable_container",
+        lambda *args, **kwargs: ("reused-container", "running"),
+    )
+    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
+
+    env = _make_dummy_env(
+        persist_across_processes=True,
+        task_id="reuse-task",
+        shared_container_key="trusted/team",
+    )
+
+    assert env._container_id == "reused-container"
+    assert not any(cmd[1] == "run" for cmd, _ in calls)
+    assert env._container_labels["hermes-profile"].startswith("trusted_team-")
+    assert env._container_labels["hermes-egress"] == "off"
+
+
+def test_persist_across_processes_starts_exited_labeled_container(monkeypatch):
+    """An exited candidate is restarted and still avoids docker run."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    monkeypatch.setattr(
+        docker_env,
+        "find_reusable_container",
+        lambda *args, **kwargs: ("stopped-container", "exited"),
+    )
+    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
+
+    env = _make_dummy_env(persist_across_processes=True, task_id="restart-task")
+
+    assert env._container_id == "stopped-container"
+    assert any(cmd[1] == "start" and cmd[-1] == "stopped-container" for cmd, _ in calls)
+    assert not any(cmd[1] == "run" for cmd, _ in calls)
+
+
+def test_persist_across_processes_network_lockdown_miss_creates_fresh_container(monkeypatch):
+    """A missing network-compatible candidate falls back to a fresh run."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    monkeypatch.setattr(docker_env, "find_reusable_container", lambda *args, **kwargs: None)
+    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
+
+    env = _make_dummy_env(
+        persist_across_processes=True,
+        network=False,
+        task_id="airgap-task",
+    )
+
+    run_cmd = next(cmd for cmd, _ in calls if cmd[1] == "run")
+    assert "--network=none" in run_cmd
+    assert env._container_id == "fake-container-id"
+
+
+def test_persist_across_processes_cleanup_leaves_container_running(monkeypatch):
+    """Explicit persistent mode clears the local handle without stop/rm."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
+
+    env = _make_dummy_env(persist_across_processes=True, task_id="persist-cleanup")
+    assert env._container_id == "fake-container-id"
+    env.cleanup()
+
+    assert env._container_id is None
+    assert not any(cmd[1] in {"stop", "rm"} for cmd, _ in calls)
