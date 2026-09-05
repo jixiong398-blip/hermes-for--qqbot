@@ -87,3 +87,27 @@ def test_account_selection_rejects_unknown_or_malformed_ids(tmp_path, monkeypatc
 def test_dashboard_uses_the_distribution_napcat_directory():
     assert server.NAPCAT_DIR.name == "napcat"
     assert server.SERVICES["napcat"]["cwd"] == str(server.NAPCAT_DIR)
+
+
+def test_napcat_preflight_rejects_missing_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "NAPCAT_DIR", tmp_path / "missing-napcat")
+    handler = object.__new__(server.DashboardHandler)
+
+    failure = handler._napcat_preflight()
+
+    assert failure["code"] == "invalid_cwd"
+    assert "重新安装" in failure["hint"]
+
+
+def test_napcat_preflight_rejects_running_qq(tmp_path, monkeypatch):
+    napcat_dir = tmp_path / "napcat"
+    napcat_dir.mkdir()
+    (napcat_dir / "napcat.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr(server, "NAPCAT_DIR", napcat_dir)
+    monkeypatch.setattr(server.DashboardHandler, "_find_running_qq", staticmethod(lambda: ['"QQ.exe"']))
+
+    handler = object.__new__(server.DashboardHandler)
+    failure = handler._napcat_preflight()
+
+    assert failure["code"] == "qq_client_busy"
+    assert "不会自动结束 QQ" in failure["hint"]

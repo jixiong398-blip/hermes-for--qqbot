@@ -101,6 +101,7 @@ UPGRADE_MAP = [
     # Dashboard
     ("modules/dashboard/server.py", "modules/dashboard/server.py"),
     ("modules/dashboard/static/index.html", "modules/dashboard/static/index.html"),
+    ("modules/dashboard/static/onboarding.html", "modules/dashboard/static/onboarding.html"),
     # Scripts
     ("extras/scripts/install.py", "extras/scripts/install.py"),
     ("extras/scripts/setup_config.py", "extras/scripts/setup_config.py"),

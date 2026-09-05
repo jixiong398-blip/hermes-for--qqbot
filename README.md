@@ -1,6 +1,6 @@
 ﻿# QQBot — 通用 QQ 群 AI 机器人模板
 
-> **v0.14.15** — 可靠性契约 · 多平台 WebSocket 隔离 · 记忆边界 · QQ 空间可选配图
+> **v0.14.16** — Dashboard 运维重构 · NapCat 启动诊断 · 移动端适配
 
 解压即用。Python 3.12、Node.js、Live2D Electron 已内置离线包。
 

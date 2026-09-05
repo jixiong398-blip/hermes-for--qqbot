@@ -1,6 +1,15 @@
 ﻿# 升级指南
 
-> v0.14.15
+> v0.14.16
+
+## v0.14.16 变更说明
+
+- Dashboard 重构为更紧凑的运维控制台，保留服务、NapCat、日志、记忆、会话和 Live2D 操作。
+- NapCat 启动增加目录、启动脚本和普通 QQ 进程预检，并提供启动状态、端口就绪和结构化错误提示。
+- Windows 用户遇到启动失败时，先退出普通 QQ，确认 QQ.exe 完全结束，再从 Dashboard 启动 NapCat；系统不会自动结束用户进程。
+- 修复 Dashboard 移动端布局横向溢出，并将 `onboarding.html` 纳入升级文件映射。
+
+本版本不覆盖 `config.yaml`、`SOUL.md`、`.env`、数据库、sessions 或日志。升级前请保留本地配置，并检查自定义补丁是否与 Dashboard/NapCat 文件冲突。
 
 ## v0.14.15 变更说明
 

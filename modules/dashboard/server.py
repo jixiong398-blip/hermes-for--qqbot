@@ -118,6 +118,14 @@ SERVICES = {
 }
 
 _running_processes: Dict[str, subprocess.Popen] = {}
+_napcat_launch_lock = threading.Lock()
+_napcat_launch_state: Dict[str, Any] = {
+    "state": "idle",
+    "operation_id": None,
+    "started_at": None,
+    "error": None,
+    "pid": None,
+}
 
 LOGS: Dict[str, list] = {svc: [] for svc in SERVICES}
 LOG_LOCK = threading.Lock()
@@ -515,6 +523,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/napcat/port-status":
             return self._handle_napcat_port_status()
+
+        elif path == "/api/napcat/launch-state":
+            return self._handle_napcat_launch_state()
 
         elif path == "/api/napcat/accounts":
             return self._handle_napcat_accounts()
@@ -1208,18 +1219,123 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     # ── NapCat Control ────────────────────────────────────────
 
+    @staticmethod
+    def _napcat_error(code: str, message: str, hint: str, **extra) -> Dict[str, Any]:
+        result = {"code": code, "message": message, "hint": hint}
+        result.update(extra)
+        return result
+
+    @classmethod
+    def _set_napcat_state(cls, **updates):
+        with _napcat_launch_lock:
+            _napcat_launch_state.update(updates)
+            return dict(_napcat_launch_state)
+
+    def _handle_napcat_launch_state(self):
+        with _napcat_launch_lock:
+            state = dict(_napcat_launch_state)
+        state["ports"] = {
+            str(port): self._check_port(port)
+            for port in (3000, 3001, 3002, 6099)
+        }
+        return self._send_json(state)
+
+    @staticmethod
+    def _find_running_qq() -> list[str]:
+        if os.name != "nt":
+            return []
+        try:
+            output = subprocess.check_output(
+                ["tasklist", "/FI", "IMAGENAME eq QQ.exe", "/FO", "CSV", "/NH"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            return [line for line in output.splitlines() if "QQ.exe" in line]
+        except (OSError, subprocess.SubprocessError):
+            return []
+
+    def _napcat_preflight(self) -> Optional[Dict[str, Any]]:
+        if os.name != "nt":
+            return None
+        if not NAPCAT_DIR.exists() or not NAPCAT_DIR.is_dir():
+            return self._napcat_error(
+                "invalid_cwd", "NapCat 安装目录不存在。",
+                "请重新安装或确认 modules/napcat 目录完整。", path=str(NAPCAT_DIR),
+            )
+        launcher = NAPCAT_DIR / "napcat.bat"
+        if not launcher.is_file():
+            return self._napcat_error(
+                "missing_launcher", "找不到 NapCat 启动脚本。",
+                "请重新解压完整发行包，不要只复制 Dashboard 文件。", path=str(launcher),
+            )
+        running_qq = self._find_running_qq()
+        if running_qq:
+            return self._napcat_error(
+                "qq_client_busy", "检测到普通 QQ 已经在运行。",
+                "请先从 QQ 窗口退出并确认 QQ.exe 完全消失，再由 Dashboard 启动 NapCat。不会自动结束 QQ。",
+            )
+        return None
+
+    def _watch_napcat_launch(self, operation_id: str, proc: subprocess.Popen) -> None:
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                failure = self._napcat_error(
+                    "launcher_exited", "NapCat 启动器已退出，QQ/OneBot 尚未就绪。",
+                    "请确认普通 QQ 已完全退出，并检查 NapCat 日志及 QQ/NapCat 版本兼容性。",
+                    exit_code=proc.returncode,
+                )
+                self._set_napcat_state(state="failed", error=failure, pid=proc.pid)
+                return
+            if any(self._check_port(port) for port in (3000, 3001, 3002, 6099)):
+                self._set_napcat_state(state="ready", error=None, pid=proc.pid)
+                return
+            time.sleep(1)
+        failure = self._napcat_error(
+            "ready_timeout", "NapCat 进程已创建，但服务端口仍未就绪。",
+            "请查看 NapCat 日志；重点检查普通 QQ 占用和 QQ/NapCat 版本兼容性。",
+            ports={str(port): self._check_port(port) for port in (3000, 3001, 3002, 6099)},
+        )
+        self._set_napcat_state(state="failed", error=failure, pid=proc.pid)
+
     def _handle_napcat_start(self):
-        napcat_dir = str(NAPCAT_DIR)
+        with _napcat_launch_lock:
+            if _napcat_launch_state.get("state") in {"preflight", "launching"}:
+                return self._send_json({"state": "launching", **_napcat_launch_state}, 409)
+        failure = self._napcat_preflight()
+        if failure:
+            self._set_napcat_state(state="failed", error=failure, pid=None)
+            return self._send_json({"state": "failed", "error": failure}, 200)
+
+        operation_id = f"napcat-{int(time.time() * 1000)}"
+        self._set_napcat_state(
+            state="launching", operation_id=operation_id,
+            started_at=datetime.now().isoformat(), error=None, pid=None,
+        )
         try:
             proc = subprocess.Popen(
                 ["cmd", "/c", "napcat.bat"],
-                cwd=napcat_dir,
+                cwd=str(NAPCAT_DIR),
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             _running_processes["napcat"] = proc
-            self._send_json({"success": True, "message": "NapCat launching in new window", "pid": proc.pid})
+            self._set_napcat_state(state="launching", pid=proc.pid)
+            threading.Thread(
+                target=self._watch_napcat_launch,
+                args=(operation_id, proc),
+                name="napcat-launch-watch",
+                daemon=True,
+            ).start()
+            self._send_json({"success": True, "state": "launching", "operation_id": operation_id,
+                             "message": "NapCat 正在启动，请等待 QQ/OneBot 端口就绪。", "pid": proc.pid})
         except Exception as e:
-            self._send_json({"success": False, "error": str(e)}, 500)
+            failure = self._napcat_error(
+                "launch_failed", "NapCat 启动器无法创建。",
+                "请检查安装目录和启动权限；如果目录无效，请重新解压完整发行包。",
+                detail=str(e),
+            )
+            self._set_napcat_state(state="failed", error=failure, pid=None)
+            self._send_json({"success": False, "state": "failed", "error": failure}, 200)
 
     def _handle_napcat_stop(self):
         try:
