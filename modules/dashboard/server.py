@@ -1339,45 +1339,49 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _handle_napcat_stop(self):
         try:
-            killed = False
-            # Method 1: Kill by process pattern
-            for pattern in ('*NapCat.Shell*', '*NapCatWinBootMain*'):
-                try:
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command",
-                         "Get-CimInstance Win32_Process | "
-                         f"Where-Object {{ $_.CommandLine -like '{pattern}' }} | "
-                         "ForEach-Object { taskkill /F /PID $_.ProcessId /T }"],
-                        capture_output=True, timeout=20,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                except Exception:
-                    pass
-            # Method 2: Kill by port (always works regardless of command line)
-            for port in (3000, 3001):
-                try:
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command",
-                         f"$p = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | "
-                         "Select-Object -ExpandProperty OwningProcess; "
-                         "if ($p) { Stop-Process -Id $p -Force }"],
-                        capture_output=True, timeout=10,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                except Exception:
-                    pass
-            # Method 3: Kill cmd.exe running napcat.bat
-            try:
+            if os.name == "nt":
+                # NapCat is a process tree (cmd -> node -> bundled node).  A
+                # single port owner or the launcher shell is not sufficient;
+                # collect matching processes, their port owners, and parents /
+                # children, then terminate each tree with taskkill /T.
+                script = r'''
+$all = @(Get-CimInstance Win32_Process)
+$self = $PID
+$ids = New-Object 'System.Collections.Generic.HashSet[int]'
+$pattern = '(?i)(napcat|loadNapCat|NapCatWinBoot)'
+foreach ($p in $all) {
+    if ($p.ProcessId -ne $self -and
+        (($p.CommandLine -and $p.CommandLine -match $pattern) -or
+        ($p.Name -match '(?i)^NapCat')) {
+        [void]$ids.Add([int]$p.ProcessId)
+    }
+}
+$ports = @(3000, 3001, 3002, 6099)
+foreach ($port in $ports) {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { [void]$ids.Add([int]$_.OwningProcess) }
+}
+$changed = $true
+while ($changed) {
+    $changed = $false
+    foreach ($p in $all) {
+        $pid = [int]$p.ProcessId
+        $ppid = [int]$p.ParentProcessId
+        # Traverse only downward.  Adding an arbitrary parent would turn an
+        # Explorer-owned QQ process into a broad process-tree kill.
+        if ($ids.Contains($ppid) -and $ids.Add($pid)) { $changed = $true }
+    }
+}
+foreach ($id in $ids) {
+    if ($id -gt 0) { taskkill /F /T /PID $id 2>$null | Out-Null }
+}
+'''
                 subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | "
-                     "Where-Object { $_.CommandLine -like '*napcat*' -and $_.CommandLine -like '*NapCat*' } | "
-                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-                    capture_output=True, timeout=10,
+                    ["powershell", "-NoProfile", "-Command", script],
+                    capture_output=True, timeout=20,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
-            except Exception:
-                pass
+            self._set_napcat_state(state="idle", operation_id=None, started_at=None, error=None, pid=None)
             self._send_json({"success": True, "message": "NapCat stopped"})
         except Exception as e:
             self._send_json({"success": False, "error": str(e)}, 500)

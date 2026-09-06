@@ -111,3 +111,28 @@ def test_napcat_preflight_rejects_running_qq(tmp_path, monkeypatch):
 
     assert failure["code"] == "qq_client_busy"
     assert "不会自动结束 QQ" in failure["hint"]
+
+
+def test_napcat_stop_targets_process_tree_and_all_ports(monkeypatch):
+    calls = []
+
+    class _Completed:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return _Completed()
+
+    monkeypatch.setattr(server.os, "name", "nt")
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    handler = object.__new__(server.DashboardHandler)
+    handler._send_json = lambda data, status=200: setattr(handler, "response", (data, status))
+    handler._handle_napcat_stop()
+
+    assert len(calls) == 1
+    script = calls[0][0][-1]
+    assert handler.response == ({"success": True, "message": "NapCat stopped"}, 200)
+    assert "$self = $PID" in script
+    assert "3000, 3001, 3002, 6099" in script
+    assert "taskkill /F /T /PID" in script
+    assert "if ($ids.Contains($ppid) -and $ids.Add($pid))" in script
